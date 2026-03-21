@@ -1,6 +1,6 @@
 # TAAC_2026
 
-> [!INFO]
+> [!INFO]  
 > 这是TAAC其中一个参赛队伍的代码仓库, 不代表官方文档
 
 https://algo.qq.com/#intro
@@ -68,6 +68,6 @@ https://huggingface.co/datasets/TAAC2026/data_sample_1000
 TODO
 
 ## References
-[1] InterFormer: Effective Heterogeneous Interaction Learning for Click-Through Rate Prediction. CIKM, 2025.
-[2] OneTrans: Unified Feature Interaction and Sequence Modeling with One Transformer in Industrial Recommender. arXiv preprint, 2025.
-[3] HyFormer: Revisiting the Roles of Sequence Modeling and Feature Interaction in CTR Prediction. arXiv preprint, 2026.
+[1] InterFormer: Effective Heterogeneous Interaction Learning for Click-Through Rate Prediction. CIKM, 2025.  
+[2] OneTrans: Unified Feature Interaction and Sequence Modeling with One Transformer in Industrial Recommender. arXiv preprint, 2025.  
+[3] HyFormer: Revisiting the Roles of Sequence Modeling and Feature Interaction in CTR Prediction. arXiv preprint, 2026.  
