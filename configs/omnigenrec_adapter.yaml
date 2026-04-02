@@ -7,15 +7,15 @@ data:
   label_action_type: 2
 
 model:
-  name: ucasim_v1
+  name: omnigenrec_adapter
   vocab_size: 200003
   embedding_dim: 96
   hidden_dim: 192
-  dropout: 0.15
-  num_layers: 3
+  dropout: 0.1
+  num_layers: 2
   num_heads: 4
   recent_seq_len: 32
-  memory_slots: 12
+  memory_slots: 8
   ffn_multiplier: 4
 
 train:
@@ -23,7 +23,12 @@ train:
   epochs: 5
   batch_size: 64
   learning_rate: 0.001
+  muon_learning_rate: 0.02
   weight_decay: 0.0001
   num_workers: 0
   device: auto
-  output_dir: outputs/ucasim_v1
+  optimizer_name: muon_adamw
+  loss_name: combined_auc
+  pairwise_weight: 0.5
+  grad_clip_norm: 1.0
+  output_dir: outputs/omnigenrec_adapter

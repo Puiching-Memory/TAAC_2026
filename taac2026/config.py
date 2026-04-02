@@ -10,7 +10,7 @@ import yaml
 @dataclass(slots=True)
 class DataConfig:
     dataset_path: str
-    max_seq_len: int = 96
+    max_seq_len: int = 256
     max_feature_tokens: int = 64
     max_event_features: int = 12
     val_ratio: float = 0.2
@@ -19,16 +19,17 @@ class DataConfig:
 
 @dataclass(slots=True)
 class ModelConfig:
-    name: str = "baseline"
+    name: str = "grok_baseline"
     vocab_size: int = 200_003
     embedding_dim: int = 96
     hidden_dim: int = 192
-    dropout: float = 0.15
-    num_layers: int = 2
+    dropout: float = 0.1
+    num_layers: int = 3
     num_heads: int = 4
     recent_seq_len: int = 32
     memory_slots: int = 12
     ffn_multiplier: int = 4
+    feature_cross_layers: int = 1
 
 
 @dataclass(slots=True)
@@ -37,9 +38,14 @@ class TrainConfig:
     epochs: int = 5
     batch_size: int = 64
     learning_rate: float = 1e-3
+    muon_learning_rate: float = 2e-2
     weight_decay: float = 1e-4
     num_workers: int = 0
     device: str = "auto"
+    optimizer_name: str = "adamw"
+    loss_name: str = "bce"
+    pairwise_weight: float = 0.5
+    grad_clip_norm: float = 0.0
     output_dir: str = "outputs/baseline"
 
 

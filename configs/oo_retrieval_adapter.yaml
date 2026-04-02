@@ -1,17 +1,22 @@
 data:
   dataset_path: data/datasets--TAAC2026--data_sample_1000/snapshots/2f0ddba721a8323495e73d5229c836df5d603b39/sample_data.parquet
-  max_seq_len: 96
+  max_seq_len: 128
   max_feature_tokens: 64
   max_event_features: 12
   val_ratio: 0.2
   label_action_type: 2
 
 model:
-  name: creatorwyx_din_adapter
+  name: o_o_retrieval_adapter
   vocab_size: 200003
   embedding_dim: 96
   hidden_dim: 192
-  dropout: 0.15
+  dropout: 0.1
+  num_layers: 2
+  num_heads: 4
+  recent_seq_len: 32
+  memory_slots: 8
+  ffn_multiplier: 4
 
 train:
   seed: 42
@@ -22,5 +27,6 @@ train:
   num_workers: 0
   device: auto
   optimizer_name: adamw
-  loss_name: bce
-  output_dir: outputs/creatorwyx_din_adapter
+  loss_name: bce_pairwise
+  pairwise_weight: 0.35
+  output_dir: outputs/oo_retrieval_adapter

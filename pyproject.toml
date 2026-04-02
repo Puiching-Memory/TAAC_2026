@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "taac2026"
+version = "0.1.0"
+description = "TAAC 2026 experiment workspace for unified recommendation modeling, evaluation, and analysis."
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+license = { text = "MIT" }
+dependencies = [
+  "huggingface_hub>=1.8.0",
+  "matplotlib>=3.10.8",
+  "pandas>=3.0.2",
+  "pyarrow>=23.0.1",
+  "pyyaml>=6.0.3",
+  "scikit-learn>=1.8.0",
+  "torch>=2.11.0",
+  "tqdm>=4.67.3",
+]
+
+[project.scripts]
+taac-train = "taac2026.train:main"
+taac-evaluate = "taac2026.evaluate:main"
+taac-batch-evaluate = "taac2026.batch_evaluate:main"
+taac-truncation-sweep = "taac2026.truncation_sweep:main"
+taac-visualize = "taac2026.visualize:main"
+taac-feature-schema = "taac2026.feature_engineering.cli:main"
+taac-feature-profile = "taac2026.feature_engineering.analysis_cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["taac2026"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }

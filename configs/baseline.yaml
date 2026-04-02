@@ -1,15 +1,19 @@
 data:
   dataset_path: data/datasets--TAAC2026--data_sample_1000/snapshots/2f0ddba721a8323495e73d5229c836df5d603b39/sample_data.parquet
-  max_seq_len: 96
+  max_seq_len: 256
   max_feature_tokens: 64
   val_ratio: 0.2
   label_action_type: 2
 
 model:
+  name: grok_baseline
   vocab_size: 200003
   embedding_dim: 96
   hidden_dim: 192
-  dropout: 0.15
+  dropout: 0.1
+  num_layers: 3
+  num_heads: 4
+  ffn_multiplier: 4
 
 train:
   seed: 42

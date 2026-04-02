@@ -21,4 +21,6 @@ train:
   weight_decay: 0.0001
   num_workers: 0
   device: auto
+  optimizer_name: adamw
+  loss_name: bce
   output_dir: outputs/creatorwyx_grouped_din_adapter

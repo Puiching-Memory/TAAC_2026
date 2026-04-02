@@ -24,6 +24,8 @@ class EncodedSample:
     dense_features: list[float]
     label: float
     timestamp: int
+    user_index: int
+    item_index: int
 
 
 SEQUENCE_GROUP_IDS = {
@@ -218,6 +220,8 @@ def encode_row(row: pd.Series, config: DataConfig, vocab_size: int) -> EncodedSa
         dense_features=dense_features,
         label=label,
         timestamp=int(row["timestamp"]),
+        user_index=int(row["user_index"]),
+        item_index=int(row["item_index"]),
     )
 
 
@@ -256,6 +260,8 @@ def collate_samples(batch: list[EncodedSample]) -> dict[str, torch.Tensor]:
     dense_features = torch.zeros((batch_size, dense_dim), dtype=torch.float32)
     labels = torch.zeros(batch_size, dtype=torch.float32)
     timestamps = torch.zeros(batch_size, dtype=torch.long)
+    user_indices = torch.zeros(batch_size, dtype=torch.long)
+    item_indices = torch.zeros(batch_size, dtype=torch.long)
 
     for row_index, sample in enumerate(batch):
         candidate_length = len(sample.candidate_tokens)
@@ -282,6 +288,8 @@ def collate_samples(batch: list[EncodedSample]) -> dict[str, torch.Tensor]:
         dense_features[row_index] = torch.tensor(sample.dense_features, dtype=torch.float32)
         labels[row_index] = sample.label
         timestamps[row_index] = sample.timestamp
+        user_indices[row_index] = sample.user_index
+        item_indices[row_index] = sample.item_index
 
     return {
         "candidate_tokens": candidate_tokens,
@@ -297,12 +305,16 @@ def collate_samples(batch: list[EncodedSample]) -> dict[str, torch.Tensor]:
         "dense_features": dense_features,
         "labels": labels,
         "timestamps": timestamps,
+        "user_indices": user_indices,
+        "item_indices": item_indices,
     }
 
 
 def load_dataloaders(config: DataConfig, vocab_size: int, batch_size: int, num_workers: int) -> tuple[DataLoader, DataLoader, dict[str, float]]:
     dataframe = pd.read_parquet(Path(config.dataset_path))
     dataframe = dataframe.sort_values("timestamp").reset_index(drop=True)
+    dataframe["user_index"] = pd.factorize(dataframe["user_id"].astype(str), sort=False)[0].astype(np.int64)
+    dataframe["item_index"] = pd.factorize(dataframe["item_id"].astype(str), sort=False)[0].astype(np.int64)
     samples = [encode_row(row, config=config, vocab_size=vocab_size) for _, row in dataframe.iterrows()]
 
     split_index = max(1, int(len(samples) * (1.0 - config.val_ratio)))
