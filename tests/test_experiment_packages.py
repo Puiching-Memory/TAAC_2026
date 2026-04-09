@@ -48,6 +48,27 @@ def test_experiment_package_builds_and_runs_forward(module_path: str, test_works
 
 
 @pytest.mark.parametrize(
+    "module_path",
+    [
+        "config.gen.baseline",
+        "config.gen.grok",
+        "config.gen.ctr_baseline",
+        "config.gen.deepcontextnet",
+        "config.gen.interformer",
+        "config.gen.onetrans",
+        "config.gen.hyformer",
+        "config.gen.unirec",
+        "config.gen.uniscaleformer",
+        "config.gen.oo",
+    ],
+)
+def test_experiment_package_owns_its_data_pipeline(module_path: str) -> None:
+    experiment = importlib.import_module(module_path).EXPERIMENT
+
+    assert experiment.build_data_pipeline.__module__ == f"{module_path}.data"
+
+
+@pytest.mark.parametrize(
     "experiment_path",
     [
         "config/gen/baseline",
