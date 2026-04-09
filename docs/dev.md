@@ -86,11 +86,11 @@ uv run --with mkdocs-material mkdocs build --strict
 
 仓库现在带有 `.github/workflows/deploy-docs.yml`：
 
-1. 每次 push 到 `main`，都会自动构建文档站。
-2. 构建成功后，会自动把 `site/` 发布到 GitHub Pages。
+1. 每次 push 到 `main`，都会先执行严格构建校验，再运行 `mkdocs gh-deploy --force`。
+2. 构建成功后，CI 会把生成后的静态站推送到 `gh-pages` 分支。
 3. 也可以在 Actions 页手动触发一次 `Deploy Docs`。
 
-第一次启用时，还需要在 GitHub 仓库设置里把 Pages 的 Source 切换为 `GitHub Actions`。
+第一次启用时，还需要在 GitHub 仓库设置里把 Pages 的 Source 切换为 `Deploy from a branch`，并选择 `gh-pages` / `root`。
 
 ## 当前 CLI 的日志与终端行为
 

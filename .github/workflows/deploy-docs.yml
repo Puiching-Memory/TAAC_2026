@@ -7,25 +7,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: github-pages
+  group: deploy-docs
   cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    env:
+      SITE_URL: https://puiching-memory.github.io/TAAC_2026/
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Configure GitHub Pages
-        id: pages
-        uses: actions/configure-pages@v5
+      - name: Configure Git credentials
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,21 +39,7 @@ jobs:
           enable-cache: true
 
       - name: Build MkDocs site
-        run: uvx --with mkdocs-material mkdocs build --strict --site-url "${{ steps.pages.outputs.base_url }}"
+        run: uv run --with mkdocs-material mkdocs build --strict
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Deploy to gh-pages
+        run: uv run --with mkdocs-material mkdocs gh-deploy --force

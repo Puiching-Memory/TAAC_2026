@@ -3,6 +3,7 @@
 site_name: TAAC 2026 Docs
 site_description: TAAC 2026 训练框架、实验包与开发约定
 site_author: TAAC 2026 Team
+site_url: !ENV [SITE_URL, 'https://puiching-memory.github.io/TAAC_2026/']
 docs_dir: docs
 
 theme:
