@@ -142,8 +142,8 @@ class ReferenceBaselineModel(nn.Module):
         return tensor[:, -self.recent_seq_len :]
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        # These optional tensors are produced by `baseline.data`; keeping them
-        # explicit makes the extension contract visible to package authors.
+        # These optional tensors are produced by this package's data pipeline;
+        # keeping them explicit makes the extension contract visible to authors.
         user_tokens = self._require(batch.user_tokens, "user_tokens")
         user_mask = self._require(batch.user_mask, "user_mask")
         candidate_post_tokens = self._require(batch.candidate_post_tokens, "candidate_post_tokens")

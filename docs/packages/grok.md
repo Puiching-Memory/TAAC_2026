@@ -8,14 +8,15 @@
 
 1. 这是当前仓库里一条更激进的本地骨干路线。
 2. 它可以继续作为研究对象演化。
-3. 它的数据管线与训练装配继续复用 `baseline.data` 和 `baseline.utils`，避免重复维护。
+3. 它保留自己的 `data.py`，让原始数据到最终模型输入的路径完整留在包内。
+4. 它的训练装配目前仍复用 `baseline.utils`，避免无意义的 loss/optimizer 重复维护。
 
 ## 结构概览
 
 1. `__init__.py`
    负责默认配置与 `EXPERIMENT` 装配，默认输出改为 `outputs/gen/grok`。
 2. `data.py`
-   直接复用 `baseline.data`。
+   保留 grok 自己的数据处理管线。
 3. `model.py`
    保留原本的 grok 风格 unified backbone。
 4. `utils.py`

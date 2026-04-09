@@ -22,7 +22,7 @@
 1. `__init__.py`
    定义默认配置与 `EXPERIMENT`，并把 baseline 明确命名为 `baseline_reference`。
 2. `data.py`
-   共享 parquet 数据管线。这个文件故意保持稳定，因为 `ctr_baseline`、`deepcontextnet`、`unirec`、`uniscaleformer`、`symbiosis` 等包都会复用它。
+   baseline 自己的 parquet 数据管线。它保持可读、可改，但不再作为其他实验包的共享数据入口。
 3. `model.py`
    面向扩展的参考模型，采用“显式字段编码 + target-aware history pooling + 融合 MLP”的结构，而不是一开始就塞进复杂 unified backbone。
 4. `utils.py`
@@ -30,16 +30,17 @@
 
 ## 为什么这样拆
 
-当前仓库里真正可复用、也最容易被其他实验包依赖的，其实一直都是 `baseline.data` 和 `baseline.utils`。之前的问题是模型身份已经偏向 grok 方案，但目录名仍叫 baseline，导致：
+之前的问题是模型身份已经偏向 grok 方案，但目录名仍叫 baseline，导致：
 
 1. 新用户容易误以为 baseline 就代表推荐的默认架构方向。
-2. 其他实验包复用 `baseline.data` / `baseline.utils` 时，语义上也变得混乱。
+2. baseline 的教学职责和其他实验包的研究语义容易混在一起。
 3. 文档里很难同时表达“这是 starter”与“这是当前更激进的本地方案”。
 
-现在这层职责被拆开了：
+现在这层职责被拆开了，而且数据边界也更明确：
 
 1. `baseline`：starter / reference package。
 2. `grok`：原来从 baseline 演化出来的本地研究方案。
+3. 每个实验包自己维护 `data.py`，从原始数据读取到最终模型输入都留在包内。
 
 ## 推荐扩展点
 

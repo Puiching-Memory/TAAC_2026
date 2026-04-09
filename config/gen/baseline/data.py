@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""Shared parquet-to-batch pipeline used by the baseline family.
+"""Reference parquet-to-batch pipeline for the baseline experiment.
 
-The baseline package intentionally keeps the data layer stable and reusable so
-other experiment packages can focus on their own model changes. That is why
-several sibling packages import `baseline.data` directly.
+This file stays package-local on purpose: each experiment package owns its
+raw-data parsing and row-to-batch encoding logic so model behavior remains
+reproducible and easy to trace back to the package itself.
 """
 
 import math
