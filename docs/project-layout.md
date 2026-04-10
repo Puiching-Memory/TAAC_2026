@@ -20,7 +20,7 @@ icon: material/file-tree-outline
 | -------------- | ------------------------------------------------------------------------------------------- |
 | `src/taac2026` | 共享训练/评估/搜索底座，包括实验加载、指标、运行时与调度逻辑，以及可被 CLI / 测试复用的实现模块。 |
 | `config/gen`   | 目录式实验包代码，每个实验自己管理数据、模型与优化器装配；配套说明统一放在 `docs/packages`。 |
-| `tests`        | 回归测试入口，覆盖实验包加载、数据管线、前向构建、train/evaluate 闭环与 checkpoint 兼容性。 |
+| `tests`        | 回归测试入口，按 `unit` / `integration` / `smoke` / `fault` 分层覆盖实验包加载、数据管线、profiling、search worker、train/evaluate 闭环与 checkpoint 兼容性。 |
 | `tools`        | 仓库维护脚本与薄入口，通常负责 repo 默认路径、批处理入口或一次性辅助任务，不承载核心业务逻辑。 |
 | `figures`      | 仓库根目录展示图表的产物。                                                                  |
 | `docs`         | 文档站内容本体，包括 `docs/stages`、`docs/packages`、`docs/papers` 等统一文档入口。         |

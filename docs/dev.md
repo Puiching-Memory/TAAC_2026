@@ -21,6 +21,31 @@ icon: material/wrench-cog-outline
 uv run pytest tests -q
 ```
 
+为了把“主流程 smoke 回归”和“边界/故障/纯逻辑回归”拆开，当前测试约定额外使用这些 marker：
+
+```bash
+uv run pytest -m unit -q
+uv run pytest -m integration -q
+uv run pytest -m "smoke or fault" -q
+```
+
+其中：
+
+1. `unit`：纯逻辑、小输入、无重型训练闭环的快速回归。
+2. `integration`：跨模块协作、真实 experiment/data pipeline/search flow 的回归。
+3. `smoke`：最小可运行端到端验证，重点回答“当前主流程还能不能跑”。
+4. `fault`：损坏输入、缺字段、worker 失败、budget 不满足等异常路径验证。
+
+如果需要看核心模块覆盖率，而不把 `pytest-cov` 固化成项目常驻依赖，直接使用一次性环境：
+
+```bash
+uv run --with pytest-cov pytest \
+  --cov=src/taac2026/domain \
+  --cov=src/taac2026/application/search \
+  --cov=src/taac2026/application/training \
+  --cov-report=term-missing
+```
+
 ## 仓库维护脚本
 
 repo 专用工具脚本放在 `tools/`，不要混进 `src/taac2026` 的运行时代码里。
@@ -41,6 +66,17 @@ uv run taac-clean-pycache --dry-run
 3. `baseline`、`grok`、`ctr_baseline`、`deepcontextnet`、`interformer`、`onetrans`、`hyformer`、`unirec`、`uniscaleformer`、`oo` 的前向构建。
 4. `train` / `evaluate` 基本闭环。
 5. checkpoint 兼容性校验。
+6. `metrics`、`profiling`、experiment payload/loader、search worker/trial/service helper 的边界与故障路径。
+
+## 当前测试策略
+
+当前默认策略是“全量回归仍保持轻量，但高风险基础模块必须有直接单元覆盖”：
+
+1. `src/taac2026/domain` 重点补边界值和空输入。
+2. `src/taac2026/application/search` 重点补 budget、worker 生命周期和失败收敛。
+3. `src/taac2026/application/training` 重点补 profiling、latency 和样本数/FLOPs 估算。
+4. 数据管线除了固定 happy-path sample 外，也要覆盖空序列、缺特征、截断边界和 group 分布。
+5. 改动上述模块时，优先补对应 `unit` 或 `fault` 测试；只有跨模块行为改变时才优先补 `integration`。
 
 ## 新增实验包时至少要补什么
 

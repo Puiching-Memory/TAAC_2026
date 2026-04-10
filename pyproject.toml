@@ -44,8 +44,22 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
 markers = [
 	"unit: fast unit tests for pure logic and local contracts",
 	"integration: higher-level workflow tests across module boundaries",
+	"smoke: lightweight end-to-end regressions for core runtime flows",
+	"fault: malformed-input and failure-path regressions",
 ]
+
+[tool.coverage.run]
+source = [
+	"src/taac2026/domain",
+	"src/taac2026/application/search",
+	"src/taac2026/application/training",
+]
+branch = true
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true

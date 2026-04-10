@@ -16,6 +16,7 @@ def test_workspace(tmp_path: Path) -> TestWorkspace:
     return create_test_workspace(tmp_path)
 
 
+@pytest.mark.unit
 def test_parse_args_accepts_budget_overrides() -> None:
     args = parse_args(
         [
@@ -68,6 +69,8 @@ def test_parse_args_accepts_budget_overrides() -> None:
     assert args.json is True
 
 
+@pytest.mark.integration
+@pytest.mark.smoke
 def test_run_search_writes_study_artifacts(test_workspace: TestWorkspace) -> None:
     experiment_path = test_workspace.write_experiment_package()
     experiment = load_experiment_package(experiment_path)
@@ -93,6 +96,8 @@ def test_run_search_writes_study_artifacts(test_workspace: TestWorkspace) -> Non
         assert "dynamic value space" not in str(trial["user_attrs"].get("trial_error", ""))
 
 
+@pytest.mark.integration
+@pytest.mark.smoke
 def test_run_search_prunes_trials_that_violate_budget(test_workspace: TestWorkspace) -> None:
     experiment_path = test_workspace.write_experiment_package()
     experiment = load_experiment_package(experiment_path)
@@ -112,6 +117,8 @@ def test_run_search_prunes_trials_that_violate_budget(test_workspace: TestWorksp
     assert (study_dir / "study_summary.json").exists()
 
 
+@pytest.mark.integration
+@pytest.mark.smoke
 def test_run_search_auto_falls_back_to_sequential_when_no_gpu(test_workspace: TestWorkspace, monkeypatch) -> None:
     experiment_path = test_workspace.write_experiment_package()
     experiment = load_experiment_package(experiment_path)
@@ -132,6 +139,7 @@ def test_run_search_auto_falls_back_to_sequential_when_no_gpu(test_workspace: Te
     assert report["trial_state_counts"]["COMPLETE"] == 1
 
 
+@pytest.mark.unit
 def test_format_search_report_is_compact() -> None:
     report = {
         "experiment_name": "demo",
@@ -168,12 +176,14 @@ def test_format_search_report_is_compact() -> None:
     assert "'trials':" not in rendered
 
 
+@pytest.mark.unit
 def test_parse_gpu_indices_handles_empty_values() -> None:
     assert parse_gpu_indices(None) is None
     assert parse_gpu_indices("") is None
     assert parse_gpu_indices("0, 2,5") == {0, 2, 5}
 
 
+@pytest.mark.unit
 def test_launchable_devices_respects_memory_slots_and_running_jobs() -> None:
     devices = [
         GpuDevice(index=0, name="gpu0", total_memory_mb=81920, used_memory_mb=40960, free_memory_mb=40960),

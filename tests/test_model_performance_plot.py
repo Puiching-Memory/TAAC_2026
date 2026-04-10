@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from taac2026.application.reporting import cli as reporting_cli
 from taac2026.reporting.model_performance_plot import (
     DISPLAY_NAMES,
@@ -11,6 +13,8 @@ from taac2026.reporting.model_performance_plot import (
     merge_best_search_points,
     plot_model_performance,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _summary_payload(*, auc: float, parameter_size_mb: float, total_parameters: int, total_tflops: float) -> dict:

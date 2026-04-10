@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from taac2026.application.maintenance.clean_pycache import clean_pycache, find_pycache_dirs, main
+
+pytestmark = pytest.mark.unit
 
 
 def _write_cache_file(path: Path, *, size: int = 3) -> None:

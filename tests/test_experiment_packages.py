@@ -9,6 +9,8 @@ import torch
 from taac2026.infrastructure.experiments.loader import load_experiment_package
 from tests.support import TestWorkspace, create_test_workspace, prepare_experiment
 
+pytestmark = [pytest.mark.integration, pytest.mark.smoke]
+
 
 @pytest.fixture
 def test_workspace(tmp_path: Path) -> TestWorkspace:

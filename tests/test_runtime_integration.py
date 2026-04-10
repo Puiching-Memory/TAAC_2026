@@ -19,6 +19,8 @@ from tests.support import (
     create_test_workspace,
 )
 
+pytestmark = [pytest.mark.integration, pytest.mark.smoke]
+
 
 @pytest.fixture
 def test_workspace(tmp_path: Path) -> TestWorkspace:

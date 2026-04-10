@@ -29,16 +29,32 @@ def build_feature(
     return payload
 
 
-def build_row(index: int, timestamp: int, positive: bool, user_id: str, item_id: int) -> dict[str, object]:
+def build_row(
+    index: int,
+    timestamp: int,
+    positive: bool,
+    user_id: str,
+    item_id: int,
+    *,
+    label: list[dict[str, object]] | None = None,
+    user_feature: list[dict[str, object]] | None = None,
+    item_feature: list[dict[str, object]] | None = None,
+    context_feature: list[dict[str, object]] | None = None,
+    cross_feature: list[dict[str, object]] | None = None,
+    seq_feature: dict[str, list[dict[str, object]] | None] | None = None,
+) -> dict[str, object]:
     return {
         "user_id": user_id,
         "item_id": item_id,
         "timestamp": timestamp,
-        "label": [{"action_type": 2 if positive else 1}],
-        "item_feature": [build_feature(70, int_value=(index % 3) + 1)],
-        "user_feature": [build_feature(8, int_value=(index % 2) + 1)],
-        "context_feature": [build_feature(17, int_value=(index % 4) + 1)],
-        "seq_feature": {
+        "label": label if label is not None else [{"action_type": 2 if positive else 1}],
+        "item_feature": item_feature if item_feature is not None else [build_feature(70, int_value=(index % 3) + 1)],
+        "user_feature": user_feature if user_feature is not None else [build_feature(8, int_value=(index % 2) + 1)],
+        "context_feature": context_feature if context_feature is not None else [build_feature(17, int_value=(index % 4) + 1)],
+        "cross_feature": cross_feature,
+        "seq_feature": seq_feature
+        if seq_feature is not None
+        else {
             "action_seq": [
                 build_feature(11, int_array=[index + 1, index + 2, index + 3]),
                 build_feature(99, int_array=[timestamp - 30, timestamp - 20, timestamp - 10]),
@@ -55,6 +71,11 @@ def build_row(index: int, timestamp: int, positive: bool, user_id: str, item_id:
     }
 
 
+def write_dataset(path: Path, rows: list[dict[str, object]]) -> None:
+    table = pa.Table.from_pylist(rows)
+    pq.write_table(table, path, row_group_size=2)
+
+
 def write_sample_dataset(path: Path) -> None:
     base_timestamp = 1_770_000_000
     rows = [
@@ -65,8 +86,7 @@ def write_sample_dataset(path: Path) -> None:
         build_row(4, base_timestamp + 600, True, "u2", 104),
         build_row(5, base_timestamp + 400, False, "u4", 105),
     ]
-    table = pa.Table.from_pylist(rows)
-    pq.write_table(table, path, row_group_size=2)
+    write_dataset(path, rows)
 
 
 def masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -401,10 +421,13 @@ __all__ = [
     "DisabledAuxiliaryLoss",
     "TestWorkspace",
     "TinyExperimentModel",
+    "build_feature",
     "build_local_data_pipeline",
     "build_local_loss_stack",
     "build_local_model_component",
     "build_local_optimizer_component",
+    "build_row",
     "create_test_workspace",
     "prepare_experiment",
+    "write_dataset",
 ]

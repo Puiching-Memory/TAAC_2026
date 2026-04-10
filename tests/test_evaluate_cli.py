@@ -18,6 +18,8 @@ def test_workspace(tmp_path: Path) -> TestWorkspace:
     return create_test_workspace(tmp_path)
 
 
+@pytest.mark.integration
+@pytest.mark.smoke
 def test_evaluate_checkpoint_accepts_compatible_checkpoint(test_workspace: TestWorkspace) -> None:
     experiment_path = test_workspace.write_experiment_package()
     experiment = load_experiment_package(experiment_path)
@@ -45,6 +47,8 @@ def test_evaluate_checkpoint_accepts_compatible_checkpoint(test_workspace: TestW
     assert output_path.exists()
 
 
+@pytest.mark.integration
+@pytest.mark.smoke
 def test_evaluate_checkpoint_rejects_incompatible_checkpoint(test_workspace: TestWorkspace) -> None:
     experiment_path = test_workspace.write_experiment_package(hidden_dim=16, embedding_dim=16, num_heads=4)
     bad_model_config = ModelConfig(
@@ -79,6 +83,7 @@ def test_evaluate_checkpoint_rejects_incompatible_checkpoint(test_workspace: Tes
         )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("argv", "expected_command", "expected_value"),
     [
@@ -106,11 +111,13 @@ def test_parse_args_routes_subcommands(argv, expected_command, expected_value) -
         assert args.experiment_paths == expected_value
 
 
+@pytest.mark.unit
 def test_parse_args_requires_explicit_batch_experiments() -> None:
     with pytest.raises(SystemExit):
         parse_args(["batch"])
 
 
+@pytest.mark.unit
 def test_batch_report_sort_prefers_budget_compliant_runs() -> None:
     records = [
         {
