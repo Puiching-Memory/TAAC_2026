@@ -42,7 +42,11 @@ def test_evaluate_checkpoint_accepts_compatible_checkpoint(test_workspace: TestW
 
     assert payload["model_name"] == "temp_experiment"
     assert "coverage" in payload["metrics"]["gauc"]
+    assert payload["profiling"]["schema_version"] == 1
+    assert payload["runtime_optimization"]["torch_compile"]["active"] is False
+    assert "external_profilers" in payload["profiling"]
     assert output_path.exists()
+    assert (test_workspace.root / "profiling" / "external_profilers.json").exists()
 
 
 def test_evaluate_checkpoint_rejects_incompatible_checkpoint(test_workspace: TestWorkspace) -> None:
@@ -79,10 +83,42 @@ def test_evaluate_checkpoint_rejects_incompatible_checkpoint(test_workspace: Tes
         )
 
 
+def test_evaluate_checkpoint_enables_cpu_bfloat16_amp_when_preconfigured(test_workspace: TestWorkspace) -> None:
+    experiment_path = test_workspace.write_experiment_package()
+    experiment = load_experiment_package(experiment_path)
+    experiment.train.enable_amp = True
+    experiment.train.amp_dtype = "bfloat16"
+    _, _, data_stats = load_dataloaders(
+        config=experiment.data,
+        vocab_size=experiment.model.vocab_size,
+        batch_size=experiment.train.batch_size,
+        eval_batch_size=experiment.train.resolved_eval_batch_size,
+        num_workers=experiment.train.num_workers,
+        seed=experiment.train.seed,
+    )
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+    checkpoint_path = test_workspace.root / "compatible_amp.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+
+    output_path = test_workspace.root / "evaluation_amp.json"
+    payload = evaluate_checkpoint(
+        experiment_path=experiment_path,
+        checkpoint_path=checkpoint_path,
+        output_path=output_path,
+        experiment=experiment,
+    )
+
+    assert payload["runtime_optimization"]["amp"]["requested"] is True
+    assert payload["runtime_optimization"]["amp"]["active"] is True
+    assert payload["runtime_optimization"]["amp"]["resolved_dtype"] == "bfloat16"
+    assert "--amp --amp-dtype bfloat16" in payload["profiling"]["external_profilers"]["tools"]["ncu"]["suggested_command_string"]
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_command", "expected_value"),
     [
         (["single", "--experiment", "config/gen/oo", "--run-dir", "outputs/example"], "single", "outputs/example"),
+        (["single", "--experiment", "config/gen/oo", "--compile", "--amp", "--amp-dtype", "bfloat16"], "single", None),
         (
             [
                 "batch",
@@ -101,9 +137,47 @@ def test_parse_args_routes_subcommands(argv, expected_command, expected_value) -
     assert args.command == expected_command
     if expected_command == "single":
         assert args.experiment == "config/gen/oo"
-        assert args.run_dir == expected_value
+        if expected_value is not None:
+            assert args.run_dir == expected_value
     else:
         assert args.experiment_paths == expected_value
+
+
+def test_parse_args_accepts_runtime_optimization_flags() -> None:
+    args = parse_args([
+        "single",
+        "--experiment",
+        "config/gen/oo",
+        "--compile",
+        "--compile-backend",
+        "inductor",
+        "--compile-mode",
+        "max-autotune",
+        "--amp",
+        "--amp-dtype",
+        "bfloat16",
+    ])
+
+    assert args.compile is True
+    assert args.compile_backend == "inductor"
+    assert args.compile_mode == "max-autotune"
+    assert args.amp is True
+    assert args.amp_dtype == "bfloat16"
+
+
+def test_parse_args_accepts_batch_runtime_optimization_flags() -> None:
+    args = parse_args([
+        "batch",
+        "--experiment-paths",
+        "config/gen/baseline",
+        "config/gen/interformer",
+        "--compile",
+        "--amp",
+    ])
+
+    assert args.command == "batch"
+    assert args.compile is True
+    assert args.amp is True
 
 
 def test_parse_args_requires_explicit_batch_experiments() -> None:

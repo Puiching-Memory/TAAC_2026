@@ -27,10 +27,22 @@ uv sync --locked
     uv run taac-train --experiment config/gen/baseline
     ```
 
+    可选运行时优化示例：
+
+    ```bash
+    uv run taac-train --experiment config/gen/baseline --compile --amp --amp-dtype bfloat16
+    ```
+
 === "评估"
 
     ```bash
     uv run taac-evaluate single --experiment config/gen/baseline
+    ```
+
+    如果要按同一套运行时优化路径复测：
+
+    ```bash
+    uv run taac-evaluate single --experiment config/gen/baseline --compile --amp --amp-dtype bfloat16
     ```
 
 === "搜索"
@@ -78,6 +90,8 @@ EXPERIMENT.train.output_dir = "outputs/custom/oo"
 | `summary.json`         | 保存最佳指标、latency、`model_profile`、`inference_profile`、`compute_profile`。 |
 | `training_curves.json` | 保存逐 epoch 的 train loss、val loss 和 val AUC。                                |
 | `training_curves.png`  | 训练过程中持续覆盖刷新的曲线图。                                                 |
+
+如果启用了 `torch.compile` 或 AMP，`summary.json` 和评估输出里还会包含 `runtime_optimization` 字段，用来记录请求状态、实际是否生效，以及可能的降级原因。
 
 ## 5. 初次浏览建议
 

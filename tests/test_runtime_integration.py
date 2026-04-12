@@ -88,9 +88,16 @@ def test_experiment_package_runs_end_to_end_with_visualization_switch(test_works
 
     assert summary is not None
     assert "best_val_auc" in summary
+    assert "profiling" in summary
     assert "model_profile" in summary
     assert "inference_profile" in summary
     assert "compute_profile" in summary
+    assert summary["profiling"]["schema_version"] == 1
+    assert summary["profiling"]["latency"]["mean_latency_ms_per_sample"] == summary["mean_latency_ms_per_sample"]
+    assert summary["profiling"]["model_profile"]["parameter_size_mb"] == summary["model_profile"]["parameter_size_mb"]
+    assert "external_profilers" in summary["profiling"]
+    assert summary["runtime_optimization"]["torch_compile"]["requested"] is False
+    assert payload["runtime_optimization"]["amp"]["requested"] is False
     assert summary["model_profile"]["parameter_size_mb"] > 0
     assert summary["inference_profile"]["estimated_end_to_end_inference_seconds"] >= 0
     assert summary["compute_profile"]["estimated_end_to_end_tflops_total"] > 0

@@ -9,7 +9,12 @@ from ...domain.metrics import compute_classification_metrics, safe_mean
 from ...infrastructure.io.console import create_progress_bar, logger
 from ...infrastructure.io.files import ensure_dir, write_json
 from .artifacts import write_training_curve_artifacts
+from .external_profilers import (
+    build_training_external_profiler_plan,
+    write_external_profiler_plan_artifacts,
+)
 from .profiling import (
+    build_profiling_report,
     collect_compute_profile,
     collect_inference_profile,
     collect_loader_outputs,
@@ -18,11 +23,13 @@ from .profiling import (
     select_device,
     set_random_seed,
 )
+from .runtime_optimization import prepare_runtime_execution
 
 
 def run_training(
     experiment: ExperimentSpec,
     *,
+    experiment_path: str | None = None,
     show_progress: bool = False,
 ) -> dict[str, Any]:
     output_dir = ensure_dir(experiment.train.output_dir)
@@ -44,6 +51,8 @@ def run_training(
     )
     model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
     model = model.to(device)
+    runtime_execution = prepare_runtime_execution(model, experiment.train, device)
+    execution_model = runtime_execution.execution_model
     loss_fn, auxiliary_loss = experiment.build_loss_stack(
         experiment.data,
         experiment.model,
@@ -52,16 +61,12 @@ def run_training(
         device,
     )
     optimizer = experiment.build_optimizer_component(model, experiment.train)
-    model_profile = collect_model_profile(model, val_loader, device)
-    compute_profile = collect_compute_profile(
-        experiment=experiment,
-        model=model,
-        loss_fn=loss_fn,
-        train_loader=train_loader,
-        val_loader=val_loader,
-        data_stats=data_stats,
-        device=device,
-        model_profile=model_profile,
+    model_profile = collect_model_profile(model, val_loader, device, runtime_execution=runtime_execution)
+    logger.info(
+        "runtime optimization: compile_active={} amp_active={} amp_dtype={}",
+        runtime_execution.compile_active,
+        runtime_execution.amp_active,
+        runtime_execution.amp_resolved_dtype,
     )
 
     train_losses: list[float] = []
@@ -79,23 +84,38 @@ def run_training(
 
     try:
         for epoch in range(1, experiment.train.epochs + 1):
-            model.train()
+            execution_model.train()
             batch_losses: list[float] = []
             for batch in train_loader:
                 batch = batch.to(device)
                 optimizer.zero_grad(set_to_none=True)
-                logits = model(batch)
-                loss = loss_fn(logits, batch.labels)
+                with runtime_execution.autocast_context():
+                    logits = execution_model(batch)
+                    loss = loss_fn(logits, batch.labels)
                 if getattr(auxiliary_loss, "enabled", False) and getattr(auxiliary_loss, "requires_aux", False):
                     raise RuntimeError("Auxiliary losses requiring extra tensors are not implemented")
-                loss.backward()
-                if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), experiment.train.grad_clip_norm)
-                optimizer.step()
+                if runtime_execution.gradient_scaler is not None:
+                    runtime_execution.gradient_scaler.scale(loss).backward()
+                    if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
+                        runtime_execution.gradient_scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), experiment.train.grad_clip_norm)
+                    runtime_execution.gradient_scaler.step(optimizer)
+                    runtime_execution.gradient_scaler.update()
+                else:
+                    loss.backward()
+                    if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), experiment.train.grad_clip_norm)
+                    optimizer.step()
                 batch_losses.append(float(loss.detach().cpu().item()))
 
             train_loss = safe_mean(batch_losses)
-            val_logits, val_labels, val_groups, val_loss = collect_loader_outputs(model, val_loader, device, loss_fn)
+            val_logits, val_labels, val_groups, val_loss = collect_loader_outputs(
+                execution_model,
+                val_loader,
+                device,
+                loss_fn,
+                runtime_execution=runtime_execution,
+            )
             val_metrics = compute_classification_metrics(val_labels, val_logits, val_groups)
             val_auc = float(val_metrics["auc"])
 
@@ -113,6 +133,7 @@ def run_training(
                         "epoch": epoch,
                         "model_state_dict": model.state_dict(),
                         "metrics": val_metrics,
+                        "runtime_optimization": runtime_execution.summary(),
                     },
                     output_dir / "best.pt",
                 )
@@ -150,19 +171,49 @@ def run_training(
             progress_bar.close()
 
     latency = measure_latency(
-        model,
+        execution_model,
         val_loader,
         device,
         warmup_steps=experiment.train.latency_warmup_steps,
         measure_steps=experiment.train.latency_measure_steps,
+        runtime_execution=runtime_execution,
     )
-    inference_profile = collect_inference_profile(experiment, val_loader, latency)
+    inference_profile = collect_inference_profile(experiment, int(data_stats.val_size), latency)
+    compute_profile = collect_compute_profile(
+        experiment=experiment,
+        model=model,
+        loss_fn=loss_fn,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        data_stats=data_stats,
+        device=device,
+        model_profile=model_profile,
+        latency=latency,
+        runtime_execution=runtime_execution,
+    )
+    external_profilers = build_training_external_profiler_plan(
+        device=str(device),
+        output_dir=output_dir,
+        experiment_path=experiment_path,
+        train_config=experiment.train,
+    )
+    write_external_profiler_plan_artifacts(external_profilers)
+    profiling = build_profiling_report(
+        device=device,
+        latency=latency,
+        model_profile=model_profile,
+        inference_profile=inference_profile,
+        compute_profile=compute_profile,
+        external_profilers=external_profilers,
+    )
 
     summary = {
         "model_name": experiment.model.name,
         "best_epoch": best_epoch,
         "best_val_auc": best_auc,
         "metrics": best_metrics,
+        "profiling": profiling,
+        "runtime_optimization": runtime_execution.summary(),
         "model_profile": model_profile,
         "compute_profile": compute_profile,
         "inference_profile": inference_profile,

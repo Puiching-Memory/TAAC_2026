@@ -21,6 +21,19 @@ icon: material/wrench-cog-outline
 uv run pytest tests -q
 ```
 
+如果你刚改了运行时优化相关逻辑，至少再补跑下面这组更有针对性的回归：
+
+```bash
+uv run pytest tests/test_search.py tests/test_profiling.py tests/test_evaluate_cli.py tests/test_runtime_integration.py tests/test_runtime_optimization.py -q
+```
+
+运行时优化当前约束：
+
+1. `torch.compile` 默认关闭，必须显式通过配置或 CLI 开启。
+2. AMP 默认关闭。
+3. CPU 路径只实际启用 `bfloat16` autocast；CPU `float16` 请求会自动降级为关闭。
+4. 搜索预算探针、训练、评估、latency profile 和外部 profiler 复现命令必须保持同一套 runtime optimization 参数。
+
 ## 仓库维护脚本
 
 repo 专用工具脚本放在 `tools/`，不要混进 `src/taac2026` 的运行时代码里。

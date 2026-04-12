@@ -59,6 +59,11 @@ class TrainConfig:
     latency_warmup_steps: int = 2
     latency_measure_steps: int = 8
     device: str | None = None
+    enable_torch_compile: bool = False
+    torch_compile_backend: str | None = None
+    torch_compile_mode: str | None = None
+    enable_amp: bool = False
+    amp_dtype: str = "float16"
     switches: dict[str, bool] = field(default_factory=dict)
 
     @property

@@ -12,6 +12,7 @@ from ..training.profiling import (
     measure_latency,
     select_device,
 )
+from ..training.runtime_optimization import prepare_runtime_execution
 from ..training.service import run_training
 
 
@@ -58,17 +59,20 @@ def profile_trial_budget(experiment: ExperimentSpec) -> dict[str, Any]:
     del train_loader
     model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
     model = model.to(device)
+    runtime_execution = prepare_runtime_execution(model, experiment.train, device)
+    execution_model = runtime_execution.execution_model
 
     try:
-        model_profile = collect_model_profile(model, val_loader, device)
+        model_profile = collect_model_profile(model, val_loader, device, runtime_execution=runtime_execution)
         latency = measure_latency(
-            model,
+            execution_model,
             val_loader,
             device,
             warmup_steps=experiment.train.latency_warmup_steps,
             measure_steps=experiment.train.latency_measure_steps,
+            runtime_execution=runtime_execution,
         )
-        inference_profile = collect_inference_profile(experiment, val_loader, latency)
+        inference_profile = collect_inference_profile(experiment, int(data_stats.val_size), latency)
         return {
             "model_profile": model_profile,
             "latency": latency,

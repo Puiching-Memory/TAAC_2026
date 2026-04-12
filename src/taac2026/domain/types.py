@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import torch
+from torch.utils import _pytree
 
 
 @dataclass(slots=True)
@@ -66,6 +67,20 @@ class BatchTensors:
             history_time_gap=move_optional(self.history_time_gap),
             history_group_ids=move_optional(self.history_group_ids),
         )
+
+
+_BATCH_TENSOR_FIELD_NAMES = tuple(field.name for field in fields(BatchTensors))
+
+
+def _flatten_batch_tensors(batch: BatchTensors) -> tuple[list[torch.Tensor | None], tuple[str, ...]]:
+    return [getattr(batch, name) for name in _BATCH_TENSOR_FIELD_NAMES], _BATCH_TENSOR_FIELD_NAMES
+
+
+def _unflatten_batch_tensors(values: list[torch.Tensor | None], context: tuple[str, ...]) -> BatchTensors:
+    return BatchTensors(**dict(zip(context, values, strict=True)))
+
+
+_pytree.register_pytree_node(BatchTensors, _flatten_batch_tensors, _unflatten_batch_tensors)
 
 
 @dataclass(slots=True)

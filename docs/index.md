@@ -87,6 +87,13 @@ hide:
     uv run pytest tests -q
     ```
 
+    如果机器支持，也可以在训练和评估时显式打开运行时优化：
+
+    ```bash
+    uv run taac-train --experiment config/gen/baseline --compile --amp --amp-dtype bfloat16
+    uv run taac-evaluate single --experiment config/gen/baseline --compile --amp --amp-dtype bfloat16
+    ```
+
 === "先看当前实验版图"
 
     先打开[实验包与验证记录](experiments.md)。

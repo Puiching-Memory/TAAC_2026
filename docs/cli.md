@@ -32,12 +32,34 @@ uv run taac-train --experiment config/gen/baseline
 | -------------- | -------------------------- |
 | `--experiment` | 实验包目录路径或模块路径。 |
 | `--run-dir`    | 覆盖默认输出目录。         |
+| `--compile`    | 启用 `torch.compile`。     |
+| `--compile-backend` | 覆盖 `torch.compile` backend。 |
+| `--compile-mode` | 覆盖 `torch.compile` mode。 |
+| `--amp`        | 启用 AMP autocast。        |
+| `--amp-dtype`  | AMP dtype，当前只支持 `float16` / `bfloat16`。 |
 
 如果只想把输出落到单独目录：
 
 ```bash
 uv run taac-train --experiment config/gen/oo --run-dir outputs/smoke/oo_manual
 ```
+
+如果想显式打开运行时优化：
+
+```bash
+uv run taac-train \
+    --experiment config/gen/baseline \
+    --compile \
+    --compile-backend inductor \
+    --amp \
+    --amp-dtype bfloat16
+```
+
+!!! info "运行时优化默认关闭"
+    当前 `torch.compile` 和 AMP 都是显式 opt-in，默认不会影响现有实验包行为。
+
+!!! info "AMP 的当前边界"
+    CUDA 设备上可以使用 `float16` 或 `bfloat16`。CPU 路径当前只会实际启用 `bfloat16` autocast；如果在 CPU 上请求 `float16`，运行时会记录降级原因并继续按普通精度执行。
 
 ## `taac-evaluate`
 
@@ -50,6 +72,16 @@ uv run taac-train --experiment config/gen/oo --run-dir outputs/smoke/oo_manual
 ```bash
 uv run taac-evaluate single --experiment config/gen/baseline
 uv run taac-evaluate single --experiment config/gen/oo --run-dir outputs/smoke/oo
+```
+
+如果要用和训练一致的运行时优化路径评估 checkpoint：
+
+```bash
+uv run taac-evaluate single \
+    --experiment config/gen/baseline \
+    --compile \
+    --amp \
+    --amp-dtype bfloat16
 ```
 
 也可以显式指定 checkpoint 与输出文件：
@@ -78,6 +110,8 @@ uv run taac-evaluate batch --experiment-paths \
     config/gen/uniscaleformer \
     config/gen/oo
 ```
+
+`batch` 也支持和 `single` 相同的 `--compile`、`--compile-backend`、`--compile-mode`、`--amp`、`--amp-dtype` 开关；这些参数会统一应用到该批次里的每个实验。
 
 !!! info "当前行为边界"
     `single` 模式只评估一个实验，不会做任何自动并行派发。`batch` 模式也不会自动忽略错误；如果某个实验缺少 `best.pt`，或者 checkpoint 与当前模型定义不兼容，命令会直接失败。

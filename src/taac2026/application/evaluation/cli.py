@@ -18,6 +18,20 @@ from ...infrastructure.io.console import (
 from .service import _sort_records, evaluate_checkpoint
 
 
+def _apply_runtime_optimization_args(experiment, args: argparse.Namespace) -> None:
+    if getattr(args, "compile", False):
+        experiment.train.enable_torch_compile = True
+    if getattr(args, "compile_backend", None) is not None:
+        experiment.train.enable_torch_compile = True
+        experiment.train.torch_compile_backend = args.compile_backend
+    if getattr(args, "compile_mode", None) is not None:
+        experiment.train.enable_torch_compile = True
+        experiment.train.torch_compile_mode = args.compile_mode
+    if getattr(args, "amp", False):
+        experiment.train.enable_amp = True
+        experiment.train.amp_dtype = args.amp_dtype
+
+
 def _print_batch_table(records: list[dict[str, Any]]) -> None:
     table = Table(title="taac-evaluate batch", box=box.SIMPLE_HEAVY, header_style="bold cyan")
     table.add_column("Rank", justify="right", style="cyan", no_wrap=True)
@@ -45,9 +59,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     single_parser.add_argument("--checkpoint")
     single_parser.add_argument("--output-path")
     single_parser.add_argument("--run-dir")
+    single_parser.add_argument("--compile", action="store_true")
+    single_parser.add_argument("--compile-backend")
+    single_parser.add_argument("--compile-mode")
+    single_parser.add_argument("--amp", action="store_true")
+    single_parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16")
 
     batch_parser = subparsers.add_parser("batch")
     batch_parser.add_argument("--experiment-paths", nargs="+", required=True)
+    batch_parser.add_argument("--compile", action="store_true")
+    batch_parser.add_argument("--compile-backend")
+    batch_parser.add_argument("--compile-mode")
+    batch_parser.add_argument("--amp", action="store_true")
+    batch_parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16")
 
     return parser.parse_args(argv)
 
@@ -59,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         experiment = load_experiment_package(args.experiment)
         if args.run_dir:
             experiment.train.output_dir = args.run_dir
+        _apply_runtime_optimization_args(experiment, args)
         checkpoint = args.checkpoint
         if checkpoint is None and args.run_dir:
             checkpoint = str(Path(args.run_dir) / "best.pt")
@@ -66,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
             experiment_path=args.experiment,
             checkpoint_path=checkpoint,
             output_path=args.output_path,
+            experiment=experiment,
         )
         print_summary_table(
             "taac-evaluate single",
@@ -92,7 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     reports: list[dict[str, Any]] = []
     try:
         for experiment_path in args.experiment_paths:
-            reports.append(evaluate_checkpoint(experiment_path=experiment_path))
+            experiment = load_experiment_package(experiment_path)
+            _apply_runtime_optimization_args(experiment, args)
+            reports.append(evaluate_checkpoint(experiment_path=experiment_path, experiment=experiment))
             if progress_bar is not None:
                 progress_bar.update()
                 progress_bar.set_postfix({"last": experiment_path}, refresh=False)
