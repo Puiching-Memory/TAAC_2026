@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict, dataclass
 import json
+from json import JSONDecodeError
 import os
 from pathlib import Path
 import subprocess
@@ -153,8 +154,12 @@ def _collect_worker_result(worker: SearchWorkerProcess) -> dict[str, Any]:
     stdout, stderr = worker.process.communicate()
     result: dict[str, Any] | None = None
     if worker.result_path.exists():
-        with worker.result_path.open("r", encoding="utf-8") as handle:
-            result = json.load(handle)
+        try:
+            with worker.result_path.open("r", encoding="utf-8") as handle:
+                result = json.load(handle)
+        except (OSError, JSONDecodeError) as exc:
+            message = stderr.strip() or stdout.strip() or str(exc)
+            return {"status": "fail", "trial_error": f"invalid worker result payload: {message}"}
 
     if result is None:
         message = stderr.strip() or stdout.strip() or f"worker exited with code {worker.process.returncode}"

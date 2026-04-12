@@ -97,11 +97,22 @@ uv run --no-project --isolated --with zensical zensical build --clean
 
 这里显式加 `--no-project --isolated`，目的是让文档命令只安装 Zensical 相关依赖，不去解析或同步训练环境里的 `torch` 等项目依赖。CI 同样沿用这套隔离式 docs-only 执行方式，并通过环境变量注入正式部署地址。
 
+## GitHub Actions 自动测试
+
+仓库现在额外带有 `.github/workflows/ci.yml`：
+
+1. `pull_request`、push 到 `main`、以及手动触发都可以执行自动化测试；其中自动触发目前只针对代码、测试、实验配置和 CI 配置相关改动。
+2. workflow 内部统一使用 `uv sync --locked` 初始化环境，然后按 `unit`、`integration` 两层执行 pytest。
+3. 两层测试会在同一条流水线里累积 coverage，并执行 `pyproject.toml` 里配置的 coverage gate。
+4. coverage XML 会以 `coverage-xml` artifact 名称上传，方便后续接可视化或外部服务。
+
+这条 workflow 只负责 CI 测试，不负责文档构建或 GitHub Pages 发布。
+
 ## GitHub Pages 自动发布
 
 仓库现在带有 `.github/workflows/deploy-docs.yml`：
 
-1. 每次 push 到 `main`，都会先在隔离的 docs-only 环境里运行 `zensical build --clean`。
+1. 每次 push 到 `main` 且命中文档相关改动时，都会先在隔离的 docs-only 环境里运行 `zensical build --clean`；当前自动触发范围是 `docs/**`、`mkdocs.yml` 和 workflow 自身。
 2. 构建成功后，CI 会把 `site/` 目录上传成 GitHub Pages artifact，再交给官方 Pages deploy action 发布。
 3. 也可以在 Actions 页手动触发一次 `Deploy Docs`。
 

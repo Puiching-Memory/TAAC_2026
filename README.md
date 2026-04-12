@@ -5,6 +5,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Puiching-Memory/TAAC_2026/actions/workflows/ci.yml">
+    <img src="https://github.com/Puiching-Memory/TAAC_2026/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/Python-3.12%2B-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/PyTorch-2.6%2B-EE4C2C.svg" alt="PyTorch">

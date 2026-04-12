@@ -41,10 +41,14 @@ def binary_pr_auc(labels: np.ndarray, scores: np.ndarray) -> float:
 
 
 def binary_brier(labels: np.ndarray, probabilities: np.ndarray) -> float:
+    if labels.size == 0 or probabilities.size == 0:
+        return 0.0
     return float(np.mean(np.square(probabilities - labels.astype(np.float64))))
 
 
 def binary_logloss(labels: np.ndarray, probabilities: np.ndarray) -> float:
+    if labels.size == 0 or probabilities.size == 0:
+        return 0.0
     clipped = np.clip(probabilities.astype(np.float64), 1.0e-7, 1.0 - 1.0e-7)
     labels = labels.astype(np.float64)
     losses = -(labels * np.log(clipped) + (1.0 - labels) * np.log(1.0 - clipped))

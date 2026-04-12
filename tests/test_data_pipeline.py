@@ -8,7 +8,7 @@ import torch
 
 from config.gen.baseline.data import DENSE_FEATURE_DIM, load_dataloaders
 from taac2026.infrastructure.io.files import stable_hash64
-from tests.support import TestWorkspace, create_test_workspace
+from tests.support import TestWorkspace, build_edge_case_rows, create_test_workspace
 
 
 @pytest.fixture
@@ -79,3 +79,25 @@ def test_train_split_item_logq_tracks_frequency(test_workspace: TestWorkspace) -
     assert item_logq_by_index[repeated_item] > item_logq_by_index[single_item]
     assert item_logq_by_index[repeated_item] == pytest.approx(math.log(2.0 / 3.0), abs=1e-5)
     assert item_logq_by_index[single_item] == pytest.approx(math.log(1.0 / 3.0), abs=1e-5)
+
+
+def test_streaming_pipeline_handles_sparse_and_truncated_sequences(tmp_path: Path) -> None:
+    edge_workspace = create_test_workspace(tmp_path / "edge_cases", rows=build_edge_case_rows())
+    edge_workspace.data_config.max_seq_len = 3
+    train_loader, val_loader, data_stats = load_dataloaders(
+        config=edge_workspace.data_config,
+        vocab_size=257,
+        batch_size=2,
+        eval_batch_size=2,
+        num_workers=0,
+        seed=7,
+    )
+
+    batches = [*train_loader, *val_loader]
+
+    assert data_stats.train_size >= 1
+    assert data_stats.val_size >= 1
+    assert any((batch.sequence_mask.sum(dim=(1, 2)) == 0).any().item() for batch in batches)
+    assert all(torch.isfinite(batch.dense_features).all().item() for batch in batches)
+    assert max(int(batch.sequence_mask.sum(dim=2).max().item()) for batch in batches) <= edge_workspace.data_config.max_seq_len
+    assert max(int(batch.history_group_ids.max().item()) for batch in batches) <= len(edge_workspace.data_config.sequence_names)

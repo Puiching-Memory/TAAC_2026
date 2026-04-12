@@ -27,7 +27,7 @@ def apply_serialized_experiment(
         data_payload["sequence_names"] = tuple(data_payload["sequence_names"])
 
     train_payload = dict(payload["train"])
-    train_payload["switches"] = dict(train_payload.get("switches", {}))
+    train_payload["switches"] = dict(train_payload.get("switches") or {})
 
     experiment = base_experiment.clone()
     experiment.name = str(payload["name"])
@@ -35,7 +35,7 @@ def apply_serialized_experiment(
     experiment.model = ModelConfig(**dict(payload["model"]))
     experiment.train = TrainConfig(**train_payload)
     experiment.search = SearchConfig(**dict(payload["search"]))
-    experiment.switches = dict(payload.get("switches", {}))
+    experiment.switches = dict(payload.get("switches") or {})
     return experiment
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -55,9 +56,45 @@ def build_row(index: int, timestamp: int, positive: bool, user_id: str, item_id:
     }
 
 
-def write_sample_dataset(path: Path) -> None:
+def write_dataset(path: Path, rows: list[dict[str, Any]]) -> None:
+    table = pa.Table.from_pylist(rows)
+    pq.write_table(table, path, row_group_size=max(1, min(2, len(rows))))
+
+
+def build_edge_case_rows() -> list[dict[str, object]]:
     base_timestamp = 1_770_000_000
-    rows = [
+    sparse_row = build_row(0, base_timestamp + 90, True, "u_sparse", 301)
+    sparse_row["user_feature"] = None
+    sparse_row["context_feature"] = None
+    sparse_row["item_feature"] = None
+    sparse_row["seq_feature"] = {}
+
+    short_sequence_row = build_row(1, base_timestamp + 120, False, "u_short", 302)
+    short_sequence_row["seq_feature"] = {
+        "action_seq": [
+            build_feature(11, int_array=[41]),
+            build_feature(99, int_array=[base_timestamp + 30]),
+        ],
+    }
+
+    long_sequence_row = build_row(2, base_timestamp + 400, True, "u_long", 301)
+    long_sequence_row["seq_feature"]["action_seq"] = [
+        build_feature(11, int_array=list(range(100, 108))),
+        build_feature(99, int_array=[base_timestamp + offset for offset in range(8)]),
+    ]
+    long_sequence_row["seq_feature"]["content_seq"] = [
+        build_feature(12, int_array=list(range(200, 208))),
+        build_feature(99, int_array=[base_timestamp - 50 + offset for offset in range(8)]),
+    ]
+
+    cold_item_row = build_row(3, base_timestamp + 500, False, "u_cold", 999)
+    cold_item_row["label"] = []
+    return [sparse_row, short_sequence_row, long_sequence_row, cold_item_row]
+
+
+def write_sample_dataset(path: Path, rows: list[dict[str, Any]] | None = None) -> None:
+    base_timestamp = 1_770_000_000
+    materialized_rows = rows or [
         build_row(0, base_timestamp + 300, True, "u1", 101),
         build_row(1, base_timestamp + 100, False, "u1", 102),
         build_row(2, base_timestamp + 500, True, "u2", 103),
@@ -65,8 +102,7 @@ def write_sample_dataset(path: Path) -> None:
         build_row(4, base_timestamp + 600, True, "u2", 104),
         build_row(5, base_timestamp + 400, False, "u4", 105),
     ]
-    table = pa.Table.from_pylist(rows)
-    pq.write_table(table, path, row_group_size=2)
+    write_dataset(path, materialized_rows)
 
 
 def masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -345,9 +381,10 @@ EXPERIMENT = ExperimentSpec(
         return package_path
 
 
-def create_test_workspace(tmp_path: Path) -> TestWorkspace:
+def create_test_workspace(tmp_path: Path, *, rows: list[dict[str, Any]] | None = None) -> TestWorkspace:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     dataset_path = tmp_path / "sample.parquet"
-    write_sample_dataset(dataset_path)
+    write_sample_dataset(dataset_path, rows=rows)
     data_config = DataConfig(
         dataset_path=str(dataset_path),
         max_seq_len=4,
@@ -401,10 +438,15 @@ __all__ = [
     "DisabledAuxiliaryLoss",
     "TestWorkspace",
     "TinyExperimentModel",
+    "build_edge_case_rows",
+    "build_feature",
     "build_local_data_pipeline",
     "build_local_loss_stack",
     "build_local_model_component",
     "build_local_optimizer_component",
+    "build_row",
     "create_test_workspace",
     "prepare_experiment",
+    "write_dataset",
+    "write_sample_dataset",
 ]
