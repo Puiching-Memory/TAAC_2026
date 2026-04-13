@@ -30,7 +30,7 @@ Usually update these files too:
 - `docs/packages/index.md`
 - `docs/experiments.md`
 - `README.md`
-- `mkdocs.yml`
+- `zensical.toml`
 - `tests/test_experiment_packages.py`
 
 Conditionally update these files:
@@ -55,7 +55,7 @@ Usually add or update:
 
 - `docs/packages/<name>.md`
 - `docs/packages/index.md`
-- `mkdocs.yml` when the page is added to nav
+- `zensical.toml` when the page is added to nav
 - `docs/TODO.md` when follow-up engineering work should stay visible
 
 Avoid these changes for concept-only work:
@@ -71,7 +71,7 @@ Prefer the smallest set of checks that proves the claimed state:
 
 - Executable package scaffold only: targeted import and forward test
 - Shared runtime change: `uv run pytest tests -q`
-- Docs or nav change: `uv run --with mkdocs-material mkdocs build --strict`
+- Docs or nav change: `uv run --no-project --isolated --with zensical zensical build --clean`
 - Smoke training claim: `uv run taac-train --experiment config/gen/<name>`
 - Evaluation claim: `uv run taac-evaluate single --experiment config/gen/<name>`
 - Search claim: `uv run taac-search --experiment config/gen/<name> --trials <n>`

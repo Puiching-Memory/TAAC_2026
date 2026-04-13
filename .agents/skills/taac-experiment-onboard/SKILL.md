@@ -54,7 +54,7 @@ When the package is executable, update the visible registry together with the co
 
 - `docs/packages/<name>.md` is required.
 - `docs/papers/<name>.md` is optional and only worth adding for a longer engineering-oriented paper digest.
-- Update `docs/packages/index.md`, `docs/experiments.md`, `README.md`, and `mkdocs.yml` when the new package becomes part of the documented roster.
+- Update `docs/packages/index.md`, `docs/experiments.md`, `README.md`, and `zensical.toml` when the new package becomes part of the documented roster.
 
 When the work is concept-only, keep it out of executable lists and smoke-result tables.
 Never document capabilities, results, or validation states that do not exist in the current workspace.
@@ -68,7 +68,7 @@ Run the smallest useful checks first, then the full regression when feasible:
 - `uv run taac-train --experiment config/gen/<name>` for smoke training when feasible
 - `uv run taac-evaluate single --experiment config/gen/<name>` when a checkpoint exists
 - `uv run taac-search --experiment config/gen/<name> --trials <n>` only when search support matters for the task
-- `uv run --with mkdocs-material mkdocs build --strict` when docs or nav changed
+- `uv run --no-project --isolated --with zensical zensical build --clean` when docs or nav changed
 
 Summarize what was validated, what was intentionally skipped, and any deliberate deviations from the upstream paper or codebase.
 

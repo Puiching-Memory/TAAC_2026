@@ -41,7 +41,7 @@ Avoid:
 - `pip install ...`
 - `python -m venv ...`
 - bare `python script.py`
-- bare `pytest`, `mkdocs`, or similar commands in docs and review guidance
+- bare `pytest`, `zensical`, or similar commands in docs and review guidance
 
 When writing docs, issue templates, or code review suggestions, normalize examples to `uv` commands even if other tools would work.
 

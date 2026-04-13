@@ -1,0 +1,87 @@
+[project]
+site_name = "TAAC 2026 Docs"
+site_description = "TAAC 2026 训练框架、实验包与开发约定"
+site_author = "TAAC 2026 Team"
+site_url = "https://puiching-memory.github.io/TAAC_2026/"
+
+extra_css = ["assets/stylesheets/extra.css"]
+extra_javascript = [
+    "assets/javascripts/mathjax.js",
+    { path = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js", async = true },
+]
+
+nav = [
+    { "首页" = "index.md" },
+    { "快速开始" = "getting-started.md" },
+    { "架构与概念" = "architecture.md" },
+    { "实验包" = [
+        { "总览" = "experiments/index.md" },
+        { "Baseline" = "experiments/baseline.md" },
+        { "CTR Baseline" = "experiments/ctr-baseline.md" },
+        { "DeepContextNet" = "experiments/deepcontextnet.md" },
+        { "Grok" = "experiments/grok.md" },
+        { "HyFormer" = "experiments/hyformer.md" },
+        { "InterFormer" = "experiments/interformer.md" },
+        { "OneTrans" = "experiments/onetrans.md" },
+        { "O_o" = "experiments/oo.md" },
+        { "UniRec" = "experiments/unirec.md" },
+        { "UniScaleFormer" = "experiments/uniscaleformer.md" },
+    ] },
+    { "指南" = [
+        { "超参数搜索" = "guide/search.md" },
+        { "测试" = "guide/testing.md" },
+        { "新增实验包" = "guide/contributing.md" },
+    ] },
+    { "想法" = [
+        { "索引" = "ideas/index.md" },
+        { "特征Token化·长序列注意力·辅助Loss" = "ideas/posts/001-rec-model-work-summary.md" },
+    ] },
+    { "论文" = [
+        { "HyFormer" = "papers/hyformer.md" },
+        { "InterFormer" = "papers/interformer.md" },
+        { "OneTrans" = "papers/onetrans.md" },
+    ] },
+]
+
+# --------------------------------------------------------------------------
+# Theme
+# --------------------------------------------------------------------------
+[project.theme]
+language = "zh"
+
+features = [
+    "content.code.copy",
+    "content.code.select",
+    "content.tabs.link",
+    "content.tooltips",
+    "content.footnote.tooltips",
+    "navigation.tabs",
+    "navigation.sections",
+    "navigation.expand",
+    "navigation.path",
+    "navigation.top",
+    "navigation.tracking",
+    "navigation.indexes",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "search.highlight",
+    "toc.follow",
+]
+
+[project.theme.font]
+text = "IBM Plex Sans"
+code = "JetBrains Mono"
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "teal"
+accent = "lime"
+toggle.icon = "lucide/moon"
+toggle.name = "切换到深色模式"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "teal"
+accent = "lime"
+toggle.icon = "lucide/sun"
+toggle.name = "切换到浅色模式"
