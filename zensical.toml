@@ -33,6 +33,7 @@ nav = [
     { "指南" = [
         { "超参数搜索" = "guide/search.md" },
         { "测试" = "guide/testing.md" },
+        { "本地生成站点" = "guide/local-site.md" },
         { "新增实验包" = "guide/contributing.md" },
     ] },
     { "想法" = [
