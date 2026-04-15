@@ -11,6 +11,8 @@ extra_css = ["assets/stylesheets/extra.css"]
 extra_javascript = [
     "assets/javascripts/mathjax.js",
     { path = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js", async = true },
+    { path = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js", async = true },
+    "assets/javascripts/echarts-fence.js",
 ]
 
 nav = [
@@ -29,6 +31,12 @@ nav = [
         { "O_o" = "experiments/oo.md" },
         { "UniRec" = "experiments/unirec.md" },
         { "UniScaleFormer" = "experiments/uniscaleformer.md" },
+    ] },
+    { "数据集分析" = [
+        { "总览" = "analysis/index.md" },
+        { "EDA 报告" = "analysis/dataset-eda.md" },
+        { "评估指标分析" = "analysis/evaluation.md" },
+        { "TAAC 2025 论文洞察" = "analysis/taac2025-insights.md" },
     ] },
     { "指南" = [
         { "超参数搜索" = "guide/search.md" },

@@ -1,0 +1,214 @@
+{
+  "_height": "600px",
+  "tooltip": {
+    "trigger": "axis",
+    "axisPointer": {
+      "type": "shadow"
+    }
+  },
+  "grid": {
+    "left": 90,
+    "right": 30,
+    "top": 40,
+    "bottom": 30
+  },
+  "xAxis": {
+    "type": "log",
+    "name": "基数 (unique values)"
+  },
+  "yAxis": {
+    "type": "category",
+    "data": [
+      "u_63",
+      "u_93",
+      "u_52",
+      "u_64",
+      "u_48",
+      "u_86",
+      "i_84",
+      "i_5",
+      "i_85",
+      "u_57",
+      "i_10",
+      "i_6",
+      "u_65",
+      "i_8",
+      "u_53",
+      "u_4",
+      "u_3",
+      "i_7",
+      "i_12",
+      "u_56",
+      "u_15",
+      "u_54",
+      "u_66",
+      "i_16",
+      "i_11"
+    ],
+    "axisLabel": {
+      "fontSize": 10
+    }
+  },
+  "series": [
+    {
+      "type": "bar",
+      "data": [
+        {
+          "value": 33,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 36,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 36,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 45,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 52,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 61,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 66,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 82,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 103,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 105,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 110,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 216,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 218,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 226,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 264,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 268,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 341,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 349,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 352,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 405,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 447,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 462,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 533,
+          "itemStyle": {
+            "color": "#89b4fa"
+          }
+        },
+        {
+          "value": 662,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        },
+        {
+          "value": 924,
+          "itemStyle": {
+            "color": "#a6e3a1"
+          }
+        }
+      ],
+      "label": {
+        "show": true,
+        "position": "right",
+        "formatter": "{c}"
+      }
+    }
+  ]
+}

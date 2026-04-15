@@ -7,6 +7,7 @@ import pytest
 
 UNIT_TEST_FILES = {
     "test_clean_pycache.py",
+    "test_dataset_eda.py",
     "test_experiment_packages.py",
     "test_metrics.py",
     "test_model_performance_plot.py",

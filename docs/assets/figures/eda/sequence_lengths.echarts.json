@@ -1,0 +1,125 @@
+{
+  "tooltip": {
+    "trigger": "axis"
+  },
+  "legend": {
+    "data": [
+      "domain_a",
+      "domain_b",
+      "domain_c",
+      "domain_d"
+    ]
+  },
+  "grid": {
+    "left": 60,
+    "right": 30,
+    "top": 60,
+    "bottom": 40
+  },
+  "xAxis": {
+    "type": "category",
+    "data": [
+      "min",
+      "P25",
+      "median",
+      "mean",
+      "P75",
+      "P95",
+      "max"
+    ]
+  },
+  "yAxis": {
+    "type": "value",
+    "name": "序列长度"
+  },
+  "series": [
+    {
+      "name": "domain_a",
+      "type": "line",
+      "smooth": true,
+      "symbol": "circle",
+      "symbolSize": 8,
+      "data": [
+        0,
+        226,
+        577,
+        701,
+        1118,
+        1673,
+        1888
+      ],
+      "itemStyle": {
+        "color": "#89b4fa"
+      },
+      "areaStyle": {
+        "opacity": 0.08
+      }
+    },
+    {
+      "name": "domain_b",
+      "type": "line",
+      "smooth": true,
+      "symbol": "circle",
+      "symbolSize": 8,
+      "data": [
+        0,
+        141,
+        405,
+        570,
+        923,
+        1563,
+        1952
+      ],
+      "itemStyle": {
+        "color": "#f38ba8"
+      },
+      "areaStyle": {
+        "opacity": 0.08
+      }
+    },
+    {
+      "name": "domain_c",
+      "type": "line",
+      "smooth": true,
+      "symbol": "circle",
+      "symbolSize": 8,
+      "data": [
+        0,
+        185,
+        322,
+        449,
+        533,
+        1214,
+        3894
+      ],
+      "itemStyle": {
+        "color": "#a6e3a1"
+      },
+      "areaStyle": {
+        "opacity": 0.08
+      }
+    },
+    {
+      "name": "domain_d",
+      "type": "line",
+      "smooth": true,
+      "symbol": "circle",
+      "symbolSize": 8,
+      "data": [
+        0,
+        438,
+        1035,
+        1099,
+        1686,
+        2451,
+        3951
+      ],
+      "itemStyle": {
+        "color": "#fab387"
+      },
+      "areaStyle": {
+        "opacity": 0.08
+      }
+    }
+  ]
+}

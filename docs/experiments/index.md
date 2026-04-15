@@ -45,7 +45,7 @@
 - `max_seq_len = 32`
 - `max_feature_tokens = 16`
 - `stream_batch_rows = 256`
-- `label_action_type = 2`（点击作为正样本）
+- `label_action_type = 2`（转化作为正样本；`label_type`: 0=曝光, 1=点击, 2=转化）
 - `dense_feature_dim = 16`
 - `vocab_size = 131072`
 - `sequence_names = ("domain_a", "domain_b", "domain_c", "domain_d")`（4 个行为域）

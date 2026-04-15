@@ -126,6 +126,6 @@ graph TD
 - **物品特征**：`item_int_feats_{fid}`（标量/数组整型）
 - **域行为序列**：`domain_{a,b,c,d}_seq_{fid}`（`list<int64>`，4 个行为域共 45 列）
 
-**标签**：`label_type == 2`（点击）作为二分类目标
+**标签**：`label_type == 2`（转化）作为二分类正样本（`label_action_type = 2`）。当前采样数据仅含点击（1）与转化（2），不含曝光（0），因此离线任务本质是**点击样本中的转化预测**
 
 **批处理张量**（`BatchTensors`）包含：候选 token、上下文 token、历史序列 token、掩码、稠密特征、标签、分组 ID。
