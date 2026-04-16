@@ -967,6 +967,7 @@ def scan_dataset(
         # Classify columns on first row
         if groups is None:
             groups = classify_columns(list(row.keys()))
+            sparse_cols = groups.user_int + groups.item_int
 
         # Column stats (delegates to shared helper)
         for col, value in row.items():
@@ -992,7 +993,6 @@ def scan_dataset(
 
         # --- Label-conditional null tracking ---
         if label_val is not None and groups is not None:
-            sparse_cols = groups.user_int + groups.item_int
             missing_this_row: list[str] = []
             for col in sparse_cols:
                 v = row.get(col)
