@@ -106,6 +106,65 @@ class ColumnStats:
         return self.sum_len / self.non_null if self.non_null and self.is_list else None
 
 
+# Prefixes whose columns should skip unique-value tracking (dense vectors, sequences)
+_SKIP_UNIQUE_PREFIXES: tuple[str, ...] = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
+
+
+def _update_col_stat(
+    col: str,
+    value: Any,
+    stats: ColumnStats,
+    unique_set: set[Any],
+    max_unique_track: int,
+    *,
+    _isfinite: Any = math.isfinite,
+) -> None:
+    """Shared per-value column-stats accumulation logic."""
+    stats.count += 1
+    if value is None:
+        return
+    stats.non_null += 1
+    if isinstance(value, (list, tuple)):
+        stats.is_list = True
+        stats.sum_len += len(value)
+    else:
+        if not any(col.startswith(p) for p in _SKIP_UNIQUE_PREFIXES):
+            if len(unique_set) < max_unique_track:
+                unique_set.add(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if _isfinite(value):
+                stats.sum_val += value
+                if stats.min_val is None or value < stats.min_val:
+                    stats.min_val = value
+                if stats.max_val is None or value > stats.max_val:
+                    stats.max_val = value
+
+
+def _probe_seq_row(
+    row: dict[str, Any],
+    domain: str,
+    prefix: str,
+    probe_cols: dict[str, str | None],
+    seq_stats: dict[str, SequenceLengthStats],
+) -> None:
+    """Shared per-row sequence-length probing logic."""
+    probe = probe_cols[domain]
+    if probe is None:
+        for col in row:
+            if col.startswith(prefix):
+                probe_cols[domain] = col
+                probe = col
+                break
+    if probe is None:
+        seq_stats[domain].lengths.append(0)
+        return
+    seq = row.get(probe)
+    if seq is None or not isinstance(seq, (list, tuple)):
+        seq_stats[domain].lengths.append(0)
+    else:
+        seq_stats[domain].lengths.append(len(seq))
+
+
 def compute_column_stats(
     rows: Iterable[dict[str, Any]],
     columns: Sequence[str] | None = None,
@@ -115,8 +174,6 @@ def compute_column_stats(
     """Compute per-column statistics in a single streaming pass."""
     accumulators: dict[str, ColumnStats] = {}
     unique_sets: dict[str, set[Any]] = {}
-    # Only track uniques for scalar/int columns (not dense vectors or sequences)
-    _skip_unique_prefixes = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
 
     for row in rows:
         if columns is None:
@@ -128,26 +185,7 @@ def compute_column_stats(
             if col not in accumulators:
                 accumulators[col] = ColumnStats(name=col)
                 unique_sets[col] = set()
-            stats = accumulators[col]
-            stats.count += 1
-            if value is None:
-                continue
-            stats.non_null += 1
-
-            if isinstance(value, (list, tuple)):
-                stats.is_list = True
-                stats.sum_len += len(value)
-            else:
-                if not any(col.startswith(p) for p in _skip_unique_prefixes):
-                    if len(unique_sets[col]) < max_unique_track:
-                        unique_sets[col].add(value)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    if math.isfinite(value):
-                        stats.sum_val += value
-                        if stats.min_val is None or value < stats.min_val:
-                            stats.min_val = value
-                        if stats.max_val is None or value > stats.max_val:
-                            stats.max_val = value
+            _update_col_stat(col, value, accumulators[col], unique_sets[col], max_unique_track)
 
     for col, uniques in unique_sets.items():
         accumulators[col].n_unique = len(uniques)
@@ -233,21 +271,7 @@ def compute_sequence_lengths(
 
     for row in rows:
         for domain, prefix in prefixes.items():
-            probe = _probe_cols[domain]
-            if probe is None:
-                for col in row:
-                    if col.startswith(prefix):
-                        _probe_cols[domain] = col
-                        probe = col
-                        break
-            if probe is None:
-                result[domain].lengths.append(0)
-                continue
-            seq = row.get(probe)
-            if seq is None or not isinstance(seq, (list, tuple)):
-                result[domain].lengths.append(0)
-            else:
-                result[domain].lengths.append(len(seq))
+            _probe_seq_row(row, domain, prefix, _probe_cols, result)
 
     return result
 
@@ -307,7 +331,8 @@ def echarts_label_distribution(dist: LabelDistribution) -> dict[str, Any]:
 
 def echarts_cardinality(ranking: list[dict[str, Any]], *, top_n: int = 25) -> dict[str, Any]:
     """ECharts option for horizontal bar chart of sparse-feature cardinalities."""
-    data = list(reversed(ranking[:top_n]))
+    # Filter out zero-cardinality entries (log axis cannot display 0)
+    data = list(reversed([r for r in ranking[:top_n] if r.get("n_unique", 0) > 0]))
     names = [
         r["column"].replace("user_int_feats_", "u_").replace("item_int_feats_", "i_")
         for r in data
@@ -571,8 +596,6 @@ def scan_dataset(
 
     Returns ``None`` if no rows were consumed.
     """
-    _isfinite = math.isfinite
-    _skip_unique_prefixes = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
     _domain_prefixes = _DOMAIN_SEQ_PREFIXES
 
     groups: ColumnGroups | None = None
@@ -588,58 +611,27 @@ def scan_dataset(
     for i, row in enumerate(rows):
         if max_rows and i >= max_rows:
             break
-        row = dict(row)
+        if not isinstance(row, dict):
+            row = dict(row)
         row_count += 1
 
         # Classify columns on first row
         if groups is None:
             groups = classify_columns(list(row.keys()))
 
-        # Column stats
+        # Column stats (delegates to shared helper)
         for col, value in row.items():
             if col not in col_accumulators:
                 col_accumulators[col] = ColumnStats(name=col)
                 unique_sets[col] = set()
-            stats = col_accumulators[col]
-            stats.count += 1
-            if value is None:
-                continue
-            stats.non_null += 1
-            if isinstance(value, (list, tuple)):
-                stats.is_list = True
-                stats.sum_len += len(value)
-            else:
-                if not any(col.startswith(p) for p in _skip_unique_prefixes):
-                    if len(unique_sets[col]) < max_unique_track:
-                        unique_sets[col].add(value)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    if _isfinite(value):
-                        stats.sum_val += value
-                        if stats.min_val is None or value < stats.min_val:
-                            stats.min_val = value
-                        if stats.max_val is None or value > stats.max_val:
-                            stats.max_val = value
+            _update_col_stat(col, value, col_accumulators[col], unique_sets[col], max_unique_track)
 
         # Label distribution
         label_dist.add(row.get("label_type"))
 
-        # Sequence lengths
+        # Sequence lengths (delegates to shared helper)
         for domain, prefix in _domain_prefixes.items():
-            probe = seq_probe[domain]
-            if probe is None:
-                for col in row:
-                    if col.startswith(prefix):
-                        seq_probe[domain] = col
-                        probe = col
-                        break
-            if probe is None:
-                seq_stats[domain].lengths.append(0)
-                continue
-            seq = row.get(probe)
-            if seq is None or not isinstance(seq, (list, tuple)):
-                seq_stats[domain].lengths.append(0)
-            else:
-                seq_stats[domain].lengths.append(len(seq))
+            _probe_seq_row(row, domain, prefix, seq_probe, seq_stats)
 
     if groups is None:
         return None
