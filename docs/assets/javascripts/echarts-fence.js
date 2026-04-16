@@ -216,8 +216,25 @@
   }
 
   /* ---- bootstrap ---- */
+  var _initRetries = 0
+  var _maxInitRetries = 10
+
   function init() {
-    if (typeof echarts === "undefined") { setTimeout(init, 100); return }
+    if (typeof echarts === "undefined") {
+      _initRetries++
+      if (_initRetries > _maxInitRetries) {
+        document.querySelectorAll("div.echarts").forEach(function (el) {
+          if (!el.textContent.trim()) {
+            el.textContent = "ECharts library failed to load. Please check your network connection."
+          }
+        })
+        return
+      }
+      var delay = Math.min(100 * Math.pow(2, _initRetries - 1), 3200)
+      setTimeout(init, delay)
+      return
+    }
+    _initRetries = 0
     for (var i = 0; i < charts.length; i++) {
       try {
         if (charts[i].ro) charts[i].ro.disconnect()

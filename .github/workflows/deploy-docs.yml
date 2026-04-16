@@ -8,6 +8,8 @@ on:
       - ".github/workflows/deploy-docs.yml"
       - "docs/**"
       - "zensical.toml"
+      - "src/taac2026/reporting/**"
+      - "src/taac2026/application/reporting/**"
   workflow_dispatch:
 
 permissions:

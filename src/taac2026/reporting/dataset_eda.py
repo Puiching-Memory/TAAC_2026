@@ -570,12 +570,15 @@ def echarts_edition_comparison(
         taac2026 = [56, 14, 4, 120, 3951, 1099]  # static fallback
         subtitle = "TAAC 2025 为固定对比基线；TAAC 2026 为静态示例值"
 
+    all_values = [*taac2025, *taac2026]
+    use_log = all(v > 0 for v in all_values)
+
     return {
         "title": {"text": "TAAC 赛题版本数据规模对比", "subtext": subtitle},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
         "legend": {"data": ["TAAC 2025", "TAAC 2026"]},
         "grid": {"left": 100, "right": 40, "top": 70, "bottom": 30},
-        "xAxis": {"type": "log", "name": "数值 (log)"},
+        "xAxis": {"type": "log" if use_log else "value", "name": "数值 (log)" if use_log else "数值"},
         "yAxis": {"type": "category", "data": metrics, "axisLabel": {"fontSize": 9}},
         "series": [
             {
@@ -899,12 +902,17 @@ def scan_dataset(
     *,
     max_rows: int = 0,
     max_unique_track: int = 200_000,
+    positive_label: int = 2,
 ) -> DatasetScanResult | None:
     """Compute column stats, label distribution, and sequence lengths in one pass.
 
     Also collects user-level aggregation, label-conditional feature stats,
     dense feature distributions, missing patterns, and sequence behaviour
     patterns.
+
+    Args:
+        positive_label: The label value considered as positive/conversion
+            (default ``2`` for CVR).
 
     Returns ``None`` if no rows were consumed.
     """
@@ -948,7 +956,6 @@ def scan_dataset(
     seq_item_repeat_sums: dict[str, list[float]] = {d: [] for d in _domain_prefixes}
 
     _label_col = "label_type"
-    _positive_label = 2  # CVR positive = conversion
 
     for i, row in enumerate(rows):
         if max_rows and i >= max_rows:
@@ -973,7 +980,7 @@ def scan_dataset(
         label_dist.add(label_val)
 
         # Binary label for conditional analysis (1 = positive/conversion, 0 = negative)
-        binary_label = 1 if label_val == _positive_label else 0
+        binary_label = 1 if label_val == positive_label else 0
 
         # --- User-level aggregation ---
         uid = row.get("user_id")
