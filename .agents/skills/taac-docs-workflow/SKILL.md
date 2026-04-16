@@ -120,6 +120,30 @@ docs/assets/figures/eda/*.echarts.json
 site/
 ```
 
+## PR 工作流
+
+### 提交 & 推送后必须主动拉起 Copilot 评审
+
+GitHub Copilot PR review **不会**自动触发——需要通过 MCP 工具主动请求：
+
+```
+mcp_github_request_copilot_review(owner, repo, pullNumber)
+```
+
+完整流程：
+
+1. `git add -A && git commit -m "..."` — 提交变更
+2. `git push origin <branch>` — 推送到远程
+3. **主动调用** `mcp_github_request_copilot_review` — 拉起 Copilot 评审
+4. 通过 `mcp_github_pull_request_read(method="get_reviews")` 轮询评审结果
+5. 通过 `mcp_github_pull_request_read(method="get_review_comments")` 读取评审意见
+6. 修复所有未 resolved 的评论后重复步骤 1-5，直到评审无新意见
+
+### CI 检查
+
+推送后 CI 会自动运行，通过 `mcp_github_pull_request_read(method="get_check_runs")` 查看状态。
+所有 check_runs 必须 `conclusion: "success"` 才可合并。
+
 ## Reference
 
 Read `references/docs-pipeline.md` for the full asset inventory and CI integration details.
