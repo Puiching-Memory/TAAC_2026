@@ -931,8 +931,8 @@ def scan_dataset(
     # col → {label: [null_count, total_count]}
 
     # For single-feature AUC: collect (value, label) for sparse int features
-    # Cap collection to avoid OOM
-    _MAX_AUC_ROWS = 100_000
+    # Cap collection per column to avoid OOM when many sparse columns exist
+    _MAX_AUC_PER_COL = 50_000
     feature_auc_values: dict[str, list[float]] = defaultdict(list)
     feature_auc_labels: dict[str, list[int]] = defaultdict(list)
 
@@ -995,7 +995,7 @@ def scan_dataset(
                     bucket[0] += 1
                     missing_this_row.append(col)
                 # Single-feature AUC (for numeric sparse features)
-                elif isinstance(v, (int, float)) and not isinstance(v, bool) and row_count <= _MAX_AUC_ROWS:
+                elif isinstance(v, (int, float)) and not isinstance(v, bool) and len(feature_auc_values[col]) < _MAX_AUC_PER_COL:
                     feature_auc_values[col].append(float(v))
                     feature_auc_labels[col].append(binary_label)
 
@@ -1021,7 +1021,7 @@ def scan_dataset(
                 elif isinstance(v, (int, float)) and not isinstance(v, bool):
                     dense_values[col].append(float(v))
 
-        # --- Domain activity tracking + sequence patterns ---
+        # --- Domain activity tracking + sequence patterns + lengths ---
         for domain, prefix in _domain_prefixes.items():
             probe = seq_probe.get(domain)
             if probe is None:
@@ -1039,10 +1039,10 @@ def scan_dataset(
                 unique_items = len(set(seq_val))
                 repeat_rate = 1.0 - unique_items / total_items if total_items > 0 else 0.0
                 seq_item_repeat_sums[domain].append(repeat_rate)
-
-        # Sequence lengths (delegates to shared helper)
-        for domain, prefix in _domain_prefixes.items():
-            _probe_seq_row(row, domain, prefix, seq_probe, seq_stats)
+                # Sequence length
+                seq_stats[domain].lengths.append(total_items)
+            else:
+                seq_stats[domain].lengths.append(0)
 
     if groups is None:
         return None
