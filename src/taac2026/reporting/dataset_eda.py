@@ -110,11 +110,16 @@ class ColumnStats:
 _SKIP_UNIQUE_PREFIXES: tuple[str, ...] = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
 
 
+def _should_skip_unique(col: str) -> bool:
+    """Return True if *col* should skip unique-value tracking (dense/sequence columns)."""
+    return any(col.startswith(p) for p in _SKIP_UNIQUE_PREFIXES)
+
+
 def _update_col_stat(
     col: str,
     value: Any,
     stats: ColumnStats,
-    unique_set: set[Any],
+    unique_set: set[Any] | None,
     max_unique_track: int,
     *,
     _isfinite: Any = math.isfinite,
@@ -128,9 +133,8 @@ def _update_col_stat(
         stats.is_list = True
         stats.sum_len += len(value)
     else:
-        if not any(col.startswith(p) for p in _SKIP_UNIQUE_PREFIXES):
-            if len(unique_set) < max_unique_track:
-                unique_set.add(value)
+        if unique_set is not None and len(unique_set) < max_unique_track:
+            unique_set.add(value)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             if _isfinite(value):
                 stats.sum_val += value
@@ -173,7 +177,7 @@ def compute_column_stats(
 ) -> dict[str, ColumnStats]:
     """Compute per-column statistics in a single streaming pass."""
     accumulators: dict[str, ColumnStats] = {}
-    unique_sets: dict[str, set[Any]] = {}
+    unique_sets: dict[str, set[Any] | None] = {}
 
     for row in rows:
         if columns is None:
@@ -184,11 +188,12 @@ def compute_column_stats(
         for col, value in row_items:
             if col not in accumulators:
                 accumulators[col] = ColumnStats(name=col)
-                unique_sets[col] = set()
+                unique_sets[col] = None if _should_skip_unique(col) else set()
             _update_col_stat(col, value, accumulators[col], unique_sets[col], max_unique_track)
 
     for col, uniques in unique_sets.items():
-        accumulators[col].n_unique = len(uniques)
+        if uniques is not None:
+            accumulators[col].n_unique = len(uniques)
 
     return accumulators
 
@@ -600,7 +605,7 @@ def scan_dataset(
 
     groups: ColumnGroups | None = None
     col_accumulators: dict[str, ColumnStats] = {}
-    unique_sets: dict[str, set[Any]] = {}
+    unique_sets: dict[str, set[Any] | None] = {}
     label_dist = LabelDistribution()
     seq_stats: dict[str, SequenceLengthStats] = {
         d: SequenceLengthStats(domain=d) for d in _domain_prefixes
@@ -623,7 +628,7 @@ def scan_dataset(
         for col, value in row.items():
             if col not in col_accumulators:
                 col_accumulators[col] = ColumnStats(name=col)
-                unique_sets[col] = set()
+                unique_sets[col] = None if _should_skip_unique(col) else set()
             _update_col_stat(col, value, col_accumulators[col], unique_sets[col], max_unique_track)
 
         # Label distribution
@@ -638,7 +643,8 @@ def scan_dataset(
 
     # Finalise unique counts
     for col, uniques in unique_sets.items():
-        col_accumulators[col].n_unique = len(uniques)
+        if uniques is not None:
+            col_accumulators[col].n_unique = len(uniques)
 
     return DatasetScanResult(
         groups=groups,
