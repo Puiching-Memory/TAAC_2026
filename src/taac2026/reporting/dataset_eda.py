@@ -87,6 +87,7 @@ class ColumnStats:
     count: int = 0
     non_null: int = 0
     n_unique: int = 0
+    unique_capped: bool = False  # True when n_unique is a lower bound (cap reached)
     is_list: bool = False
     min_val: float | None = None
     max_val: float | None = None
@@ -208,6 +209,8 @@ def compute_column_stats(
     for col, uniques in unique_sets.items():
         if uniques is not None:
             accumulators[col].n_unique = len(uniques)
+            if len(uniques) >= max_unique_track:
+                accumulators[col].unique_capped = True
 
     return accumulators
 
@@ -1035,8 +1038,8 @@ def scan_dataset(
     for col, uniques in unique_sets.items():
         if uniques is not None:
             col_accumulators[col].n_unique = len(uniques)
-
-    # --- Build UserStats ---
+            if len(uniques) >= max_unique_track:
+                col_accumulators[col].unique_capped = True
     user_stats = UserStats(
         user_behavior_counts=user_behavior_counts,
         user_label_counts=dict(user_label_counts),
@@ -1241,7 +1244,7 @@ def echarts_null_rate_by_label(label_cond_stats: LabelConditionalStats, *, top_n
 
 
 def echarts_dense_distributions(dense_stats: DenseFeatureStats) -> dict[str, Any]:
-    """ECharts option for dense feature distribution radar chart."""
+    """ECharts option for dense feature distribution bar chart (mean \u00b1 std)."""
     cols = sorted(dense_stats.distributions.keys())
     if not cols:
         return {"tooltip": {}, "series": []}
