@@ -717,8 +717,6 @@ class LabelConditionalStats:
 
     # col → {0: (null_count, total), 1: (null_count, total)}
     conditional_nulls: dict[str, dict[int, tuple[int, int]]]
-    # col → {0: set|Counter, 1: set|Counter} for cardinality comparison
-    conditional_cardinality: dict[str, dict[int, int]]
     # single-feature AUC: col → auc_value
     feature_auc: dict[str, float]
 
@@ -757,8 +755,10 @@ def _compute_single_feature_auc(values: list[float], labels: list[int]) -> float
     max_pairs = 50_000
     if pos.size * neg.size > max_pairs:
         rng = np.random.RandomState(42)
-        pos = rng.choice(pos, min(pos.size, 1000), replace=False)
-        neg = rng.choice(neg, min(neg.size, 1000), replace=False)
+        pos_limit = min(pos.size, max(1, int(math.sqrt(max_pairs))))
+        neg_limit = min(neg.size, max(1, max_pairs // pos_limit))
+        pos = rng.choice(pos, pos_limit, replace=False)
+        neg = rng.choice(neg, neg_limit, replace=False)
     margins = pos[:, None] - neg[None, :]
     auc = float(np.mean(margins > 0) + 0.5 * np.mean(margins == 0))
     return max(auc, 1.0 - auc)  # ensure > 0.5 (take better direction)
@@ -924,7 +924,8 @@ def scan_dataset(
     feature_auc_values: dict[str, list[float]] = defaultdict(list)
     feature_auc_labels: dict[str, list[int]] = defaultdict(list)
 
-    # Dense feature value collection
+    # Dense feature value collection (capped to avoid OOM)
+    _MAX_DENSE_VALUES = 100_000
     dense_values: dict[str, list[float]] = defaultdict(list)
 
     # Missing pattern: track per-row missing sets for high-null features (capped)
@@ -995,6 +996,8 @@ def scan_dataset(
                 v = row.get(col)
                 if v is None:
                     continue
+                if len(dense_values[col]) >= _MAX_DENSE_VALUES:
+                    continue
                 if isinstance(v, (list, tuple)):
                     dense_values[col].extend(
                         float(x) for x in v if isinstance(x, (int, float)) and not isinstance(x, bool)
@@ -1054,12 +1057,8 @@ def scan_dataset(
         if len(vals) >= 10:
             feature_auc[col] = round(_compute_single_feature_auc(vals, labs), 4)
 
-    # Conditional cardinality (simplified: just count uniques per label)
-    cond_card: dict[str, dict[int, int]] = {}
-
     label_cond_stats = LabelConditionalStats(
         conditional_nulls=final_cond_nulls,
-        conditional_cardinality=cond_card,
         feature_auc=feature_auc,
     )
 
@@ -1102,8 +1101,10 @@ def scan_dataset(
         for label, (null_count, total) in label_map.items():
             rates[label] = null_count / total if total else 0.0
         if len(rates) >= 2:
-            vals = list(rates.values())
-            label_missing_corr[col] = round(abs(vals[-1] - vals[0]), 4)
+            sorted_labels = sorted(rates)
+            label_missing_corr[col] = round(
+                abs(rates[sorted_labels[-1]] - rates[sorted_labels[0]]), 4
+            )
 
     missing_patterns = MissingPatternStats(
         co_missing_pairs=co_missing_pairs,
