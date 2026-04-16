@@ -43,6 +43,7 @@ taac-search = "taac2026.application.search.cli:main"
 taac-clean-pycache = "taac2026.application.maintenance.clean_pycache:main"
 taac-plot-model-performance = "taac2026.application.reporting.cli:main"
 taac-dataset-eda = "taac2026.application.reporting.eda_cli:main"
+taac-tech-timeline = "taac2026.application.reporting.timeline_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

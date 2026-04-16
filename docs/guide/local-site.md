@@ -9,10 +9,11 @@
 
 ## 构建静态站点
 
-EDA 图表数据（`docs/assets/figures/eda/*.echarts.json`）不纳入版本控制，构建前需先生成：
+部分图表数据不纳入版本控制，构建前需先生成：
 
 ```bash
 uv run taac-dataset-eda
+uv run taac-tech-timeline
 uv run --no-project --isolated --with zensical zensical build --clean
 ```
 

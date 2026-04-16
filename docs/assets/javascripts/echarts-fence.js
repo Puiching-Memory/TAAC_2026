@@ -33,12 +33,14 @@
       text: "#cdd6f4", subtext: "#a6adc8",
       axis: "#585b70", split: "#313244",
       tipBg: "#313244", tipBorder: "#45475a",
+      link: "#94e2d5",
       pieBorder: "#1e1e2e",
     },
     light: {
       text: "#4c4f69", subtext: "#6c6f85",
       axis: "#bcc0cc", split: "#e6e9ef",
       tipBg: "#eff1f5", tipBorder: "#ccd0da",
+      link: "#176b5e",
       pieBorder: "#ffffff",
     },
   }
@@ -81,6 +83,11 @@
         var a = axes[i]
         a.axisLabel = a.axisLabel || {}
         a.axisLabel.color = t.subtext
+        /* For value axes showing years, use plain integer formatter
+           to avoid locale-specific thousand separators (2,000 → 2000) */
+        if (a.type === "value" && a.axisLabel.formatter === "{value}") {
+          a.axisLabel.formatter = function (v) { return String(Math.round(v)) }
+        }
         a.axisLine = a.axisLine || {}
         a.axisLine.lineStyle = a.axisLine.lineStyle || {}
         a.axisLine.lineStyle.color = t.axis
@@ -170,14 +177,166 @@
     }
   }
 
+  /* ---- graph tooltip injection ---- */
+  function hasGraphSeries(opt) {
+    if (!opt || !opt.series) return false
+    for (var i = 0; i < opt.series.length; i++) {
+      if (opt.series[i] && opt.series[i].type === "graph") return true
+    }
+    return false
+  }
+
+  function updateContainerChrome(el, opt) {
+    if (!el || !el.classList) return
+    el.classList.toggle("echarts--graph-frame", hasGraphSeries(opt))
+  }
+
+  /**
+   * For graph-type series whose nodes carry paper metadata (title, authors,
+   * venue, paperYear, citations, abstract, paperUrl), inject a rich HTML
+   * tooltip formatter.  This must run *after* JSON parsing because
+   * JSON.parse strips functions.
+   */
+  function injectGraphTooltip(opt) {
+    if (!opt || !opt.series) return
+    for (var i = 0; i < opt.series.length; i++) {
+      var s = opt.series[i]
+      if (s.type !== "graph") continue
+      /* Only inject if any node carries the "title" metadata key */
+      var hasMetadata = s.data && s.data.some(function (d) { return !!d.title })
+      if (!hasMetadata) continue
+
+      opt.tooltip = opt.tooltip || {}
+      opt.tooltip.trigger = "item"
+      opt.tooltip.enterable = true
+      opt.tooltip.confine = true
+      opt.tooltip.padding = 0
+      opt.tooltip.extraCssText = [
+        "max-width:min(420px, calc(100vw - 32px))",
+        "max-height:min(70vh, 420px)",
+        "overflow:auto",
+        "white-space:normal",
+        "box-sizing:border-box",
+        "padding:0",
+        "border-radius:10px",
+        "overflow-wrap:anywhere",
+        "word-break:break-word",
+      ].join(";")
+      opt.tooltip.position = function (point, params, dom, rect, size) {
+        var gap = 12
+        var contentSize = (size && size.contentSize) || [
+          (dom && dom.offsetWidth) || 0,
+          (dom && dom.offsetHeight) || 0,
+        ]
+        var viewSize = (size && size.viewSize) || [
+          window.innerWidth || 0,
+          window.innerHeight || 0,
+        ]
+        var width = Math.min(contentSize[0], Math.max(viewSize[0] - gap * 2, 0))
+        var height = Math.min(contentSize[1], Math.max(viewSize[1] - gap * 2, 0))
+        var x = point[0] + gap
+        if (x + width + gap > viewSize[0]) {
+          x = point[0] - width - gap
+        }
+        x = Math.max(gap, Math.min(x, viewSize[0] - width - gap))
+
+        var y = point[1] - Math.round(height / 2)
+        y = Math.max(gap, Math.min(y, viewSize[1] - height - gap))
+        return [x, y]
+      }
+      opt.tooltip.formatter = function (p) {
+        var t = tok()
+        var cardWidth = Math.min(420, Math.max((window.innerWidth || 420) - 32, 240))
+        if (p.dataType === "edge") {
+          return p.data.source + " → " + p.data.target
+        }
+        var d = p.data || {}
+        var lines = []
+        lines.push(
+          "<div style='font-size:15px;font-weight:700;letter-spacing:0.01em;color:" + t.text + "'>"
+          + _esc(d.name || p.name)
+          + "</div>"
+        )
+        if (d.title && d.title !== d.name) {
+          lines.push(
+            "<div style='margin-top:4px;font-size:12px;line-height:1.55;color:" + t.subtext + "'>"
+            + _esc(d.title)
+            + "</div>"
+          )
+        }
+        if (d.authors) {
+          lines.push(
+            "<div style='margin-top:10px'>"
+            + "<div style='font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:" + t.subtext + "'>Authors</div>"
+            + "<div style='margin-top:2px;font-size:12px;line-height:1.6;color:" + t.text + "'>" + _esc(d.authors) + "</div>"
+            + "</div>"
+          )
+        }
+        var meta = []
+        if (d.paperYear) meta.push(String(d.paperYear))
+        if (d.venue) meta.push(_esc(d.venue))
+        if (d.citations != null) meta.push(d.citations.toLocaleString() + " citations")
+        if (meta.length) {
+          lines.push(
+            "<div style='margin-top:10px'>"
+            + "<div style='font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:" + t.subtext + "'>Publication</div>"
+            + "<div style='margin-top:2px;font-size:12px;line-height:1.6;color:" + t.text + "'>" + meta.join(" · ") + "</div>"
+            + "</div>"
+          )
+        }
+        if (d.abstract) {
+          lines.push(
+            "<div style='margin-top:10px;padding-top:10px;border-top:1px solid " + t.tipBorder + "'>"
+            + "<div style='font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:" + t.subtext + "'>Abstract</div>"
+            + "<div style='margin-top:4px;font-size:12px;line-height:1.6;color:" + t.text + "'>"
+            + _esc(d.abstract)
+            + "</div>"
+            + "</div>"
+          )
+        }
+        if (d.paperUrl) {
+          lines.push(
+            "<div style='margin-top:10px;padding-top:10px;border-top:1px solid " + t.tipBorder + "'>"
+            + "<a href=\"" + _escAttr(d.paperUrl) + "\" target=\"_blank\" rel=\"noopener noreferrer\" style='font-size:12px;font-weight:600;letter-spacing:0.02em;color:" + t.link + ";text-decoration:none'>"
+            + "查看论文原文"
+            + "</a>"
+            + "</div>"
+          )
+        }
+        return "<div style='width:min(100%, " + cardWidth + "px);padding:12px 14px;line-height:1.6'>" + lines.join("") + "</div>"
+      }
+    }
+  }
+
+  function _esc(s) {
+    if (!s) return ""
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  }
+
+  function _escAttr(s) {
+    if (!s) return ""
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;")
+  }
+
   function renderChart(container, rawOption) {
     container.style.width = "100%"
     var height = rawOption._height || "400px"
     container.style.minHeight = height
     delete rawOption._height
     container.textContent = ""
+    updateContainerChrome(container, rawOption)
+
+    /* Inject rich tooltip formatter for graph series with paper metadata */
+    injectGraphTooltip(rawOption)
+
     var instance = echarts.init(container, null, { renderer: "canvas" })
     var themed = applyTheme(clone(rawOption))
+    injectGraphTooltip(themed)
     instance.setOption(themed)
     var entry = { el: container, rawOption: rawOption, instance: instance, ro: null }
     charts.push(entry)
@@ -197,6 +356,7 @@
           c.el.textContent = ""
           var inst = echarts.init(c.el, null, { renderer: "canvas" })
           var themed = applyTheme(clone(c.rawOption))
+          injectGraphTooltip(themed)
           inst.setOption(themed)
           c.instance = inst
           attachResize(c)

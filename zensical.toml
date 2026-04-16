@@ -49,6 +49,7 @@ nav = [
         { "特征Token化·长序列注意力·辅助Loss" = "ideas/posts/001-rec-model-work-summary.md" },
     ] },
     { "论文" = [
+        { "技术发展时间线" = "papers/index.md" },
         { "HyFormer" = "papers/hyformer.md" },
         { "InterFormer" = "papers/interformer.md" },
         { "OneTrans" = "papers/onetrans.md" },

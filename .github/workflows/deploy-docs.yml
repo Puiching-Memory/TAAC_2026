@@ -55,6 +55,9 @@ jobs:
       - name: Generate EDA figures
         run: uv run taac-dataset-eda
 
+      - name: Generate tech timeline
+        run: uv run taac-tech-timeline
+
       - name: Build Zensical site
         run: uv run --no-project --isolated --with zensical zensical build --clean
 

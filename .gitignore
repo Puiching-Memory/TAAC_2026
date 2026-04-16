@@ -12,5 +12,8 @@ site/
 # Generated EDA figures (produced by `uv run taac-dataset-eda`)
 docs/assets/figures/eda/*.echarts.json
 
+# Generated tech-timeline chart (produced by `uv run taac-tech-timeline`)
+docs/assets/figures/papers/tech-timeline.echarts.json
+
 # TAAC2026 Symbiosis
 config/gen/symbiosis/

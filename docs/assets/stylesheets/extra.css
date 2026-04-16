@@ -51,6 +51,22 @@
   border-radius: 0.35rem;
 }
 
+.md-typeset .echarts.echarts--graph-frame {
+  box-sizing: border-box;
+  border: 1px solid rgba(17, 94, 89, 0.14);
+  border-radius: 1.15rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 250, 249, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .echarts.echarts--graph-frame {
+  border-color: rgba(166, 173, 200, 0.22);
+  background:
+    linear-gradient(180deg, rgba(17, 25, 40, 0.74), rgba(14, 39, 44, 0.7));
+  box-shadow: inset 0 1px 0 rgba(205, 214, 244, 0.04);
+}
+
 .md-typeset .admonition,
 .md-typeset details {
   border-radius: 0.9rem;
