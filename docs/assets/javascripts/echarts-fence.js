@@ -1,5 +1,6 @@
 /**
- * ECharts loader for MkDocs Material with automatic dark / light theme support.
+ * ECharts loader for Zensical (Material-themed) docs with automatic dark / light
+ * theme support.  Depends on ``document$`` and other Material-style globals.
  *
  * Usage in Markdown:
  *   <div class="echarts" data-src="assets/figures/eda/foo.echarts.json"></div>

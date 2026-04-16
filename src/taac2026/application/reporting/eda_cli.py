@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
             serialize_echarts(opt), encoding="utf-8",
         )
 
+    # Build current label distribution for cross-edition chart
+    _label_pcts: dict[str, float] = {}
+    for r in label_dist.as_table():
+        _label_pcts[r["name"]] = round(r["ratio"] * 100, 2)
+
     _write_ec("label_distribution", echarts_label_distribution(label_dist))
     _write_ec("null_rates", echarts_null_rates(col_stats))
     _write_ec("cardinality", echarts_cardinality(cardinality))
@@ -100,8 +105,8 @@ def main(argv: list[str] | None = None) -> int:
     _write_ec("coverage_heatmap", echarts_coverage_heatmap(col_stats, groups))
     _write_ec("column_layout", echarts_column_layout(groups))
     _write_ec("ndcg_decay", echarts_ndcg_decay())
-    _write_ec("label_cross_edition", echarts_cross_edition())
-    _write_ec("edition_comparison", echarts_edition_comparison())
+    _write_ec("label_cross_edition", echarts_cross_edition(_label_pcts))
+    _write_ec("edition_comparison", echarts_edition_comparison(groups, seq_stats))
     _write_ec("seq_length_summary", echarts_seq_length_summary(seq_stats))
     logger.info("  ✓ 10 ECharts JSON files")
 

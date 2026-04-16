@@ -108,11 +108,17 @@ class ColumnStats:
 
 # Prefixes whose columns should skip unique-value tracking (dense vectors, sequences)
 _SKIP_UNIQUE_PREFIXES: tuple[str, ...] = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
+# High-cardinality identity columns that should always skip unique tracking
+_SKIP_UNIQUE_EXACT: frozenset[str] = frozenset({"user_id", "item_id"})
 
 
 def _should_skip_unique(col: str) -> bool:
-    """Return True if *col* should skip unique-value tracking (dense/sequence columns)."""
-    return any(col.startswith(p) for p in _SKIP_UNIQUE_PREFIXES)
+    """Return True if *col* should skip unique-value tracking.
+
+    Skips dense/sequence prefix columns as well as known high-cardinality
+    identity columns (``user_id``, ``item_id``).
+    """
+    return col in _SKIP_UNIQUE_EXACT or any(col.startswith(p) for p in _SKIP_UNIQUE_PREFIXES)
 
 
 def _update_col_stat(
@@ -438,18 +444,28 @@ def echarts_ndcg_decay(k_max: int = 10) -> dict[str, Any]:
     }
 
 
-def echarts_cross_edition() -> dict[str, Any]:
-    """ECharts option for cross-edition label distribution comparison."""
+def echarts_cross_edition(
+    current_distribution: dict[str, float] | None = None,
+    *,
+    current_label: str = "本届 sample",
+) -> dict[str, Any]:
+    """ECharts option for cross-edition label distribution comparison.
+
+    When *current_distribution* is provided, the last category is populated
+    from the current run's label percentages (keys: ``曝光`` / ``点击`` / ``转化``).
+    If omitted, the chart falls back to static sample values for compatibility.
+    """
+    current = current_distribution or {"曝光": 0.0, "点击": 87.6, "转化": 12.4}
     return {
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
         "legend": {"data": ["曝光", "点击", "转化"]},
         "grid": {"left": 60, "right": 30, "top": 50, "bottom": 30},
-        "xAxis": {"type": "category", "data": ["上届 1M", "上届 10M", "本届 sample"]},
+        "xAxis": {"type": "category", "data": ["上届 1M", "上届 10M", current_label]},
         "yAxis": {"type": "value", "name": "占比 (%)", "max": 100},
         "series": [
-            {"name": "曝光", "type": "bar", "data": [90.19, 94.63, 0], "itemStyle": {"color": _EC_COLORS[0]}},
-            {"name": "点击", "type": "bar", "data": [9.81, 2.85, 87.6], "itemStyle": {"color": _EC_COLORS[1]}},
-            {"name": "转化", "type": "bar", "data": [0, 2.52, 12.4], "itemStyle": {"color": _EC_COLORS[2]}},
+            {"name": "曝光", "type": "bar", "data": [90.19, 94.63, float(current.get("曝光", 0.0))], "itemStyle": {"color": _EC_COLORS[0]}},
+            {"name": "点击", "type": "bar", "data": [9.81, 2.85, float(current.get("点击", 0.0))], "itemStyle": {"color": _EC_COLORS[1]}},
+            {"name": "转化", "type": "bar", "data": [0, 2.52, float(current.get("转化", 0.0))], "itemStyle": {"color": _EC_COLORS[2]}},
         ],
     }
 
@@ -505,15 +521,47 @@ def echarts_null_rates(stats: dict[str, ColumnStats], *, top_n: int = 30) -> dic
     }
 
 
-def echarts_edition_comparison() -> dict[str, Any]:
-    """ECharts option for cross-edition dataset dimension comparison."""
+def echarts_edition_comparison(
+    groups: ColumnGroups | None = None,
+    seq_stats: dict[str, SequenceLengthStats] | None = None,
+) -> dict[str, Any]:
+    """ECharts option for cross-edition dataset dimension comparison.
+
+    When *groups* and *seq_stats* are supplied the TAAC 2026 values are
+    computed dynamically from the scan results.  Otherwise static fallback
+    values are used (with a subtitle note).
+    """
     metrics = ["用户特征数", "物品特征数", "行为域数", "总列数", "序列最大长度", "序列均值(主域)"]
-    taac2025 = [8, 12, 1, 20, 100, 94]
-    taac2026 = [56, 14, 4, 120, 3951, 1099]
+    taac2025 = [8, 12, 1, 20, 100, 94]  # fixed historical baseline
+
+    if groups is not None and seq_stats is not None:
+        # Derive TAAC 2026 values dynamically from scan results
+        seq_max = max(
+            (s.summary().get("max", 0) for s in seq_stats.values()),
+            default=0,
+        )
+        primary = next((n for n in DEFAULT_SEQUENCE_NAMES if n in seq_stats), None)
+        if primary is None and seq_stats:
+            primary = next(iter(seq_stats))
+        primary_mean = round(seq_stats[primary].summary().get("mean", 0)) if primary and primary in seq_stats else 0
+        taac2026 = [
+            len(groups.user_int) + len(groups.user_dense),
+            len(groups.item_int),
+            len(groups.domain_seq),
+            groups.total,
+            int(seq_max),
+            int(primary_mean),
+        ]
+        subtitle = "TAAC 2025 为固定对比基线；TAAC 2026 指标根据当前扫描结果动态生成"
+    else:
+        taac2026 = [56, 14, 4, 120, 3951, 1099]  # static fallback
+        subtitle = "TAAC 2025 为固定对比基线；TAAC 2026 为静态示例值"
+
     return {
+        "title": {"text": "TAAC 赛题版本数据规模对比", "subtext": subtitle},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
         "legend": {"data": ["TAAC 2025", "TAAC 2026"]},
-        "grid": {"left": 100, "right": 40, "top": 50, "bottom": 30},
+        "grid": {"left": 100, "right": 40, "top": 70, "bottom": 30},
         "xAxis": {"type": "log", "name": "数值 (log)"},
         "yAxis": {"type": "category", "data": metrics, "axisLabel": {"fontSize": 9}},
         "series": [

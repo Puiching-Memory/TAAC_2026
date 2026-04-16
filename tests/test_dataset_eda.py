@@ -128,8 +128,15 @@ class TestECharts:
         j = serialize_echarts(opt)
         assert '"type": "line"' in j
 
-    def test_echarts_cross_edition(self) -> None:
+    def test_echarts_cross_edition_default(self) -> None:
         opt = echarts_cross_edition()
+        assert "series" in opt
+        serialize_echarts(opt)
+
+    def test_echarts_cross_edition_with_distribution(self) -> None:
+        dist = compute_label_distribution(iter(_sample_rows()))
+        pcts = {r["name"]: round(r["ratio"] * 100, 2) for r in dist.as_table()}
+        opt = echarts_cross_edition(pcts)
         assert "series" in opt
         serialize_echarts(opt)
 
@@ -147,11 +154,21 @@ class TestECharts:
         assert "series" in opt
         serialize_echarts(opt)
 
-    def test_echarts_edition_comparison(self) -> None:
+    def test_echarts_edition_comparison_default(self) -> None:
         opt = echarts_edition_comparison()
         assert "series" in opt
         j = serialize_echarts(opt)
         assert "TAAC 2025" in j
+
+    def test_echarts_edition_comparison_dynamic(self) -> None:
+        rows = _sample_rows()
+        groups = classify_columns(list(rows[0].keys()))
+        seq_stats = compute_sequence_lengths(iter(rows))
+        opt = echarts_edition_comparison(groups, seq_stats)
+        assert "series" in opt
+        j = serialize_echarts(opt)
+        assert "TAAC 2025" in j
+        assert "动态生成" in j
 
     def test_echarts_seq_length_summary(self) -> None:
         seq_stats = compute_sequence_lengths(iter(_sample_rows()))
