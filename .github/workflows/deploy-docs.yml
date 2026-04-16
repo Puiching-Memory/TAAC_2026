@@ -47,6 +47,9 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Generate EDA figures
+        run: uv run taac-dataset-eda
+
       - name: Build Zensical site
         run: uv run --no-project --isolated --with zensical zensical build --clean
 

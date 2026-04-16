@@ -9,5 +9,8 @@ __pycache__/
 site/
 .cache/
 
+# Generated EDA figures (produced by `uv run taac-dataset-eda`)
+docs/assets/figures/eda/*.echarts.json
+
 # TAAC2026 Symbiosis
 config/gen/symbiosis/
