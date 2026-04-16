@@ -141,6 +141,22 @@
   /* ---- chart registry ---- */
   var charts = [] /* { el, rawOption, instance, ro } */
 
+  /* Single global resize fallback for browsers without ResizeObserver */
+  var _globalResizeBound = false
+  function _ensureGlobalResize() {
+    if (_globalResizeBound) return
+    _globalResizeBound = true
+    window.addEventListener("resize", function () {
+      for (var i = 0; i < charts.length; i++) {
+        try {
+          if (charts[i].instance && !charts[i].instance.isDisposed()) {
+            charts[i].instance.resize()
+          }
+        } catch (_) {}
+      }
+    })
+  }
+
   function attachResize(entry) {
     if (entry.ro) entry.ro.disconnect()
     if (typeof ResizeObserver !== "undefined") {
@@ -150,10 +166,7 @@
       ro.observe(entry.el)
       entry.ro = ro
     } else {
-      // Fallback for environments without ResizeObserver
-      window.addEventListener("resize", function () {
-        if (entry.instance && !entry.instance.isDisposed()) entry.instance.resize()
-      })
+      _ensureGlobalResize()
     }
   }
 

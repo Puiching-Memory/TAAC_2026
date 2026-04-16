@@ -1041,10 +1041,12 @@ def scan_dataset(
             if seq_val is not None and isinstance(seq_val, (list, tuple)) and len(seq_val) > 0:
                 if uid is not None:
                     domain_user_activity[domain].add(str(uid))
-                # Sequence item repeat rate
+                # Sequence item repeat rate (cap to avoid O(L) set on very long seqs)
+                _REPEAT_RATE_CAP = 500
                 total_items = len(seq_val)
-                unique_items = len(set(seq_val))
-                repeat_rate = 1.0 - unique_items / total_items if total_items > 0 else 0.0
+                sample = seq_val[:_REPEAT_RATE_CAP] if total_items > _REPEAT_RATE_CAP else seq_val
+                unique_items = len(set(sample))
+                repeat_rate = 1.0 - unique_items / len(sample) if len(sample) > 0 else 0.0
                 seq_item_repeat_sums[domain].append(repeat_rate)
                 # Sequence length
                 seq_stats[domain].lengths.append(total_items)
