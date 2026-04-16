@@ -9,6 +9,9 @@ window.MathJax = {
     ignoreHtmlClass: ".*|",
     processHtmlClass: "arithmatex",
   },
+  chtml: {
+    adaptiveCSS: false,
+  },
   startup: {
     ready() {
       MathJax.startup.defaultReady()

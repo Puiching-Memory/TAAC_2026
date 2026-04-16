@@ -38,16 +38,25 @@ def main(argv: list[str] | None = None) -> int:
         scan_dataset,
         serialize_echarts,
         compute_cardinality_ranking,
+        compute_cardinality_bins,
         echarts_cardinality,
+        echarts_cardinality_bins,
+        echarts_co_missing,
         echarts_column_layout,
         echarts_coverage_heatmap,
+        echarts_cross_domain_overlap,
         echarts_cross_edition,
+        echarts_dense_distributions,
         echarts_edition_comparison,
+        echarts_feature_auc,
         echarts_label_distribution,
         echarts_ndcg_decay,
+        echarts_null_rate_by_label,
         echarts_null_rates,
         echarts_seq_length_summary,
+        echarts_seq_repeat_rate,
         echarts_sequence_lengths,
+        echarts_user_activity,
     )
 
     # ---- Load & analyse in a single streaming pass -------------------------
@@ -85,6 +94,22 @@ def main(argv: list[str] | None = None) -> int:
     cardinality = compute_cardinality_ranking(col_stats, groups)
     logger.info("Top-5 cardinality: {}", [(r["column"], r["n_unique"]) for r in cardinality[:5]])
 
+    # Print new analysis summaries
+    if result.user_stats is not None:
+        udist = result.user_stats.activity_distribution()
+        stderr_console.print(
+            f"  [bold]Users:[/] {udist.get('total_users', 0):,} unique, "
+            f"mean={udist.get('mean_behaviors', 0):.1f}, median={udist.get('median_behaviors', 0):.0f} behaviors/user"
+        )
+        overlap = result.user_stats.cross_domain_overlap()
+        domain_dist = overlap.get("user_domain_count_dist", {})
+        if domain_dist:
+            stderr_console.print(f"  [bold]Cross-domain:[/] {domain_dist}")
+
+    if result.label_cond_stats is not None and result.label_cond_stats.feature_auc:
+        top_auc = sorted(result.label_cond_stats.feature_auc.items(), key=lambda x: x[1], reverse=True)[:5]
+        stderr_console.print(f"  [bold]Top-5 feature AUC:[/] {[(c, v) for c, v in top_auc]}")
+
     # ---- Generate ECharts JSON ---------------------------------------------
     logger.info("Generating ECharts JSON → {}", figures_dir)
 
@@ -108,7 +133,37 @@ def main(argv: list[str] | None = None) -> int:
     _write_ec("label_cross_edition", echarts_cross_edition(_label_pcts))
     _write_ec("edition_comparison", echarts_edition_comparison(groups, seq_stats))
     _write_ec("seq_length_summary", echarts_seq_length_summary(seq_stats))
-    logger.info("  ✓ 10 ECharts JSON files")
+    logger.info("  ✓ 10 base ECharts JSON files")
+
+    # ---- New deep-analysis charts -----------------------------------------
+    chart_count = 10
+    if result.user_stats is not None:
+        _write_ec("user_activity", echarts_user_activity(result.user_stats))
+        _write_ec("cross_domain_overlap", echarts_cross_domain_overlap(result.user_stats))
+        chart_count += 2
+
+    if result.label_cond_stats is not None:
+        _write_ec("feature_auc", echarts_feature_auc(result.label_cond_stats))
+        _write_ec("null_rate_by_label", echarts_null_rate_by_label(result.label_cond_stats))
+        chart_count += 2
+
+    if result.dense_stats is not None:
+        _write_ec("dense_distributions", echarts_dense_distributions(result.dense_stats))
+        chart_count += 1
+
+    cardinality_bins = compute_cardinality_bins(cardinality)
+    _write_ec("cardinality_bins", echarts_cardinality_bins(cardinality_bins))
+    chart_count += 1
+
+    if result.seq_patterns is not None:
+        _write_ec("seq_repeat_rate", echarts_seq_repeat_rate(result.seq_patterns))
+        chart_count += 1
+
+    if result.missing_patterns is not None:
+        _write_ec("co_missing", echarts_co_missing(result.missing_patterns))
+        chart_count += 1
+
+    logger.info("  ✓ {} total ECharts JSON files", chart_count)
 
     # ---- Optional JSON stats ----------------------------------------------
     if args.json_path:

@@ -97,7 +97,110 @@
 
 ---
 
-## 8. 多模态嵌入分析
+## 8. 用户维度分析
+
+### 8.1 用户活跃度分布
+
+<div class="echarts" data-src="assets/figures/eda/user_activity.echarts.json"></div>
+
+**关键发现**：
+
+- 用户活跃度（每用户行为条数）的分布是否符合 power law？
+- 冷启动用户（仅 1 条行为）占比直接影响 GAUC coverage
+- ⚠️ 采样数据量有限，全量验证后才能判定高/中/低活跃度的实际分桶阈值
+
+### 8.2 跨域用户重叠
+
+<div class="echarts" data-src="assets/figures/eda/cross_domain_overlap.echarts.json"></div>
+
+**关键发现**：
+
+- 各 domain 之间用户重叠率决定了多域融合策略的可行性
+- 若某域用户几乎是另一域的子集，可考虑域间迁移学习
+- 活跃在所有 4 个域的用户占比 → 决定是否值得做全域联合建模
+
+---
+
+## 9. 特征有效性分析（Label-Conditional）
+
+### 9.1 单特征 AUC 排名
+
+<div class="echarts" data-src="assets/figures/eda/feature_auc.echarts.json"></div>
+
+**关键发现**：
+
+- 单特征 AUC > 0.55 的特征是建模的**核心信号**，应优先保障 embedding 质量
+- AUC ≈ 0.5 的特征为噪声，可考虑在 lightweight 模型中丢弃以降低参数量
+- ⚠️ 采样数据上的单特征 AUC 可能不稳定，全量数据上需复核
+
+### 9.2 正负样本缺失率对比
+
+<div class="echarts" data-src="assets/figures/eda/null_rate_by_label.echarts.json"></div>
+
+**关键发现**：
+
+- 若某特征在正样本（转化）中缺失率显著低于负样本 → 可能存在**标签泄露**，需排查
+- 缺失率差异大的特征本身具有预测能力，learned missing token 可捕获这类信号
+- 差异小的特征缺失为随机缺失 (MCAR)，填充策略影响不大
+
+---
+
+## 10. 缺失值模式分析
+
+### 10.1 特征共缺失模式
+
+<div class="echarts" data-src="assets/figures/eda/co_missing.echarts.json"></div>
+
+**关键发现**：
+
+- 高频共缺失对暗示这些特征来自**同一数据源**，可作为一组统一处理
+- 共缺失率极高（> 0.8）的特征组可合并为单个 "是否缺失" flag 特征
+- 共缺失模式有助于诊断是 MCAR 还是 MNAR（结构性缺失）
+
+---
+
+## 11. 稠密特征分布
+
+<div class="echarts" data-src="assets/figures/eda/dense_distributions.echarts.json"></div>
+
+**关键发现**：
+
+- `user_dense_feats_*` 的分布形态决定预处理策略：
+    - 若均值接近 0、标准差接近 1 → 可能是预提取 embedding，**不要再做标准化**
+    - 若分布高度偏斜 → 需要 log 变换或分桶离散化
+    - 若大量零值 → 可能是稀疏表示，考虑用 embedding 替代 dense 输入
+
+---
+
+## 12. 特征基数区间分布
+
+<div class="echarts" data-src="assets/figures/eda/cardinality_bins.echarts.json"></div>
+
+**关键发现**：
+
+- 各基数区间的特征数量指导 embedding table 设计：
+    - 基数 1-10：直接嵌入，低维（4-8 维）
+    - 基数 11-1K：标准嵌入（16-64 维）
+    - 基数 1K+：需哈希或 Semantic ID，否则 embedding table 过大
+- ⚠️ 采样中基数被严重低估，全量数据上需重新评估
+
+---
+
+## 13. 序列行为模式
+
+### 13.1 序列内物品重复率
+
+<div class="echarts" data-src="assets/figures/eda/seq_repeat_rate.echarts.json"></div>
+
+**关键发现**：
+
+- 高重复率（> 0.3）意味着用户反复与同类物品交互 → 序列去重或 position-aware attention 可能有效
+- 低重复率表明行为多样性高 → 序列完整保留的信息增益更大
+- 各域重复率差异 → 可能需要域特定的序列处理策略
+
+---
+
+## 14. 多模态嵌入分析
 
 本届 `item_int_feats_83/84/85` 的覆盖率约 17%，暗示多模态数据仍为稀疏覆盖。
 
@@ -109,7 +212,47 @@
 
 ---
 
-## 9. 重新生成报告
+## 15. 暂无法自动化的分析项（待全量数据）
+
+以下分析需要全量数据或外部工具支撑，在采样数据上不具备可靠性：
+
+### 15.1 时序分析（需 timestamp + 全量数据）
+
+- [ ] **训练/验证集时间切分点**：按 `timestamp` 排序后确定 split point，对比切分前后的标签率、用户/物品 overlap
+- [ ] **日内 CVR 曲线**：按小时分桶统计转化率，识别 day-parting 模式
+- [ ] **冷启动率**：验证集中首次出现的 user_id / item_id 占比
+- [ ] **特征覆盖率时间漂移**：前 N 天 vs 后 N 天的特征缺失率变化趋势
+- [ ] **行为时间衰减**：序列中最近 N 天的行为对预测的增益曲线（指导截断策略）
+
+### 15.2 特征交互分析（需全量数据 + 计算资源）
+
+- [ ] **特征交叉 AUC**：两两特征组合后的 AUC 提升（发现强交互对）
+- [ ] **特征冗余检测**：高相关特征对识别（Cramér's V / mutual information）
+- [ ] **嵌入维度经验公式验证**：按基数分组，验证 $d = \min(50, \lceil c^{0.25} \rceil)$ 的合理性
+
+### 15.3 序列深度分析（需全量序列数据）
+
+- [ ] **序列内行为类型转移矩阵**：点击→转化 vs 点击→流失的转移概率
+- [ ] **序列时间间隔分布**：用于 session 切分决策
+- [ ] **序列尾部 N 步 vs 全序列的 AUC 差异**：定量确定截断长度
+- [ ] **序列长度 vs CVR 关系曲线**：判断长序列是否确实带来增益
+
+### 15.4 模型 Error Analysis（需已训练模型）
+
+- [ ] **分群 AUC 切片**：按用户活跃度、物品热度、序列长度、缺失率分桶，输出各桶 AUC/PR-AUC/GAUC
+- [ ] **Brier vs AUC scatter**：判断瓶颈是排序能力还是校准能力
+- [ ] **GAUC coverage 分析**：哪些用户群被模型放弃？
+- [ ] **Domain 贡献度消融**：逐域 mask 后的 AUC 差异
+
+### 15.5 竞赛策略定量验证
+
+- [ ] **上届方案适用性验证**：全量数据上验证序列长度分布后，定量评估全序列 attention 的复杂度拐点
+- [ ] **负样本构造 ROI**：当前无曝光数据，需评估 random negative 的采样比对 AUC 的影响
+- [ ] **Semantic ID 覆盖率 ROI**：`item_int_feats_83/84/85` 17% 覆盖率下 Semantic ID 的投入产出比
+
+---
+
+## 16. 重新生成报告
 
 ```bash
 # 完整重跑 EDA（自动下载 sample 数据集）

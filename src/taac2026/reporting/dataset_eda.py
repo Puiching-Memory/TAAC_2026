@@ -9,7 +9,7 @@ Both layers are designed for use by CLI scripts *and* notebook cells.
 """
 
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
@@ -628,6 +628,234 @@ def echarts_seq_length_summary(seq_stats: dict[str, SequenceLengthStats]) -> dic
     }
 
 
+# ---------------------------------------------------------------------------
+# 7. User-level aggregation
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class UserStats:
+    """Per-user behaviour counts and activity distribution."""
+
+    user_behavior_counts: Counter[str]  # user_id → total rows
+    user_label_counts: dict[str, Counter[int]]  # user_id → {label → count}
+    domain_activity: dict[str, set[str]]  # domain → set of active user_ids
+
+    @property
+    def n_users(self) -> int:
+        return len(self.user_behavior_counts)
+
+    def activity_distribution(self) -> dict[str, Any]:
+        """Return activity-level bins and counts."""
+        counts = list(self.user_behavior_counts.values())
+        if not counts:
+            return {"bins": [], "total_users": 0}
+        arr = np.array(counts)
+        bins = {"1": 0, "2-5": 0, "6-20": 0, "21-100": 0, "100+": 0}
+        for c in counts:
+            if c == 1:
+                bins["1"] += 1
+            elif c <= 5:
+                bins["2-5"] += 1
+            elif c <= 20:
+                bins["6-20"] += 1
+            elif c <= 100:
+                bins["21-100"] += 1
+            else:
+                bins["100+"] += 1
+        return {
+            "bins": bins,
+            "total_users": len(counts),
+            "mean_behaviors": float(arr.mean()),
+            "median_behaviors": float(np.median(arr)),
+            "max_behaviors": int(arr.max()),
+            "min_behaviors": int(arr.min()),
+        }
+
+    def cross_domain_overlap(self) -> dict[str, Any]:
+        """Compute user overlap between domains."""
+        domains = sorted(self.domain_activity.keys())
+        overlap_matrix: list[list[int]] = []
+        for d1 in domains:
+            row = []
+            for d2 in domains:
+                s1 = self.domain_activity.get(d1, set())
+                s2 = self.domain_activity.get(d2, set())
+                row.append(len(s1 & s2))
+            overlap_matrix.append(row)
+        # Users active in N domains
+        user_domain_counts: Counter[int] = Counter()
+        all_users = set()
+        for s in self.domain_activity.values():
+            all_users |= s
+        for uid in all_users:
+            n = sum(1 for s in self.domain_activity.values() if uid in s)
+            user_domain_counts[n] += 1
+        return {
+            "domains": domains,
+            "overlap_matrix": overlap_matrix,
+            "user_domain_count_dist": dict(sorted(user_domain_counts.items())),
+        }
+
+
+# ---------------------------------------------------------------------------
+# 8. Label-conditional feature analysis
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class LabelConditionalStats:
+    """Feature statistics conditioned on positive/negative label."""
+
+    # col → {0: (null_count, total), 1: (null_count, total)}
+    conditional_nulls: dict[str, dict[int, tuple[int, int]]]
+    # col → {0: set|Counter, 1: set|Counter} for cardinality comparison
+    conditional_cardinality: dict[str, dict[int, int]]
+    # single-feature AUC: col → auc_value
+    feature_auc: dict[str, float]
+
+    def null_rate_diff(self, *, top_n: int = 30) -> list[dict[str, Any]]:
+        """Return features with largest null-rate difference between labels."""
+        diffs = []
+        for col, label_map in self.conditional_nulls.items():
+            rates = {}
+            for label, (null_count, total) in label_map.items():
+                rates[label] = null_count / total if total else 0.0
+            if len(rates) < 2:
+                continue
+            labels_sorted = sorted(rates.keys())
+            diff = abs(rates[labels_sorted[-1]] - rates[labels_sorted[0]])
+            diffs.append({
+                "column": col,
+                "null_rate_positive": rates.get(1, 0.0),
+                "null_rate_negative": rates.get(0, 0.0),
+                "diff": round(diff, 4),
+            })
+        diffs.sort(key=lambda x: x["diff"], reverse=True)
+        return diffs[:top_n]
+
+
+def _compute_single_feature_auc(values: list[float], labels: list[int]) -> float:
+    """Compute AUC for a single numeric feature vs binary label."""
+    if not values or not labels:
+        return 0.5
+    arr_v = np.array(values, dtype=np.float64)
+    arr_l = np.array(labels, dtype=np.float64)
+    pos = arr_v[arr_l > 0.5]
+    neg = arr_v[arr_l <= 0.5]
+    if pos.size == 0 or neg.size == 0:
+        return 0.5
+    # Subsample if too large to avoid O(n^2)
+    max_pairs = 50_000
+    if pos.size * neg.size > max_pairs:
+        rng = np.random.RandomState(42)
+        pos = rng.choice(pos, min(pos.size, 1000), replace=False)
+        neg = rng.choice(neg, min(neg.size, 1000), replace=False)
+    margins = pos[:, None] - neg[None, :]
+    auc = float(np.mean(margins > 0) + 0.5 * np.mean(margins == 0))
+    return max(auc, 1.0 - auc)  # ensure > 0.5 (take better direction)
+
+
+# ---------------------------------------------------------------------------
+# 9. Dense feature distribution analysis
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class DenseFeatureStats:
+    """Distribution summary for dense (continuous) features."""
+
+    # col → summary dict
+    distributions: dict[str, dict[str, Any]]
+
+    @staticmethod
+    def summarize(values: list[float]) -> dict[str, Any]:
+        if not values:
+            return {"count": 0}
+        arr = np.array(values, dtype=np.float64)
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return {"count": len(values), "finite_count": 0}
+        return {
+            "count": len(values),
+            "finite_count": int(finite.size),
+            "mean": float(finite.mean()),
+            "std": float(finite.std()),
+            "min": float(finite.min()),
+            "p25": float(np.percentile(finite, 25)),
+            "median": float(np.median(finite)),
+            "p75": float(np.percentile(finite, 75)),
+            "max": float(finite.max()),
+            "skewness": float(_skewness(finite)),
+            "zero_rate": float((finite == 0.0).mean()),
+        }
+
+
+def _skewness(arr: np.ndarray) -> float:
+    """Compute skewness (Fisher's definition)."""
+    n = arr.size
+    if n < 3:
+        return 0.0
+    mean = arr.mean()
+    std = arr.std()
+    if std == 0:
+        return 0.0
+    return float(np.mean(((arr - mean) / std) ** 3))
+
+
+# ---------------------------------------------------------------------------
+# 10. Missing value pattern analysis
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class MissingPatternStats:
+    """Co-missing pattern analysis for high-null features."""
+
+    # pairs of features that are frequently co-missing
+    co_missing_pairs: list[dict[str, Any]]
+    # label-conditioned missing: is missing correlated with label?
+    label_missing_correlation: dict[str, float]  # col → correlation strength
+
+
+# ---------------------------------------------------------------------------
+# 11. Sequence behaviour patterns (beyond length)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class SequencePatternStats:
+    """Patterns within sequences: repeat rate, diversity."""
+
+    # domain → summary dict
+    patterns: dict[str, dict[str, Any]]
+
+
+# ---------------------------------------------------------------------------
+# 12. Cardinality bin distribution
+# ---------------------------------------------------------------------------
+
+
+def compute_cardinality_bins(ranking: list[dict[str, Any]]) -> dict[str, int]:
+    """Bin features by cardinality ranges."""
+    bins = {"1-10": 0, "11-100": 0, "101-1K": 0, "1K-10K": 0, "10K-100K": 0, "100K+": 0}
+    for r in ranking:
+        c = r.get("n_unique", 0)
+        if c <= 10:
+            bins["1-10"] += 1
+        elif c <= 100:
+            bins["11-100"] += 1
+        elif c <= 1000:
+            bins["101-1K"] += 1
+        elif c <= 10000:
+            bins["1K-10K"] += 1
+        elif c <= 100000:
+            bins["10K-100K"] += 1
+        else:
+            bins["100K+"] += 1
+    return bins
+
+
 @dataclass(slots=True)
 class DatasetScanResult:
     """Aggregated result from a single streaming pass over the dataset."""
@@ -637,6 +865,11 @@ class DatasetScanResult:
     label_dist: LabelDistribution
     seq_stats: dict[str, SequenceLengthStats]
     row_count: int
+    user_stats: UserStats | None = None
+    label_cond_stats: LabelConditionalStats | None = None
+    dense_stats: DenseFeatureStats | None = None
+    missing_patterns: MissingPatternStats | None = None
+    seq_patterns: SequencePatternStats | None = None
 
 
 def scan_dataset(
@@ -646,6 +879,10 @@ def scan_dataset(
     max_unique_track: int = 200_000,
 ) -> DatasetScanResult | None:
     """Compute column stats, label distribution, and sequence lengths in one pass.
+
+    Also collects user-level aggregation, label-conditional feature stats,
+    dense feature distributions, missing patterns, and sequence behaviour
+    patterns.
 
     Returns ``None`` if no rows were consumed.
     """
@@ -660,6 +897,35 @@ def scan_dataset(
     }
     seq_probe: dict[str, str | None] = {d: None for d in _domain_prefixes}
     row_count = 0
+
+    # -- New accumulators --
+    # User-level
+    user_behavior_counts: Counter[str] = Counter()
+    user_label_counts: dict[str, Counter[int]] = defaultdict(Counter)
+    domain_user_activity: dict[str, set[str]] = {d: set() for d in _domain_prefixes}
+
+    # Label-conditional null tracking
+    cond_nulls: dict[str, dict[int, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    # col → {label: [null_count, total_count]}
+
+    # For single-feature AUC: collect (value, label) for sparse int features
+    # Cap collection to avoid OOM
+    _MAX_AUC_ROWS = 100_000
+    feature_auc_values: dict[str, list[float]] = defaultdict(list)
+    feature_auc_labels: dict[str, list[int]] = defaultdict(list)
+
+    # Dense feature value collection
+    dense_values: dict[str, list[float]] = defaultdict(list)
+
+    # Missing pattern: track per-row missing sets for high-null features
+    _missing_row_vectors: list[frozenset[str]] = []
+
+    # Sequence patterns: track per-domain item repeat/diversity
+    seq_item_repeat_sums: dict[str, list[float]] = {d: [] for d in _domain_prefixes}
+
+    _label_col = "label_type"
+    _label_action_col = "label_action_type"
+    _positive_label = 2  # CVR positive = conversion
 
     for i, row in enumerate(rows):
         if max_rows and i >= max_rows:
@@ -680,7 +946,70 @@ def scan_dataset(
             _update_col_stat(col, value, col_accumulators[col], unique_sets[col], max_unique_track)
 
         # Label distribution
-        label_dist.add(row.get("label_type"))
+        label_val = row.get(_label_col)
+        label_dist.add(label_val)
+
+        # Binary label for conditional analysis (1 = positive/conversion, 0 = negative)
+        binary_label = 1 if label_val == _positive_label else 0
+
+        # --- User-level aggregation ---
+        uid = row.get("user_id")
+        if uid is not None:
+            uid_str = str(uid)
+            user_behavior_counts[uid_str] += 1
+            if label_val is not None:
+                user_label_counts[uid_str][int(label_val)] += 1
+
+        # --- Label-conditional null tracking ---
+        if label_val is not None and groups is not None:
+            sparse_cols = groups.user_int + groups.item_int
+            missing_this_row: list[str] = []
+            for col in sparse_cols:
+                v = row.get(col)
+                bucket = cond_nulls[col][binary_label]
+                bucket[1] += 1
+                if v is None:
+                    bucket[0] += 1
+                    missing_this_row.append(col)
+                # Single-feature AUC (for numeric sparse features)
+                elif isinstance(v, (int, float)) and not isinstance(v, bool) and row_count <= _MAX_AUC_ROWS:
+                    feature_auc_values[col].append(float(v))
+                    feature_auc_labels[col].append(binary_label)
+
+            if missing_this_row:
+                _missing_row_vectors.append(frozenset(missing_this_row))
+
+        # --- Dense feature values ---
+        if groups is not None:
+            for col in groups.user_dense:
+                v = row.get(col)
+                if v is None:
+                    continue
+                if isinstance(v, (list, tuple)):
+                    dense_values[col].extend(
+                        float(x) for x in v if isinstance(x, (int, float)) and not isinstance(x, bool)
+                    )
+                elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                    dense_values[col].append(float(v))
+
+        # --- Domain activity tracking + sequence patterns ---
+        for domain, prefix in _domain_prefixes.items():
+            probe = seq_probe.get(domain)
+            if probe is None:
+                for c in row:
+                    if c.startswith(prefix) and not c.endswith("_99"):
+                        seq_probe[domain] = c
+                        probe = c
+                        break
+            seq_val = row.get(probe) if probe else None
+            if seq_val is not None and isinstance(seq_val, (list, tuple)) and len(seq_val) > 0:
+                if uid is not None:
+                    domain_user_activity[domain].add(str(uid))
+                # Sequence item repeat rate
+                total_items = len(seq_val)
+                unique_items = len(set(seq_val))
+                repeat_rate = 1.0 - unique_items / total_items if total_items > 0 else 0.0
+                seq_item_repeat_sums[domain].append(repeat_rate)
 
         # Sequence lengths (delegates to shared helper)
         for domain, prefix in _domain_prefixes.items():
@@ -694,13 +1023,316 @@ def scan_dataset(
         if uniques is not None:
             col_accumulators[col].n_unique = len(uniques)
 
+    # --- Build UserStats ---
+    user_stats = UserStats(
+        user_behavior_counts=user_behavior_counts,
+        user_label_counts=dict(user_label_counts),
+        domain_activity=domain_user_activity,
+    )
+
+    # --- Build LabelConditionalStats ---
+    # Finalise conditional nulls
+    final_cond_nulls: dict[str, dict[int, tuple[int, int]]] = {}
+    for col, label_map in cond_nulls.items():
+        final_cond_nulls[col] = {label: tuple(counts) for label, counts in label_map.items()}  # type: ignore[misc]
+
+    # Compute single-feature AUC
+    feature_auc: dict[str, float] = {}
+    for col in feature_auc_values:
+        vals = feature_auc_values[col]
+        labs = feature_auc_labels[col]
+        if len(vals) >= 10:
+            feature_auc[col] = round(_compute_single_feature_auc(vals, labs), 4)
+
+    # Conditional cardinality (simplified: just count uniques per label)
+    cond_card: dict[str, dict[int, int]] = {}
+
+    label_cond_stats = LabelConditionalStats(
+        conditional_nulls=final_cond_nulls,
+        conditional_cardinality=cond_card,
+        feature_auc=feature_auc,
+    )
+
+    # --- Build DenseFeatureStats ---
+    dense_distributions = {}
+    for col, vals in dense_values.items():
+        dense_distributions[col] = DenseFeatureStats.summarize(vals)
+    dense_stats = DenseFeatureStats(distributions=dense_distributions)
+
+    # --- Build MissingPatternStats ---
+    # Co-missing analysis for top null features
+    co_missing_pairs: list[dict[str, Any]] = []
+    if _missing_row_vectors:
+        # Find features that appear in missing vectors most often
+        feat_missing_freq: Counter[str] = Counter()
+        for mv in _missing_row_vectors:
+            for f in mv:
+                feat_missing_freq[f] += 1
+        top_missing = [f for f, _ in feat_missing_freq.most_common(20)]
+        # Count co-missing pairs
+        pair_counts: Counter[tuple[str, str]] = Counter()
+        for mv in _missing_row_vectors:
+            top_in_row = [f for f in top_missing if f in mv]
+            for i_idx in range(len(top_in_row)):
+                for j_idx in range(i_idx + 1, len(top_in_row)):
+                    pair_counts[(top_in_row[i_idx], top_in_row[j_idx])] += 1
+        total_rows_with_missing = len(_missing_row_vectors)
+        for (f1, f2), count in pair_counts.most_common(15):
+            co_missing_pairs.append({
+                "feature_a": f1,
+                "feature_b": f2,
+                "co_missing_count": count,
+                "co_missing_rate": round(count / total_rows_with_missing, 4) if total_rows_with_missing else 0.0,
+            })
+
+    # Label-missing correlation: check if missing rate differs significantly by label
+    label_missing_corr: dict[str, float] = {}
+    for col, label_map in final_cond_nulls.items():
+        rates = {}
+        for label, (null_count, total) in label_map.items():
+            rates[label] = null_count / total if total else 0.0
+        if len(rates) >= 2:
+            vals = list(rates.values())
+            label_missing_corr[col] = round(abs(vals[-1] - vals[0]), 4)
+
+    missing_patterns = MissingPatternStats(
+        co_missing_pairs=co_missing_pairs,
+        label_missing_correlation=label_missing_corr,
+    )
+
+    # --- Build SequencePatternStats ---
+    seq_patterns_dict: dict[str, dict[str, Any]] = {}
+    for domain, repeat_rates in seq_item_repeat_sums.items():
+        if repeat_rates:
+            arr = np.array(repeat_rates)
+            seq_patterns_dict[domain] = {
+                "mean_repeat_rate": round(float(arr.mean()), 4),
+                "median_repeat_rate": round(float(np.median(arr)), 4),
+                "max_repeat_rate": round(float(arr.max()), 4),
+                "non_empty_sequences": len(repeat_rates),
+            }
+    seq_patterns = SequencePatternStats(patterns=seq_patterns_dict)
+
     return DatasetScanResult(
         groups=groups,
         col_stats=col_accumulators,
         label_dist=label_dist,
         seq_stats=seq_stats,
         row_count=row_count,
+        user_stats=user_stats,
+        label_cond_stats=label_cond_stats,
+        dense_stats=dense_stats,
+        missing_patterns=missing_patterns,
+        seq_patterns=seq_patterns,
     )
+
+
+def echarts_user_activity(user_stats: UserStats) -> dict[str, Any]:
+    """ECharts option for user activity distribution bar chart."""
+    dist = user_stats.activity_distribution()
+    bins = dist.get("bins", {})
+    return {
+        "title": {"text": f"用户活跃度分布 (共 {dist.get('total_users', 0)} 用户)"},
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+        "grid": {"left": 60, "right": 30, "top": 60, "bottom": 40},
+        "xAxis": {"type": "category", "data": list(bins.keys()), "name": "行为次数"},
+        "yAxis": {"type": "value", "name": "用户数"},
+        "series": [{
+            "type": "bar",
+            "data": list(bins.values()),
+            "itemStyle": {"color": _EC_COLORS[0]},
+            "label": {"show": True, "position": "top"},
+        }],
+    }
+
+
+def echarts_cross_domain_overlap(user_stats: UserStats) -> dict[str, Any]:
+    """ECharts option for cross-domain user overlap heatmap."""
+    overlap = user_stats.cross_domain_overlap()
+    domains = overlap["domains"]
+    matrix = overlap["overlap_matrix"]
+    data = []
+    for i, d1 in enumerate(domains):
+        for j, d2 in enumerate(domains):
+            data.append([i, j, matrix[i][j]])
+    max_val = max((d[2] for d in data), default=1)
+    return {
+        "_height": "350px",
+        "title": {"text": "跨域用户重叠矩阵"},
+        "tooltip": {"formatter": "{c}"},
+        "grid": {"left": 80, "right": 40, "top": 60, "bottom": 60},
+        "xAxis": {"type": "category", "data": domains, "splitArea": {"show": True}},
+        "yAxis": {"type": "category", "data": domains, "splitArea": {"show": True}},
+        "visualMap": {
+            "min": 0, "max": int(max_val), "show": True,
+            "orient": "horizontal", "left": "center", "bottom": 0,
+            "inRange": {"color": ["#f9e2af", "#fab387", "#f38ba8"]},
+        },
+        "series": [{
+            "type": "heatmap",
+            "data": data,
+            "label": {"show": True, "fontSize": 10},
+        }],
+    }
+
+
+def echarts_feature_auc(label_cond_stats: LabelConditionalStats, *, top_n: int = 25) -> dict[str, Any]:
+    """ECharts option for single-feature AUC ranking."""
+    items = sorted(label_cond_stats.feature_auc.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    if not items:
+        return {"tooltip": {}, "series": []}
+    items_rev = list(reversed(items))
+    names = [c.replace("user_int_feats_", "u_").replace("item_int_feats_", "i_") for c, _ in items_rev]
+    values = [v for _, v in items_rev]
+    return {
+        "_height": f"{max(300, len(items) * 22)}px",
+        "title": {"text": "单特征 AUC 排名 (top features)"},
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+        "grid": {"left": 90, "right": 40, "top": 50, "bottom": 30},
+        "xAxis": {"type": "value", "name": "AUC", "min": 0.45, "max": 0.8},
+        "yAxis": {"type": "category", "data": names, "axisLabel": {"fontSize": 9}},
+        "series": [{
+            "type": "bar",
+            "data": values,
+            "itemStyle": {"color": _EC_COLORS[2]},
+            "label": {"show": True, "position": "right", "formatter": "{c}"},
+            "markLine": {
+                "silent": True,
+                "data": [{"xAxis": 0.5, "lineStyle": {"color": _EC_COLORS[4], "type": "dashed"},
+                          "label": {"formatter": "随机基线"}}],
+            },
+        }],
+    }
+
+
+def echarts_null_rate_by_label(label_cond_stats: LabelConditionalStats, *, top_n: int = 20) -> dict[str, Any]:
+    """ECharts option for null rate difference between positive/negative labels."""
+    diffs = label_cond_stats.null_rate_diff(top_n=top_n)
+    if not diffs:
+        return {"tooltip": {}, "series": []}
+    diffs_rev = list(reversed(diffs))
+    names = [d["column"].replace("user_int_feats_", "u_").replace("item_int_feats_", "i_") for d in diffs_rev]
+    pos_rates = [round(d["null_rate_positive"], 4) for d in diffs_rev]
+    neg_rates = [round(d["null_rate_negative"], 4) for d in diffs_rev]
+    return {
+        "_height": f"{max(300, len(diffs) * 22)}px",
+        "title": {"text": "正负样本缺失率对比 (差异最大的特征)"},
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+        "legend": {"data": ["正样本 (转化)", "负样本 (点击)"]},
+        "grid": {"left": 100, "right": 40, "top": 60, "bottom": 30},
+        "xAxis": {"type": "value", "name": "缺失率", "max": 1.0},
+        "yAxis": {"type": "category", "data": names, "axisLabel": {"fontSize": 8}},
+        "series": [
+            {"name": "正样本 (转化)", "type": "bar", "data": pos_rates, "itemStyle": {"color": _EC_COLORS[2]}},
+            {"name": "负样本 (点击)", "type": "bar", "data": neg_rates, "itemStyle": {"color": _EC_COLORS[1]}},
+        ],
+    }
+
+
+def echarts_dense_distributions(dense_stats: DenseFeatureStats) -> dict[str, Any]:
+    """ECharts option for dense feature distribution radar chart."""
+    cols = sorted(dense_stats.distributions.keys())
+    if not cols:
+        return {"tooltip": {}, "series": []}
+    summaries = [dense_stats.distributions[c] for c in cols]
+    valid = [(c, s) for c, s in zip(cols, summaries) if s.get("finite_count", 0) > 0]
+    if not valid:
+        return {"tooltip": {}, "series": []}
+
+    # Bar chart of mean ± std
+    names = [c.replace("user_dense_feats_", "d_") for c, _ in valid]
+    means = [round(s["mean"], 4) for _, s in valid]
+    stds = [round(s.get("std", 0), 4) for _, s in valid]
+    return {
+        "title": {"text": "稠密特征分布概览 (均值 ± 标准差)"},
+        "tooltip": {"trigger": "axis"},
+        "grid": {"left": 60, "right": 30, "top": 60, "bottom": 60},
+        "xAxis": {"type": "category", "data": names, "axisLabel": {"rotate": 45}},
+        "yAxis": {"type": "value", "name": "值"},
+        "series": [
+            {
+                "name": "均值",
+                "type": "bar",
+                "data": means,
+                "itemStyle": {"color": _EC_COLORS[0]},
+            },
+            {
+                "name": "标准差",
+                "type": "bar",
+                "data": stds,
+                "itemStyle": {"color": _EC_COLORS[3], "opacity": 0.6},
+            },
+        ],
+        "legend": {"data": ["均值", "标准差"]},
+    }
+
+
+def echarts_cardinality_bins(bins: dict[str, int]) -> dict[str, Any]:
+    """ECharts option for cardinality bin distribution pie chart."""
+    data = [{"name": k, "value": v} for k, v in bins.items() if v > 0]
+    return {
+        "title": {"text": "特征基数区间分布"},
+        "tooltip": {"trigger": "item", "formatter": "{b}: {c} 个特征 ({d}%)"},
+        "legend": {"bottom": 0},
+        "series": [{
+            "type": "pie",
+            "radius": ["30%", "60%"],
+            "avoidLabelOverlap": True,
+            "itemStyle": {"borderRadius": 6, "borderWidth": 2},
+            "label": {"formatter": "{b}\n{c} ({d}%)"},
+            "data": data,
+            "color": _EC_COLORS,
+        }],
+    }
+
+
+def echarts_seq_repeat_rate(seq_patterns: SequencePatternStats) -> dict[str, Any]:
+    """ECharts option for per-domain sequence item repeat rate."""
+    domains = sorted(seq_patterns.patterns.keys())
+    if not domains:
+        return {"tooltip": {}, "series": []}
+    means = [seq_patterns.patterns[d].get("mean_repeat_rate", 0) for d in domains]
+    return {
+        "title": {"text": "序列内物品重复率 (按域)"},
+        "tooltip": {"trigger": "axis"},
+        "grid": {"left": 60, "right": 30, "top": 60, "bottom": 40},
+        "xAxis": {"type": "category", "data": domains},
+        "yAxis": {"type": "value", "name": "平均重复率", "max": 1.0},
+        "series": [{
+            "type": "bar",
+            "data": means,
+            "itemStyle": {"color": _EC_COLORS[4]},
+            "label": {"show": True, "position": "top", "formatter": "{c}"},
+        }],
+    }
+
+
+def echarts_co_missing(missing_patterns: MissingPatternStats, *, top_n: int = 10) -> dict[str, Any]:
+    """ECharts option for co-missing feature pairs."""
+    pairs = missing_patterns.co_missing_pairs[:top_n]
+    if not pairs:
+        return {"tooltip": {}, "series": []}
+    pairs_rev = list(reversed(pairs))
+    names = [
+        f"{p['feature_a'].replace('user_int_feats_', 'u_').replace('item_int_feats_', 'i_')} × "
+        f"{p['feature_b'].replace('user_int_feats_', 'u_').replace('item_int_feats_', 'i_')}"
+        for p in pairs_rev
+    ]
+    rates = [p["co_missing_rate"] for p in pairs_rev]
+    return {
+        "_height": f"{max(250, len(pairs) * 24)}px",
+        "title": {"text": "特征共缺失率 TOP 对"},
+        "tooltip": {"trigger": "axis"},
+        "grid": {"left": 150, "right": 40, "top": 50, "bottom": 30},
+        "xAxis": {"type": "value", "name": "共缺失率", "max": 1.0},
+        "yAxis": {"type": "category", "data": names, "axisLabel": {"fontSize": 8}},
+        "series": [{
+            "type": "bar",
+            "data": rates,
+            "itemStyle": {"color": _EC_COLORS[5]},
+            "label": {"show": True, "position": "right", "formatter": "{c}"},
+        }],
+    }
 
 
 def serialize_echarts(option: dict[str, Any]) -> str:

@@ -123,6 +123,29 @@ results = compute_classification_metrics(labels, logits, group_ids)
 
 以下分析有助于实验排期决策，但尚未实现：
 
-- [ ] **时间漂移诊断**：train/val 标签率变化、user/item overlap、冷启动占比、特征覆盖率漂移
-- [ ] **分群切片评估**：按用户活跃度、item 热度、序列长度、缺失率分桶，输出各桶 AUC/PR-AUC/GAUC
-- [ ] **特征有效性分析**：label 条件下的 null lift、单字段 lift、domain 贡献度（需全量数据）
+### 6.1 时间漂移诊断（P0 优先级）
+
+- [ ] **train/val 标签率漂移**：时间切分后对比正样本率变化量，超过 2pp 需调整切分策略或加入时间感知损失
+- [ ] **user/item overlap**：验证集中训练集已见用户占比、已见物品占比 → 冷启动占比
+- [ ] **冷启动用户 AUC**：单独评估从未在训练集出现的用户群的 AUC，定位冷启动损失
+- [ ] **特征覆盖率漂移**：按时间窗口统计高缺失特征的缺失率趋势，识别数据质量退化
+
+### 6.2 分群切片评估（P1 优先级）
+
+- [ ] **用户活跃度分桶 AUC**：按 `user_stats.activity_distribution()` 的分桶，输出各桶 AUC/PR-AUC/GAUC
+- [ ] **物品热度分桶 AUC**：高热/中热/低热/冷启动物品各自的 AUC
+- [ ] **序列长度分桶 AUC**：短序列 vs 长序列用户的 AUC 差异 → 指导 max_seq_len 设置
+- [ ] **缺失率分桶 AUC**：高缺失率用户 vs 低缺失率用户的 AUC → 验证 missing token 策略效果
+
+### 6.3 特征有效性分析（P1 优先级）
+
+- [ ] **单字段 lift**：在 baseline 基础上逐个移除特征，观察 AUC delta
+- [ ] **域贡献度**：逐域 mask 后的 AUC 差异，决定域间资源分配
+- [ ] **特征交叉增益**：两两特征组合的 AUC 增量 top-K
+- [ ] **label 条件下的 null lift**：dataset_eda 已提供正负样本缺失率对比，需在模型层验证其影响
+
+### 6.4 校准与排序诊断
+
+- [ ] **预测分数分布**：正负样本的分数直方图重叠度 → 判断模型区分能力
+- [ ] **Brier vs AUC scatter**：跨实验对比排序能力与校准能力的 tradeoff
+- [ ] **GAUC coverage 趋势**：随训练进行 coverage 是否在下降（过拟合高活跃用户）

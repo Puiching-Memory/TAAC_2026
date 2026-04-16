@@ -5,20 +5,30 @@ from tests.support import build_row
 from taac2026.reporting.dataset_eda import (
     serialize_echarts,
     classify_columns,
+    compute_cardinality_bins,
     compute_cardinality_ranking,
     compute_column_stats,
     compute_label_distribution,
     compute_sequence_lengths,
     echarts_cardinality,
+    echarts_cardinality_bins,
+    echarts_co_missing,
     echarts_column_layout,
     echarts_coverage_heatmap,
+    echarts_cross_domain_overlap,
     echarts_cross_edition,
+    echarts_dense_distributions,
     echarts_edition_comparison,
+    echarts_feature_auc,
     echarts_label_distribution,
     echarts_ndcg_decay,
+    echarts_null_rate_by_label,
     echarts_null_rates,
     echarts_seq_length_summary,
+    echarts_seq_repeat_rate,
     echarts_sequence_lengths,
+    echarts_user_activity,
+    scan_dataset,
 )
 
 
@@ -174,4 +184,115 @@ class TestECharts:
         seq_stats = compute_sequence_lengths(iter(_sample_rows()))
         opt = echarts_seq_length_summary(seq_stats)
         assert "series" in opt
+        serialize_echarts(opt)
+
+
+class TestScanDatasetNewFields:
+    """Tests for the new analysis fields in scan_dataset."""
+
+    def test_user_stats_populated(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        assert result.user_stats is not None
+        assert result.user_stats.n_users == 3  # u1, u2, u3
+
+    def test_user_activity_distribution(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        dist = result.user_stats.activity_distribution()
+        assert dist["total_users"] == 3
+        assert dist["mean_behaviors"] > 0
+
+    def test_cross_domain_overlap(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        overlap = result.user_stats.cross_domain_overlap()
+        assert "domains" in overlap
+        assert "overlap_matrix" in overlap
+        assert "user_domain_count_dist" in overlap
+
+    def test_label_conditional_stats(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        assert result.label_cond_stats is not None
+        # Feature AUC should have at least one entry
+        assert isinstance(result.label_cond_stats.feature_auc, dict)
+
+    def test_dense_stats(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        assert result.dense_stats is not None
+        assert isinstance(result.dense_stats.distributions, dict)
+
+    def test_missing_patterns(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        assert result.missing_patterns is not None
+
+    def test_seq_patterns(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None
+        assert result.seq_patterns is not None
+        assert isinstance(result.seq_patterns.patterns, dict)
+
+    def test_cardinality_bins(self) -> None:
+        rows = _sample_rows()
+        groups = classify_columns(list(rows[0].keys()))
+        stats = compute_column_stats(iter(rows))
+        ranking = compute_cardinality_ranking(stats, groups)
+        bins = compute_cardinality_bins(ranking)
+        assert sum(bins.values()) == len(ranking)
+
+
+class TestNewECharts:
+    """Smoke tests for new ECharts generators."""
+
+    def test_echarts_user_activity(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.user_stats is not None
+        opt = echarts_user_activity(result.user_stats)
+        assert "series" in opt
+        serialize_echarts(opt)
+
+    def test_echarts_cross_domain_overlap(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.user_stats is not None
+        opt = echarts_cross_domain_overlap(result.user_stats)
+        assert "series" in opt
+        serialize_echarts(opt)
+
+    def test_echarts_feature_auc(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.label_cond_stats is not None
+        opt = echarts_feature_auc(result.label_cond_stats)
+        serialize_echarts(opt)
+
+    def test_echarts_null_rate_by_label(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.label_cond_stats is not None
+        opt = echarts_null_rate_by_label(result.label_cond_stats)
+        serialize_echarts(opt)
+
+    def test_echarts_dense_distributions(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.dense_stats is not None
+        opt = echarts_dense_distributions(result.dense_stats)
+        serialize_echarts(opt)
+
+    def test_echarts_cardinality_bins(self) -> None:
+        bins = compute_cardinality_bins([{"n_unique": 5}, {"n_unique": 50}, {"n_unique": 500}])
+        opt = echarts_cardinality_bins(bins)
+        assert "series" in opt
+        serialize_echarts(opt)
+
+    def test_echarts_seq_repeat_rate(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.seq_patterns is not None
+        opt = echarts_seq_repeat_rate(result.seq_patterns)
+        serialize_echarts(opt)
+
+    def test_echarts_co_missing(self) -> None:
+        result = scan_dataset(iter(_sample_rows()))
+        assert result is not None and result.missing_patterns is not None
+        opt = echarts_co_missing(result.missing_patterns)
         serialize_echarts(opt)
