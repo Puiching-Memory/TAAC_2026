@@ -3,7 +3,7 @@ from __future__ import annotations
 from tests.support import build_row
 
 from taac2026.reporting.dataset_eda import (
-    _serialize_echarts,
+    serialize_echarts,
     classify_columns,
     compute_cardinality_ranking,
     compute_column_stats,
@@ -96,7 +96,7 @@ class TestECharts:
         dist = compute_label_distribution(iter(_sample_rows()))
         opt = echarts_label_distribution(dist)
         assert "series" in opt
-        j = _serialize_echarts(opt)
+        j = serialize_echarts(opt)
         assert '"type": "pie"' in j
 
     def test_echarts_cardinality(self) -> None:
@@ -106,13 +106,13 @@ class TestECharts:
         ranking = compute_cardinality_ranking(stats, groups)
         opt = echarts_cardinality(ranking)
         assert "series" in opt
-        _serialize_echarts(opt)
+        serialize_echarts(opt)
 
     def test_echarts_sequence_lengths(self) -> None:
         seq_stats = compute_sequence_lengths(iter(_sample_rows()))
         opt = echarts_sequence_lengths(seq_stats)
         assert "series" in opt
-        _serialize_echarts(opt)
+        serialize_echarts(opt)
 
     def test_echarts_coverage_heatmap(self) -> None:
         rows = _sample_rows()
@@ -120,41 +120,41 @@ class TestECharts:
         stats = compute_column_stats(iter(rows))
         opt = echarts_coverage_heatmap(stats, groups)
         assert "series" in opt
-        _serialize_echarts(opt)
+        serialize_echarts(opt)
 
     def test_echarts_ndcg_decay(self) -> None:
         opt = echarts_ndcg_decay()
         assert "series" in opt
-        j = _serialize_echarts(opt)
+        j = serialize_echarts(opt)
         assert '"type": "line"' in j
 
     def test_echarts_cross_edition(self) -> None:
         opt = echarts_cross_edition()
         assert "series" in opt
-        _serialize_echarts(opt)
+        serialize_echarts(opt)
 
     def test_echarts_column_layout(self) -> None:
         rows = _sample_rows()
         groups = classify_columns(list(rows[0].keys()))
         opt = echarts_column_layout(groups)
         assert "series" in opt
-        j = _serialize_echarts(opt)
+        j = serialize_echarts(opt)
         assert '"type": "pie"' in j
 
     def test_echarts_null_rates(self) -> None:
         stats = compute_column_stats(iter(_sample_rows()))
         opt = echarts_null_rates(stats)
         assert "series" in opt
-        _serialize_echarts(opt)
+        serialize_echarts(opt)
 
     def test_echarts_edition_comparison(self) -> None:
         opt = echarts_edition_comparison()
         assert "series" in opt
-        j = _serialize_echarts(opt)
+        j = serialize_echarts(opt)
         assert "TAAC 2025" in j
 
     def test_echarts_seq_length_summary(self) -> None:
         seq_stats = compute_sequence_lengths(iter(_sample_rows()))
         opt = echarts_seq_length_summary(seq_stats)
         assert "series" in opt
-        _serialize_echarts(opt)
+        serialize_echarts(opt)

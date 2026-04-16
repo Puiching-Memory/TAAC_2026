@@ -11,7 +11,6 @@ Both layers are designed for use by CLI scripts *and* notebook cells.
 import math
 from collections import Counter
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 import numpy as np
@@ -118,14 +117,17 @@ def compute_column_stats(
     unique_sets: dict[str, set[Any]] = {}
 
     for row in rows:
-        target_cols = columns if columns is not None else list(row.keys())
-        for col in target_cols:
+        if columns is None:
+            row_items = row.items()
+        else:
+            row_items = ((col, row.get(col)) for col in columns)
+
+        for col, value in row_items:
             if col not in accumulators:
                 accumulators[col] = ColumnStats(name=col)
                 unique_sets[col] = set()
             stats = accumulators[col]
             stats.count += 1
-            value = row.get(col)
             if value is None:
                 continue
             stats.non_null += 1
@@ -507,21 +509,7 @@ def echarts_seq_length_summary(seq_stats: dict[str, SequenceLengthStats]) -> dic
     """ECharts option for per-domain sequence-length box-style summary."""
     domains = [d for d in seq_stats if seq_stats[d].lengths]
     summaries = [seq_stats[d].summary() for d in domains]
-    series = []
-    for i, (d, s) in enumerate(zip(domains, summaries)):
-        if s["count"] == 0:
-            continue
-        color = _EC_COLORS[i % len(_EC_COLORS)]
-        # Visualise as scatter-connected range markers
-        series.append({
-            "name": d,
-            "type": "bar",
-            "data": [int(s["p75"] - s["p25"])],
-            "stack": d,
-            "itemStyle": {"color": color, "opacity": 0.7},
-            "barWidth": 30,
-        })
-    # Use a simpler approach: radar chart for multi-domain comparison
+    # Radar chart for multi-domain comparison
     indicators = [
         {"name": "min", "max": max(s["max"] for s in summaries) * 1.1},
         {"name": "P25", "max": max(s["max"] for s in summaries) * 1.1},
@@ -554,7 +542,7 @@ def echarts_seq_length_summary(seq_stats: dict[str, SequenceLengthStats]) -> dic
     }
 
 
-def _serialize_echarts(option: dict[str, Any]) -> str:
+def serialize_echarts(option: dict[str, Any]) -> str:
     """Serialize ECharts option dict to JSON string."""
     import json as _json
 

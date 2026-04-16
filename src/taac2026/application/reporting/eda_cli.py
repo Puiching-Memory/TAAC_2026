@@ -19,7 +19,7 @@ DEFAULT_FIGURES_DIR = ROOT / "docs" / "assets" / "figures" / "eda"
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run dataset EDA and generate ECharts JSON")
     p.add_argument("--dataset", default="TAAC2026/data_sample_1000", help="HF Hub name or local path")
-    p.add_argument("--max-rows", type=int, default=0, help="Max rows to scan (0 = all)")
+    p.add_argument("--max-rows", type=int, default=10000, help="Max rows to scan (0 = all)")
     p.add_argument("--figures-dir", default=str(DEFAULT_FIGURES_DIR), help="Output directory for ECharts JSON")
     p.add_argument("--json-path", default="", help="Optional JSON stats output path")
     return p.parse_args(argv)
@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     from taac2026.infrastructure.io.console import logger, stderr_console
     from taac2026.infrastructure.io.datasets import iter_dataset_rows
     from taac2026.reporting.dataset_eda import (
-        _serialize_echarts,
+        serialize_echarts,
         classify_columns,
         compute_cardinality_ranking,
         compute_column_stats,
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def _write_ec(name: str, opt: dict) -> None:
         (figures_dir / f"{name}.echarts.json").write_text(
-            _serialize_echarts(opt), encoding="utf-8",
+            serialize_echarts(opt), encoding="utf-8",
         )
 
     _write_ec("label_distribution", echarts_label_distribution(label_dist))

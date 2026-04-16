@@ -12,7 +12,9 @@
   function getBase() {
     if (typeof __md_scope !== "undefined")
       return __md_scope.href.replace(/\/$/, "")
-    return ""
+    if (document.baseURI)
+      return document.baseURI.replace(/\/$/, "")
+    return window.location.href.replace(/\/$/, "")
   }
 
   function isDark() {
@@ -165,7 +167,7 @@
   function reThemeAll() {
     clearTimeout(_reThemeTimer)
     _reThemeTimer = setTimeout(function () {
-      console.log("[echarts-fence] reThemeAll – isDark:", isDark(), "charts:", charts.length)
+
       for (var i = 0; i < charts.length; i++) {
         try {
           var c = charts[i]
@@ -198,9 +200,15 @@
         .then(function (opt) { renderChart(el, opt) })
         .catch(function (e) { el.textContent = "ECharts load error: " + e.message })
     } else {
+      var cached = el.getAttribute("data-option")
       var raw = el.textContent.trim()
-      if (raw) {
-        try { renderChart(el, JSON.parse(raw)) }
+      var source = raw || cached
+      if (source) {
+        try {
+          var opt = JSON.parse(source)
+          if (raw) el.setAttribute("data-option", raw)
+          renderChart(el, opt)
+        }
         catch (e) { el.textContent = "ECharts JSON error: " + e.message }
       }
     }
@@ -217,7 +225,7 @@
     }
     charts = []
     document.querySelectorAll("div.echarts").forEach(processDiv)
-    console.log("[echarts-fence] init – loaded", charts.length, "charts, isDark:", isDark())
+
   }
 
   if (typeof document$ !== "undefined") {
