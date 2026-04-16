@@ -30,8 +30,10 @@ def main(argv: list[str] | None = None) -> int:
     figures_dir = Path(args.figures_dir)
     figures_dir.mkdir(parents=True, exist_ok=True)
 
-    from taac2026.infrastructure.io.console import logger, stderr_console
+    from taac2026.infrastructure.io.console import configure_logging, logger, stderr_console
     from taac2026.infrastructure.io.datasets import iter_dataset_rows
+
+    configure_logging()
     from taac2026.reporting.dataset_eda import (
         serialize_echarts,
         classify_columns,

@@ -509,15 +509,23 @@ def echarts_seq_length_summary(seq_stats: dict[str, SequenceLengthStats]) -> dic
     """ECharts option for per-domain sequence-length box-style summary."""
     domains = [d for d in seq_stats if seq_stats[d].lengths]
     summaries = [seq_stats[d].summary() for d in domains]
+    if not domains or not summaries:
+        return {
+            "tooltip": {},
+            "legend": {"data": []},
+            "radar": {"indicator": []},
+            "series": [{"type": "radar", "data": []}],
+        }
     # Radar chart for multi-domain comparison
+    radar_max = max(s["max"] for s in summaries) * 1.1
     indicators = [
-        {"name": "min", "max": max(s["max"] for s in summaries) * 1.1},
-        {"name": "P25", "max": max(s["max"] for s in summaries) * 1.1},
-        {"name": "median", "max": max(s["max"] for s in summaries) * 1.1},
-        {"name": "mean", "max": max(s["max"] for s in summaries) * 1.1},
-        {"name": "P75", "max": max(s["max"] for s in summaries) * 1.1},
-        {"name": "P95", "max": max(s["max"] for s in summaries) * 1.1},
-        {"name": "max", "max": max(s["max"] for s in summaries) * 1.1},
+        {"name": "min", "max": radar_max},
+        {"name": "P25", "max": radar_max},
+        {"name": "median", "max": radar_max},
+        {"name": "mean", "max": radar_max},
+        {"name": "P75", "max": radar_max},
+        {"name": "P95", "max": radar_max},
+        {"name": "max", "max": radar_max},
     ]
     radar_data = []
     for i, (d, s) in enumerate(zip(domains, summaries)):
