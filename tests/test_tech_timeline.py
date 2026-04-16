@@ -117,3 +117,4 @@ class TestTechTimelineCacheFallback:
 
         assert [node.s2_id for node in graph.nodes] == ["resolved-paper"]
         assert graph._id_to_name == {"resolved-paper": "IDGenRec"}
+        assert "" not in graph._id_to_name
