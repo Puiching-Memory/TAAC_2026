@@ -110,15 +110,16 @@ class ColumnStats:
 
 # Prefixes whose columns should skip unique-value tracking (dense vectors, sequences)
 _SKIP_UNIQUE_PREFIXES: tuple[str, ...] = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
-# High-cardinality identity columns that should always skip unique tracking
-_SKIP_UNIQUE_EXACT: frozenset[str] = frozenset({"user_id", "item_id"})
+# High-cardinality identifier/time columns that should always skip unique tracking
+_SKIP_UNIQUE_EXACT: frozenset[str] = frozenset({"user_id", "item_id", "timestamp", "label_time"})
 
 
 def _should_skip_unique(col: str) -> bool:
     """Return True if *col* should skip unique-value tracking.
 
     Skips dense/sequence prefix columns as well as known high-cardinality
-    identity columns (``user_id``, ``item_id``).
+    identifier/time columns (``user_id``, ``item_id``, ``timestamp``,
+    ``label_time``).
     """
     return col in _SKIP_UNIQUE_EXACT or any(col.startswith(p) for p in _SKIP_UNIQUE_PREFIXES)
 
@@ -1000,12 +1001,16 @@ def scan_dataset(
                 v = row.get(col)
                 if v is None:
                     continue
-                if len(dense_values[col]) >= _MAX_DENSE_VALUES:
+                remaining = _MAX_DENSE_VALUES - len(dense_values[col])
+                if remaining <= 0:
                     continue
                 if isinstance(v, (list, tuple)):
-                    dense_values[col].extend(
-                        float(x) for x in v if isinstance(x, (int, float)) and not isinstance(x, bool)
-                    )
+                    for x in v:
+                        if isinstance(x, (int, float)) and not isinstance(x, bool):
+                            dense_values[col].append(float(x))
+                            remaining -= 1
+                            if remaining <= 0:
+                                break
                 elif isinstance(v, (int, float)) and not isinstance(v, bool):
                     dense_values[col].append(float(v))
 
