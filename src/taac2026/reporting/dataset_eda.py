@@ -135,9 +135,6 @@ def compute_column_stats(
             if isinstance(value, (list, tuple)):
                 stats.is_list = True
                 stats.sum_len += len(value)
-                for v in value:
-                    if v is not None and len(unique_sets[col]) < max_unique_track:
-                        unique_sets[col].add(v)
             else:
                 if len(unique_sets[col]) < max_unique_track:
                     unique_sets[col].add(value)
@@ -164,7 +161,7 @@ _LABEL_NAMES: dict[int, str] = {0: "曝光", 1: "点击", 2: "转化"}
 
 @dataclass(slots=True)
 class LabelDistribution:
-    counts: dict[int, int] = field(default_factory=lambda: Counter())  # type: ignore[assignment]
+    counts: Counter[int] = field(default_factory=Counter)
     total: int = 0
 
     def add(self, label: int | None) -> None:
@@ -541,7 +538,7 @@ def echarts_seq_length_summary(seq_stats: dict[str, SequenceLengthStats]) -> dic
         })
     return {
         "tooltip": {},
-        "legend": {"data": [d for d in domains if seq_stats[d].summary()["count"] > 0]},
+        "legend": {"data": [d for d, s in zip(domains, summaries) if s["count"] > 0]},
         "radar": {"indicator": indicators},
         "series": [{
             "type": "radar",
