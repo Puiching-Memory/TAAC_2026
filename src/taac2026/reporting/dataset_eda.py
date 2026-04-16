@@ -51,7 +51,7 @@ class ColumnGroups:
 
 def classify_columns(column_names: Sequence[str]) -> ColumnGroups:
     """Split dataset column names into semantic groups."""
-    groups = ColumnGroups()
+    groups = ColumnGroups(domain_seq={d: [] for d in DEFAULT_SEQUENCE_NAMES})
     for col in column_names:
         if col.startswith(_USER_INT_PREFIX):
             groups.user_int.append(col)
@@ -115,6 +115,8 @@ def compute_column_stats(
     """Compute per-column statistics in a single streaming pass."""
     accumulators: dict[str, ColumnStats] = {}
     unique_sets: dict[str, set[Any]] = {}
+    # Only track uniques for scalar/int columns (not dense vectors or sequences)
+    _skip_unique_prefixes = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
 
     for row in rows:
         if columns is None:
@@ -136,8 +138,9 @@ def compute_column_stats(
                 stats.is_list = True
                 stats.sum_len += len(value)
             else:
-                if len(unique_sets[col]) < max_unique_track:
-                    unique_sets[col].add(value)
+                if not any(col.startswith(p) for p in _skip_unique_prefixes):
+                    if len(unique_sets[col]) < max_unique_track:
+                        unique_sets[col].add(value)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     if math.isfinite(value):
                         stats.sum_val += value
@@ -414,9 +417,9 @@ def echarts_cross_edition() -> dict[str, Any]:
         "xAxis": {"type": "category", "data": ["上届 1M", "上届 10M", "本届 sample"]},
         "yAxis": {"type": "value", "name": "占比 (%)", "max": 100},
         "series": [
-            {"name": "曝光", "type": "bar", "data": [90.19, 94.63, 0], "color": _EC_COLORS[0]},
-            {"name": "点击", "type": "bar", "data": [9.81, 2.85, 87.6], "color": _EC_COLORS[1]},
-            {"name": "转化", "type": "bar", "data": [0, 2.52, 12.4], "color": _EC_COLORS[2]},
+            {"name": "曝光", "type": "bar", "data": [90.19, 94.63, 0], "itemStyle": {"color": _EC_COLORS[0]}},
+            {"name": "点击", "type": "bar", "data": [9.81, 2.85, 87.6], "itemStyle": {"color": _EC_COLORS[1]}},
+            {"name": "转化", "type": "bar", "data": [0, 2.52, 12.4], "itemStyle": {"color": _EC_COLORS[2]}},
         ],
     }
 
@@ -545,6 +548,113 @@ def echarts_seq_length_summary(seq_stats: dict[str, SequenceLengthStats]) -> dic
             "data": radar_data,
         }],
     }
+
+
+@dataclass(slots=True)
+class DatasetScanResult:
+    """Aggregated result from a single streaming pass over the dataset."""
+
+    groups: ColumnGroups
+    col_stats: dict[str, ColumnStats]
+    label_dist: LabelDistribution
+    seq_stats: dict[str, SequenceLengthStats]
+    row_count: int
+
+
+def scan_dataset(
+    rows: Iterable[dict[str, Any]],
+    *,
+    max_rows: int = 0,
+    max_unique_track: int = 200_000,
+) -> DatasetScanResult | None:
+    """Compute column stats, label distribution, and sequence lengths in one pass.
+
+    Returns ``None`` if no rows were consumed.
+    """
+    _isfinite = math.isfinite
+    _skip_unique_prefixes = (_USER_DENSE_PREFIX,) + tuple(_DOMAIN_SEQ_PREFIXES.values())
+    _domain_prefixes = _DOMAIN_SEQ_PREFIXES
+
+    groups: ColumnGroups | None = None
+    col_accumulators: dict[str, ColumnStats] = {}
+    unique_sets: dict[str, set[Any]] = {}
+    label_dist = LabelDistribution()
+    seq_stats: dict[str, SequenceLengthStats] = {
+        d: SequenceLengthStats(domain=d) for d in _domain_prefixes
+    }
+    seq_probe: dict[str, str | None] = {d: None for d in _domain_prefixes}
+    row_count = 0
+
+    for i, row in enumerate(rows):
+        if max_rows and i >= max_rows:
+            break
+        row = dict(row)
+        row_count += 1
+
+        # Classify columns on first row
+        if groups is None:
+            groups = classify_columns(list(row.keys()))
+
+        # Column stats
+        for col, value in row.items():
+            if col not in col_accumulators:
+                col_accumulators[col] = ColumnStats(name=col)
+                unique_sets[col] = set()
+            stats = col_accumulators[col]
+            stats.count += 1
+            if value is None:
+                continue
+            stats.non_null += 1
+            if isinstance(value, (list, tuple)):
+                stats.is_list = True
+                stats.sum_len += len(value)
+            else:
+                if not any(col.startswith(p) for p in _skip_unique_prefixes):
+                    if len(unique_sets[col]) < max_unique_track:
+                        unique_sets[col].add(value)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    if _isfinite(value):
+                        stats.sum_val += value
+                        if stats.min_val is None or value < stats.min_val:
+                            stats.min_val = value
+                        if stats.max_val is None or value > stats.max_val:
+                            stats.max_val = value
+
+        # Label distribution
+        label_dist.add(row.get("label_type"))
+
+        # Sequence lengths
+        for domain, prefix in _domain_prefixes.items():
+            probe = seq_probe[domain]
+            if probe is None:
+                for col in row:
+                    if col.startswith(prefix):
+                        seq_probe[domain] = col
+                        probe = col
+                        break
+            if probe is None:
+                seq_stats[domain].lengths.append(0)
+                continue
+            seq = row.get(probe)
+            if seq is None or not isinstance(seq, (list, tuple)):
+                seq_stats[domain].lengths.append(0)
+            else:
+                seq_stats[domain].lengths.append(len(seq))
+
+    if groups is None:
+        return None
+
+    # Finalise unique counts
+    for col, uniques in unique_sets.items():
+        col_accumulators[col].n_unique = len(uniques)
+
+    return DatasetScanResult(
+        groups=groups,
+        col_stats=col_accumulators,
+        label_dist=label_dist,
+        seq_stats=seq_stats,
+        row_count=row_count,
+    )
 
 
 def serialize_echarts(option: dict[str, Any]) -> str:

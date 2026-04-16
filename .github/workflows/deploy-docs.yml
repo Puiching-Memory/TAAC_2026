@@ -47,6 +47,9 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install project dependencies
+        run: uv sync --locked
+
       - name: Generate EDA figures
         run: uv run taac-dataset-eda
 

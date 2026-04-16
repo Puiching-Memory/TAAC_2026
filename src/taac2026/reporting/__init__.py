@@ -1,6 +1,7 @@
 from .dataset_eda import (
     ColumnGroups,
     ColumnStats,
+    DatasetScanResult,
     LabelDistribution,
     SequenceLengthStats,
     serialize_echarts,
@@ -9,6 +10,7 @@ from .dataset_eda import (
     compute_column_stats,
     compute_label_distribution,
     compute_sequence_lengths,
+    scan_dataset,
     echarts_cardinality,
     echarts_column_layout,
     echarts_coverage_heatmap,
@@ -37,6 +39,7 @@ from .model_performance_plot import (
 __all__ = [
     "ColumnGroups",
     "ColumnStats",
+    "DatasetScanResult",
     "LabelDistribution",
     "SequenceLengthStats",
     "serialize_echarts",
@@ -45,6 +48,7 @@ __all__ = [
     "compute_column_stats",
     "compute_label_distribution",
     "compute_sequence_lengths",
+    "scan_dataset",
     "echarts_cardinality",
     "echarts_column_layout",
     "echarts_coverage_heatmap",

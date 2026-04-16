@@ -35,8 +35,8 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging()
     from taac2026.reporting.dataset_eda import (
+        scan_dataset,
         serialize_echarts,
-        classify_columns,
         compute_cardinality_ranking,
         echarts_cardinality,
         echarts_column_layout,
@@ -54,103 +54,25 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Loading dataset: {}", args.dataset)
     rows_iter = iter_dataset_rows(args.dataset)
 
-    groups: classify_columns.__class__ | None = None  # type: ignore[assignment]
-    row_count = 0
+    result = scan_dataset(rows_iter, max_rows=args.max_rows)
+    if result is None:
+        logger.error("No rows found in dataset")
+        return 1
 
-    # Import streaming helpers
-    from taac2026.reporting.dataset_eda import (
-        ColumnStats as _CS,
-        LabelDistribution,
-        SequenceLengthStats,
-    )
-    from taac2026.domain.config import DEFAULT_SEQUENCE_NAMES
-
-    _label_dist = LabelDistribution()
-    _col_accumulators: dict[str, _CS] = {}
-    _unique_sets: dict[str, set] = {}
-    _MAX_UNIQUE = 200_000
-    _domain_prefixes = {d: f"{d}_seq_" for d in DEFAULT_SEQUENCE_NAMES}
-    _seq_stats: dict[str, SequenceLengthStats] = {
-        d: SequenceLengthStats(domain=d) for d in _domain_prefixes
-    }
-    _seq_probe: dict[str, str | None] = {d: None for d in _domain_prefixes}
-
-    for i, row in enumerate(rows_iter):
-        if args.max_rows and i + 1 > args.max_rows:
-            break
-        row = dict(row)
-        row_count += 1
-
-        # -- classify columns on first row --
-        if groups is None:
-            col_names = list(row.keys())
-            groups = classify_columns(col_names)
-            stderr_console.print(
-                f"[bold]Schema:[/] {groups.total} columns — "
-                f"scalar={len(groups.scalar)}, user_int={len(groups.user_int)}, "
-                f"user_dense={len(groups.user_dense)}, item_int={len(groups.item_int)}, "
-                f"domain_seq={sum(len(v) for v in groups.domain_seq.values())}"
-            )
-
-        # -- column stats (single-pass) --
-        for col, value in row.items():
-            if col not in _col_accumulators:
-                _col_accumulators[col] = _CS(name=col)
-                _unique_sets[col] = set()
-            stats = _col_accumulators[col]
-            stats.count += 1
-            if value is None:
-                continue
-            stats.non_null += 1
-            if isinstance(value, (list, tuple)):
-                stats.is_list = True
-                stats.sum_len += len(value)
-            else:
-                if len(_unique_sets[col]) < _MAX_UNIQUE:
-                    _unique_sets[col].add(value)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    import math as _math
-                    if _math.isfinite(value):
-                        stats.sum_val += value
-                        if stats.min_val is None or value < stats.min_val:
-                            stats.min_val = value
-                        if stats.max_val is None or value > stats.max_val:
-                            stats.max_val = value
-
-        # -- label distribution --
-        _label_dist.add(row.get("label_type"))
-
-        # -- sequence lengths --
-        for domain, prefix in _domain_prefixes.items():
-            probe = _seq_probe[domain]
-            if probe is None:
-                for col in row:
-                    if col.startswith(prefix):
-                        _seq_probe[domain] = col
-                        probe = col
-                        break
-            if probe is None:
-                _seq_stats[domain].lengths.append(0)
-                continue
-            seq = row.get(probe)
-            if seq is None or not isinstance(seq, (list, tuple)):
-                _seq_stats[domain].lengths.append(0)
-            else:
-                _seq_stats[domain].lengths.append(len(seq))
-
-    # Finalise unique counts
-    for col, uniques in _unique_sets.items():
-        _col_accumulators[col].n_unique = len(uniques)
-
-    col_stats = _col_accumulators
-    label_dist = _label_dist
-    seq_stats = _seq_stats
+    groups = result.groups
+    col_stats = result.col_stats
+    label_dist = result.label_dist
+    seq_stats = result.seq_stats
+    row_count = result.row_count
 
     logger.info("Scanned {} rows (streaming)", row_count)
 
-    if groups is None:
-        logger.error("No rows found in dataset")
-        return 1
+    stderr_console.print(
+        f"[bold]Schema:[/] {groups.total} columns — "
+        f"scalar={len(groups.scalar)}, user_int={len(groups.user_int)}, "
+        f"user_dense={len(groups.user_dense)}, item_int={len(groups.item_int)}, "
+        f"domain_seq={sum(len(v) for v in groups.domain_seq.values())}"
+    )
 
     for r in label_dist.as_table():
         stderr_console.print(f"  label_type={r['label_type']} ({r['name']}): {r['count']:,}  ({r['ratio']:.2%})")
