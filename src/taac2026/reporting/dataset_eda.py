@@ -138,6 +138,14 @@ def _update_col_stat(
     if isinstance(value, (list, tuple)):
         stats.is_list = True
         stats.sum_len += len(value)
+        if unique_set is not None and len(unique_set) < max_unique_track:
+            for elem in value:
+                if len(unique_set) >= max_unique_track:
+                    break
+                try:
+                    unique_set.add(elem)
+                except TypeError:
+                    continue
     else:
         if unique_set is not None and len(unique_set) < max_unique_track:
             unique_set.add(value)
@@ -841,6 +849,8 @@ def compute_cardinality_bins(ranking: list[dict[str, Any]]) -> dict[str, int]:
     bins = {"1-10": 0, "11-100": 0, "101-1K": 0, "1K-10K": 0, "10K-100K": 0, "100K+": 0}
     for r in ranking:
         c = r.get("n_unique", 0)
+        if c <= 0:
+            continue
         if c <= 10:
             bins["1-10"] += 1
         elif c <= 100:
@@ -917,14 +927,14 @@ def scan_dataset(
     # Dense feature value collection
     dense_values: dict[str, list[float]] = defaultdict(list)
 
-    # Missing pattern: track per-row missing sets for high-null features
+    # Missing pattern: track per-row missing sets for high-null features (capped)
+    _MAX_MISSING_VECTORS = 50_000
     _missing_row_vectors: list[frozenset[str]] = []
 
     # Sequence patterns: track per-domain item repeat/diversity
     seq_item_repeat_sums: dict[str, list[float]] = {d: [] for d in _domain_prefixes}
 
     _label_col = "label_type"
-    _label_action_col = "label_action_type"
     _positive_label = 2  # CVR positive = conversion
 
     for i, row in enumerate(rows):
@@ -976,7 +986,7 @@ def scan_dataset(
                     feature_auc_values[col].append(float(v))
                     feature_auc_labels[col].append(binary_label)
 
-            if missing_this_row:
+            if missing_this_row and len(_missing_row_vectors) < _MAX_MISSING_VECTORS:
                 _missing_row_vectors.append(frozenset(missing_this_row))
 
         # --- Dense feature values ---
@@ -1189,7 +1199,7 @@ def echarts_feature_auc(label_cond_stats: LabelConditionalStats, *, top_n: int =
         "title": {"text": "单特征 AUC 排名 (top features)"},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
         "grid": {"left": 90, "right": 40, "top": 50, "bottom": 30},
-        "xAxis": {"type": "value", "name": "AUC", "min": 0.45, "max": 0.8},
+        "xAxis": {"type": "value", "name": "AUC", "min": 0.45, "max": min(1.0, max(0.55, max(values) + 0.05))},
         "yAxis": {"type": "category", "data": names, "axisLabel": {"fontSize": 9}},
         "series": [{
             "type": "bar",
@@ -1218,13 +1228,13 @@ def echarts_null_rate_by_label(label_cond_stats: LabelConditionalStats, *, top_n
         "_height": f"{max(300, len(diffs) * 22)}px",
         "title": {"text": "正负样本缺失率对比 (差异最大的特征)"},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
-        "legend": {"data": ["正样本 (转化)", "负样本 (点击)"]},
+        "legend": {"data": ["正样本 (转化)", "负样本 (非转化)"]},
         "grid": {"left": 100, "right": 40, "top": 60, "bottom": 30},
         "xAxis": {"type": "value", "name": "缺失率", "max": 1.0},
         "yAxis": {"type": "category", "data": names, "axisLabel": {"fontSize": 8}},
         "series": [
             {"name": "正样本 (转化)", "type": "bar", "data": pos_rates, "itemStyle": {"color": _EC_COLORS[2]}},
-            {"name": "负样本 (点击)", "type": "bar", "data": neg_rates, "itemStyle": {"color": _EC_COLORS[1]}},
+            {"name": "负样本 (非转化)", "type": "bar", "data": neg_rates, "itemStyle": {"color": _EC_COLORS[1]}},
         ],
     }
 
