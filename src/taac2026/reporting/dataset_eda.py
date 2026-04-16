@@ -662,7 +662,14 @@ class UserStats:
         """Return activity-level bins and counts."""
         counts = list(self.user_behavior_counts.values())
         if not counts:
-            return {"bins": [], "total_users": 0}
+            return {
+                "bins": {},
+                "total_users": 0,
+                "mean_behaviors": 0.0,
+                "median_behaviors": 0.0,
+                "max_behaviors": 0,
+                "min_behaviors": 0,
+            }
         arr = np.array(counts)
         bins = {"1": 0, "2-5": 0, "6-20": 0, "21-100": 0, "100+": 0}
         for c in counts:
