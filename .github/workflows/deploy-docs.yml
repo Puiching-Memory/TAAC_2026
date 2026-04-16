@@ -56,6 +56,8 @@ jobs:
         run: uv run taac-dataset-eda
 
       - name: Generate tech timeline
+        env:
+          SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
         run: uv run taac-tech-timeline
 
       - name: Build Zensical site

@@ -10,6 +10,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -19,7 +20,8 @@ from taac2026.reporting.tech_timeline import (
     write_echarts_json,
 )
 
-DEFAULT_OUTPUT = Path("docs/assets/figures/papers/tech-timeline.echarts.json")
+REPO_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_OUTPUT = REPO_ROOT / "docs/assets/figures/papers/tech-timeline.echarts.json"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -49,8 +51,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--api-key",
-        default=None,
-        help="Semantic Scholar API key (optional, increases rate limit)",
+        default=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"),
+        help=(
+            "Semantic Scholar API key (optional, increases rate limit; "
+            "defaults to $SEMANTIC_SCHOLAR_API_KEY when set)"
+        ),
     )
     return p.parse_args(argv)
 

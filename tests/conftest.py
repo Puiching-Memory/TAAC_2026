@@ -19,6 +19,7 @@ UNIT_TEST_FILES = {
     "test_schema_contract.py",
     "test_search_trial.py",
     "test_search_worker.py",
+    "test_tech_timeline.py",
     "test_test_collection.py",
 }
 

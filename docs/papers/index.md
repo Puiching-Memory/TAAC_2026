@@ -20,7 +20,7 @@
 | 2007 | Matrix Factorization        | Netflix Prize 推动矩阵分解方法成为主流                  |
 | 2010 | FM (Factorization Machines) | Rendle 提出因子分解机，统一多种特征交叉方法             |
 | 2013 | DSSM                        | Huang et al. 提出深度结构化语义模型，将深度学习引入检索 |
-| 2014 | GRU4Rec                     | 首次将 RNN 用于会话推荐                                 |
+| 2015 | GRU4Rec                     | 首次将 RNN 用于会话推荐（按 arXiv 预印本时间）          |
 
 ## 深度学习推荐崛起（2016–2019）
 

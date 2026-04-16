@@ -248,7 +248,7 @@
         var t = tok()
         var cardWidth = Math.min(420, Math.max((window.innerWidth || 420) - 32, 240))
         if (p.dataType === "edge") {
-          return p.data.source + " → " + p.data.target
+          return _esc(p.data.source) + " → " + _esc(p.data.target)
         }
         var d = p.data || {}
         var lines = []

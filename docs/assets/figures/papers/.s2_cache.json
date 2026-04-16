@@ -1269,59 +1269,20 @@
     "abstract": "In recent years, large language models (LLM) have emerged as powerful tools for diverse natural language processing tasks. However, their potential for recommender systems under the generative recommendation paradigm remains relatively unexplored. This paper presents an innovative approach to recommendation systems using large language models (LLMs) based on text data. In this paper, we present a novel LLM for generative recommendation (GenRec) that utilized the expressive power of LLM to directly generate the target item to recommend, rather than calculating ranking score for each candidate item one by one as in traditional discriminative recommendation. GenRec uses LLM's understanding ability to interpret context, learn user preferences, and generate relevant recommendation. Our proposed approach leverages the vast knowledge encoded in large language models to accomplish recommendation tasks. We first we formulate specialized prompts to enhance the ability of LLM to comprehend recommendation tasks. Subsequently, we use these prompts to fine-tune the LLaMA backbone LLM on a dataset of user-item interactions, represented by textual data, to capture user preferences and item characteristics. Our research underscores the potential of LLM-based generative recommendation in revolutionizing the domain of recommendation systems and offers a foundational framework for future explorations in this field. We conduct extensive experiments on benchmark datasets, and the experiments shows that our GenRec has significant better results on large dataset."
   },
   "IDGenRec": {
-    "paperId": "214922c919cace747f5bd08d005204ef559d72cb",
+    "paperId": "",
     "externalIds": {
-      "ArXiv": "2305.16619",
-      "DBLP": "conf/interspeech/RybakovMDQLRH23",
-      "DOI": "10.21437/interspeech.2023-1012",
-      "CorpusId": 258947665
+      "ArXiv": "2403.19021"
     },
-    "url": "https://www.semanticscholar.org/paper/214922c919cace747f5bd08d005204ef559d72cb",
-    "title": "2-bit Conformer quantization for automatic speech recognition",
-    "venue": "Interspeech",
-    "year": 2023,
-    "citationCount": 16,
-    "openAccessPdf": {
-      "url": "http://arxiv.org/pdf/2305.16619",
-      "status": "GREEN",
-      "license": null,
-      "disclaimer": "Notice: Paper or abstract available at https://arxiv.org/abs/2305.16619, which is subject to the license by the author or copyright owner provided with this content. Please go to the source to verify the license and copyright information for your use."
-    },
+    "url": "https://arxiv.org/abs/2403.19021",
+    "title": "IDGenRec: LLM-RecSys Alignment with Textual ID Learning",
+    "venue": "arXiv.org",
+    "year": 2024,
+    "citationCount": 0,
     "fieldsOfStudy": [
-      "Engineering",
       "Computer Science"
     ],
-    "authors": [
-      {
-        "authorId": "145573927",
-        "name": "Oleg Rybakov"
-      },
-      {
-        "authorId": "2160711120",
-        "name": "Phoenix Meadowlark"
-      },
-      {
-        "authorId": "51267247",
-        "name": "Shaojin Ding"
-      },
-      {
-        "authorId": "150080713",
-        "name": "David Qiu"
-      },
-      {
-        "authorId": "2151968875",
-        "name": "Jian Li"
-      },
-      {
-        "authorId": "3254814",
-        "name": "David Rim"
-      },
-      {
-        "authorId": "2145999837",
-        "name": "Yanzhang He"
-      }
-    ],
-    "abstract": "Large speech models are rapidly gaining traction in research community. As a result, model compression has become an important topic, so that these models can fit in memory and be served with reduced cost. Practical approaches for compressing automatic speech recognition (ASR) model use int8 or int4 weight quantization. In this study, we propose to develop 2-bit ASR models. We explore the impact of symmetric and asymmetric quantization combined with sub-channel quantization and clipping on both LibriSpeech dataset and large-scale training data. We obtain a lossless 2-bit Conformer model with 32% model size reduction when compared to state of the art 4-bit Conformer model for LibriSpeech. With the large-scale training data, we obtain a 2-bit Conformer model with over 40% model size reduction against the 4-bit version at the cost of 17% relative word error rate degradation"
+    "authors": [],
+    "abstract": null
   },
   "GRU4Rec": {
     "paperId": "",
@@ -1331,7 +1292,7 @@
     "url": "https://arxiv.org/abs/1511.06939",
     "title": "Session-based Recommendations with Recurrent Neural Networks",
     "venue": "International Conference on Learning Representations",
-    "year": 2016,
+    "year": 2015,
     "citationCount": 2690,
     "fieldsOfStudy": [
       "Computer Science"
@@ -1359,9 +1320,9 @@
   "UniMP": {
     "paperId": "",
     "externalIds": {
-      "ArXiv": "2305.16619"
+      "ArXiv": "2403.10667"
     },
-    "url": "https://arxiv.org/abs/2305.16619",
+    "url": "https://arxiv.org/abs/2403.10667",
     "title": "Towards Unified Multi-Modal Personalization: Large Vision-Language Models for Generative Recommendation and Beyond",
     "venue": "arXiv.org",
     "year": 2024,

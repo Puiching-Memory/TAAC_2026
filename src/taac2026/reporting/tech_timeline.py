@@ -1,5 +1,5 @@
 """Fetch recommendation-system paper lineage from Semantic Scholar and produce
-an ECharts graph-on-cartesian2d JSON file.
+an ECharts force-directed graph JSON file.
 
 This module is the domain / reporting layer.  It contains:
 - seed paper definitions with Semantic Scholar IDs
@@ -14,6 +14,7 @@ The companion CLI lives in
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -82,9 +83,43 @@ SEED_PAPERS: list[SeedPaper] = [
     SeedPaper("OneTrans unified feature interaction sequence modeling one transformer", "OneTrans", "统一建模", highlight=True),
     # --- 生成式推荐 ---
     SeedPaper("ArXiv:2307.00457", "GenRec", "生成式推荐"),
-    SeedPaper("ArXiv:2305.16619", "IDGenRec", "生成式推荐"),
-    SeedPaper("Towards unified multi-modal personalization large vision-language models generative recommendation", "UniMP", "生成式推荐"),
+    SeedPaper("ArXiv:2403.19021", "IDGenRec", "生成式推荐"),
+    SeedPaper("ArXiv:2403.10667", "UniMP", "生成式推荐"),
 ]
+
+
+def _cache_matches_query(data: dict[str, Any], query: str) -> bool:
+    """Return whether cached metadata still matches the lookup query."""
+
+    ext_ids = data.get("externalIds") or {}
+    if query.startswith("ArXiv:"):
+        return (ext_ids.get("ArXiv") or "").lower() == query.removeprefix(
+            "ArXiv:"
+        ).lower()
+    if query.startswith("DOI:"):
+        doi = query.removeprefix("DOI:").lower()
+        if (ext_ids.get("DOI") or "").lower() == doi:
+            return True
+        arxiv_id = (ext_ids.get("ArXiv") or "").lower()
+        return doi.startswith("10.48550/arxiv.") and arxiv_id == doi.removeprefix(
+            "10.48550/arxiv."
+        )
+
+    def _norm(text: str) -> str:
+        return "".join(ch.lower() for ch in text if ch.isalnum())
+
+    normalized_query = _norm(query)
+    return bool(normalized_query) and normalized_query in _norm(data.get("title", ""))
+
+
+def _has_complete_cache_entry(data: dict[str, Any], query: str) -> bool:
+    """Return whether cached metadata is sufficient to skip re-resolution."""
+
+    return (
+        bool(data.get("year"))
+        and bool(data.get("paperId"))
+        and _cache_matches_query(data, query)
+    )
 
 _S2_API = "https://api.semanticscholar.org/graph/v1"
 _S2_FIELDS = "title,year,citationCount,fieldsOfStudy,venue,authors,abstract,url,externalIds"
@@ -93,6 +128,7 @@ _S2_CITE_FIELDS = _S2_REF_FIELDS
 _RATE_LIMIT_DELAY = 1.2  # seconds between requests (paper lookup: ~100 req/5min)
 _SEARCH_RATE_DELAY = 3.5  # seconds between search requests (stricter limit)
 _USER_AGENT = "TAAC2026-TimelineBot/1.0 (research; non-commercial)"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +154,25 @@ def _api_get(url: str, *, api_key: str | None = None) -> dict[str, Any]:
                 continue
             if exc.code == 404:
                 return {}
-            raise
+            print(
+                f"[tech_timeline] HTTP {exc.code} for {url}; falling back to cache-only mode.",
+                file=sys.stderr,
+            )
+            return {}
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            wait = 2 ** attempt * _RATE_LIMIT_DELAY
+            if attempt < 4:
+                print(
+                    f"[tech_timeline] {type(exc).__name__} for {url}; retrying in {wait:.1f}s.",
+                    file=sys.stderr,
+                )
+                time.sleep(wait)
+                continue
+            print(
+                f"[tech_timeline] {type(exc).__name__} for {url}; falling back to cache-only mode.",
+                file=sys.stderr,
+            )
+            return {}
     return {}
 
 
@@ -127,7 +181,7 @@ def _api_get(url: str, *, api_key: str | None = None) -> dict[str, Any]:
 # Stores full paper metadata so cached papers need ZERO API calls.
 # ---------------------------------------------------------------------------
 
-_DEFAULT_CACHE = Path("docs/assets/figures/papers/.s2_cache.json")
+_DEFAULT_CACHE = _REPO_ROOT / "docs/assets/figures/papers/.s2_cache.json"
 
 
 def load_cache(path: Path = _DEFAULT_CACHE) -> dict[str, dict[str, Any]]:
@@ -300,12 +354,15 @@ def build_graph(
     # Phase 1 — resolve seed papers via API (with full metadata caching)
     cache = load_cache()
     cached_count = len(cache)
-    _log(f"Fetching {len(pending)} seed papers (cache has {cached_count} entries) …")
+    _log(
+        f"Fetching {len(pending)} seed papers (cache has {cached_count} entries) …"
+    )
     cache_dirty = False
     for query, short_name, branch, highlight in pending:
         # Use cached metadata if available (zero API calls)
-        if short_name in cache:
-            data = cache[short_name]
+        cached = cache.get(short_name)
+        if cached and _has_complete_cache_entry(cached, query):
+            data = cached
         else:
             data = resolve_paper(query, api_key=api_key)
             if data and "year" in data:
@@ -313,6 +370,9 @@ def build_graph(
                 cache_dirty = True
                 # Save incrementally so progress survives crashes
                 save_cache(cache)
+            elif cached and cached.get("year") and _cache_matches_query(cached, query):
+                data = cached
+                _log(f"  ⚠ {short_name}: using incomplete cached metadata")
         s2_id = data.get("paperId", "")
         if not data or "year" not in data:
             _log(f"  ⚠ {short_name}: not found ({query})")
@@ -352,7 +412,8 @@ def build_graph(
             url=paper_url,
         )
         graph.nodes.append(node)
-        graph._id_to_name[s2_id] = short_name
+        if s2_id:
+            graph._id_to_name[s2_id] = short_name
         _log(f"  ✓ {short_name} ({node.year}, {node.citation_count} cites)")
     if cache_dirty:
         save_cache(cache)
@@ -360,7 +421,7 @@ def build_graph(
 
     # Phase 2 — discover edges among seed papers via references
     _log("Discovering citation edges among seed papers …")
-    known_ids = set(graph._id_to_name.keys())
+    known_ids = {paper_id for paper_id in graph._id_to_name if paper_id}
     for node in list(graph.nodes):
         if not node.s2_id:
             continue
