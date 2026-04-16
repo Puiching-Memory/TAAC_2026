@@ -1,25 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
 
-MODULE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "taac2026"
-    / "reporting"
-    / "tech_timeline.py"
-)
-MODULE_SPEC = importlib.util.spec_from_file_location(
-    "taac2026.reporting.tech_timeline",
-    MODULE_PATH,
-)
-assert MODULE_SPEC and MODULE_SPEC.loader
-tech_timeline = importlib.util.module_from_spec(MODULE_SPEC)
-sys.modules.setdefault("taac2026.reporting.tech_timeline", tech_timeline)
-MODULE_SPEC.loader.exec_module(tech_timeline)
+from taac2026.reporting import tech_timeline
 
 CitationEdge = tech_timeline.CitationEdge
 PaperNode = tech_timeline.PaperNode
@@ -69,6 +52,32 @@ class TestTechTimelineECharts:
             }
         ]
         assert '"type": "graph"' in json.dumps(option, ensure_ascii=False)
+
+
+class TestTechTimelineApiPaths:
+    def test_fetch_paper_url_encodes_doi_path_segment(self, monkeypatch) -> None:
+        captured: dict[str, str] = {}
+
+        def _fake_api_get(url: str, *, api_key: str | None = None) -> dict[str, object]:
+            captured["url"] = url
+            captured["api_key"] = api_key or ""
+            return {}
+
+        monkeypatch.setattr(tech_timeline, "_api_get", _fake_api_get)
+        monkeypatch.setattr(tech_timeline.time, "sleep", lambda _: None)
+
+        tech_timeline.fetch_paper(
+            "DOI:10.1145/371920.372071",
+            api_key="demo-key",
+        )
+
+        assert (
+            captured["url"]
+            == "https://api.semanticscholar.org/graph/v1/paper/"
+            "DOI%3A10.1145%2F371920.372071"
+            "?fields=title,year,citationCount,fieldsOfStudy,venue,authors,abstract,url,externalIds"
+        )
+        assert captured["api_key"] == "demo-key"
 
 
 class TestTechTimelineCacheFallback:

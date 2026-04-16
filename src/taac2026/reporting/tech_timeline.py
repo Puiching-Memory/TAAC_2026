@@ -211,7 +211,8 @@ def fetch_paper(
     paper_id: str, *, api_key: str | None = None
 ) -> dict[str, Any]:
     """Fetch core metadata for a single paper."""
-    url = f"{_S2_API}/paper/{paper_id}?fields={_S2_FIELDS}"
+    encoded_paper_id = urllib.parse.quote(paper_id, safe="")
+    url = f"{_S2_API}/paper/{encoded_paper_id}?fields={_S2_FIELDS}"
     time.sleep(_RATE_LIMIT_DELAY)
     return _api_get(url, api_key=api_key)
 
@@ -251,8 +252,9 @@ def fetch_references(
     api_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return references (papers this paper cites)."""
+    encoded_paper_id = urllib.parse.quote(paper_id, safe="")
     url = (
-        f"{_S2_API}/paper/{paper_id}/references"
+        f"{_S2_API}/paper/{encoded_paper_id}/references"
         f"?fields={_S2_REF_FIELDS}&limit={limit}"
     )
     time.sleep(_RATE_LIMIT_DELAY)
@@ -267,8 +269,9 @@ def fetch_citations(
     api_key: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return citations (papers that cite this paper)."""
+    encoded_paper_id = urllib.parse.quote(paper_id, safe="")
     url = (
-        f"{_S2_API}/paper/{paper_id}/citations"
+        f"{_S2_API}/paper/{encoded_paper_id}/citations"
         f"?fields={_S2_CITE_FIELDS}&limit={limit}"
     )
     time.sleep(_RATE_LIMIT_DELAY)
