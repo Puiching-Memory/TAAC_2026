@@ -8,6 +8,7 @@ summaries and produce JSON-serialisable dicts for interactive visualisation.
 Both layers are designed for use by CLI scripts *and* notebook cells.
 """
 
+import json
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -28,6 +29,16 @@ _TIMESTAMP_FEATURE_SUFFIX = "_99"
 _DOMAIN_SEQ_PREFIXES: dict[str, str] = {
     d: f"{d}_seq_" for d in DEFAULT_SEQUENCE_NAMES
 }
+
+# ---------------------------------------------------------------------------
+# Caps – prevent OOM / excessive compute during streaming scans
+# ---------------------------------------------------------------------------
+_MAX_AUC_PAIRS = 50_000          # max pos×neg pairs in single-feature AUC
+_MAX_AUC_PER_COL = 50_000        # max (value, label) samples per column for AUC
+_MAX_DENSE_VALUES = 100_000      # max dense-feature values collected per column
+_MAX_MISSING_VECTORS = 50_000    # max per-row missing-set vectors kept
+_REPEAT_RATE_CAP = 500           # max items inspected for repeat-rate calc
+_DEFAULT_LABEL_COL = "label_type"
 
 # ---------------------------------------------------------------------------
 # 1. Schema summary
@@ -247,7 +258,7 @@ class LabelDistribution:
         return rows
 
 
-def compute_label_distribution(rows: Iterable[dict[str, Any]], label_col: str = "label_type") -> LabelDistribution:
+def compute_label_distribution(rows: Iterable[dict[str, Any]], label_col: str = _DEFAULT_LABEL_COL) -> LabelDistribution:
     dist = LabelDistribution()
     for row in rows:
         dist.add(row.get(label_col))
@@ -767,11 +778,10 @@ def _compute_single_feature_auc(values: list[float], labels: list[int]) -> float
     if pos.size == 0 or neg.size == 0:
         return 0.5
     # Subsample if too large to avoid O(n^2)
-    max_pairs = 50_000
-    if pos.size * neg.size > max_pairs:
+    if pos.size * neg.size > _MAX_AUC_PAIRS:
         rng = np.random.RandomState(42)
-        pos_limit = min(pos.size, max(1, int(math.sqrt(max_pairs))))
-        neg_limit = min(neg.size, max(1, max_pairs // pos_limit))
+        pos_limit = min(pos.size, max(1, int(math.sqrt(_MAX_AUC_PAIRS))))
+        neg_limit = min(neg.size, max(1, _MAX_AUC_PAIRS // pos_limit))
         pos = rng.choice(pos, pos_limit, replace=False)
         neg = rng.choice(neg, neg_limit, replace=False)
     margins = pos[:, None] - neg[None, :]
@@ -903,6 +913,7 @@ def scan_dataset(
     max_rows: int = 0,
     max_unique_track: int = 200_000,
     positive_label: int = 2,
+    label_col: str = _DEFAULT_LABEL_COL,
 ) -> DatasetScanResult | None:
     """Compute column stats, label distribution, and sequence lengths in one pass.
 
@@ -913,6 +924,7 @@ def scan_dataset(
     Args:
         positive_label: The label value considered as positive/conversion
             (default ``2`` for CVR).
+        label_col: Column name holding the label (default ``"label_type"``).
 
     Returns ``None`` if no rows were consumed.
     """
@@ -939,23 +951,17 @@ def scan_dataset(
     # col → {label: [null_count, total_count]}
 
     # For single-feature AUC: collect (value, label) for sparse int features
-    # Cap collection per column to avoid OOM when many sparse columns exist
-    _MAX_AUC_PER_COL = 50_000
     feature_auc_values: dict[str, list[float]] = defaultdict(list)
     feature_auc_labels: dict[str, list[int]] = defaultdict(list)
 
     # Dense feature value collection (capped to avoid OOM)
-    _MAX_DENSE_VALUES = 100_000
     dense_values: dict[str, list[float]] = defaultdict(list)
 
     # Missing pattern: track per-row missing sets for high-null features (capped)
-    _MAX_MISSING_VECTORS = 50_000
     _missing_row_vectors: list[frozenset[str]] = []
 
     # Sequence patterns: track per-domain item repeat/diversity
     seq_item_repeat_sums: dict[str, list[float]] = {d: [] for d in _domain_prefixes}
-
-    _label_col = "label_type"
 
     for i, row in enumerate(rows):
         if max_rows and i >= max_rows:
@@ -977,7 +983,7 @@ def scan_dataset(
             _update_col_stat(col, value, col_accumulators[col], unique_sets[col], max_unique_track)
 
         # Label distribution
-        label_val = row.get(_label_col)
+        label_val = row.get(label_col)
         label_dist.add(label_val)
 
         # Binary label for conditional analysis (1 = positive/conversion, 0 = negative)
@@ -1042,7 +1048,6 @@ def scan_dataset(
                 if uid is not None:
                     domain_user_activity[domain].add(str(uid))
                 # Sequence item repeat rate (cap to avoid O(L) set on very long seqs)
-                _REPEAT_RATE_CAP = 500
                 total_items = len(seq_val)
                 sample = seq_val[:_REPEAT_RATE_CAP] if total_items > _REPEAT_RATE_CAP else seq_val
                 unique_items = len(set(sample))
@@ -1373,6 +1378,4 @@ def echarts_co_missing(missing_patterns: MissingPatternStats, *, top_n: int = 10
 
 def serialize_echarts(option: dict[str, Any]) -> str:
     """Serialize ECharts option dict to JSON string."""
-    import json as _json
-
-    return _json.dumps(option, indent=2, ensure_ascii=False)
+    return json.dumps(option, indent=2, ensure_ascii=False)

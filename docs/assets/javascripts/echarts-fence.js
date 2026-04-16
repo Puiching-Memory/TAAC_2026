@@ -273,13 +273,15 @@
   }
 
   /* ---- theme toggle watchers ---- */
-  var obs = new MutationObserver(function () { reThemeAll() })
-  function watch(target) {
-    if (target) obs.observe(target, { attributes: true, attributeFilter: ["data-md-color-scheme"] })
+  if (typeof MutationObserver !== "undefined") {
+    var obs = new MutationObserver(function () { reThemeAll() })
+    function watch(target) {
+      if (target) obs.observe(target, { attributes: true, attributeFilter: ["data-md-color-scheme"] })
+    }
+    watch(document.documentElement)
+    if (document.body) { watch(document.body) }
+    else { document.addEventListener("DOMContentLoaded", function () { watch(document.body) }) }
   }
-  watch(document.documentElement)
-  if (document.body) { watch(document.body) }
-  else { document.addEventListener("DOMContentLoaded", function () { watch(document.body) }) }
 
   /* fallback: palette radio change */
   document.addEventListener("change", function (e) {
