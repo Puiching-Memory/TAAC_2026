@@ -11,7 +11,7 @@ extra_css = ["assets/stylesheets/extra.css"]
 extra_javascript = [
     "assets/javascripts/mathjax.js",
     { path = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js", async = true },
-    { path = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js", async = true },
+    { path = "https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js", async = true },
     "assets/javascripts/echarts-fence.js",
 ]
 

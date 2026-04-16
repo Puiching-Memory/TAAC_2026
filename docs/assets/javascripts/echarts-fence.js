@@ -143,11 +143,18 @@
 
   function attachResize(entry) {
     if (entry.ro) entry.ro.disconnect()
-    var ro = new ResizeObserver(function () {
-      if (entry.instance && !entry.instance.isDisposed()) entry.instance.resize()
-    })
-    ro.observe(entry.el)
-    entry.ro = ro
+    if (typeof ResizeObserver !== "undefined") {
+      var ro = new ResizeObserver(function () {
+        if (entry.instance && !entry.instance.isDisposed()) entry.instance.resize()
+      })
+      ro.observe(entry.el)
+      entry.ro = ro
+    } else {
+      // Fallback for environments without ResizeObserver
+      window.addEventListener("resize", function () {
+        if (entry.instance && !entry.instance.isDisposed()) entry.instance.resize()
+      })
+    }
   }
 
   function renderChart(container, rawOption) {
