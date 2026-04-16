@@ -24,6 +24,7 @@ from taac2026.domain.config import DEFAULT_SEQUENCE_NAMES
 _USER_INT_PREFIX = "user_int_feats_"
 _USER_DENSE_PREFIX = "user_dense_feats_"
 _ITEM_INT_PREFIX = "item_int_feats_"
+_TIMESTAMP_FEATURE_SUFFIX = "_99"
 _DOMAIN_SEQ_PREFIXES: dict[str, str] = {
     d: f"{d}_seq_" for d in DEFAULT_SEQUENCE_NAMES
 }
@@ -764,7 +765,7 @@ def _compute_single_feature_auc(values: list[float], labels: list[int]) -> float
         neg = rng.choice(neg, neg_limit, replace=False)
     margins = pos[:, None] - neg[None, :]
     auc = float(np.mean(margins > 0) + 0.5 * np.mean(margins == 0))
-    return max(auc, 1.0 - auc)  # ensure > 0.5 (take better direction)
+    return auc  # preserve raw AUC so inverse correlations remain visible
 
 
 # ---------------------------------------------------------------------------
@@ -1013,7 +1014,7 @@ def scan_dataset(
             probe = seq_probe.get(domain)
             if probe is None:
                 for c in row:
-                    if c.startswith(prefix) and not c.endswith("_99"):
+                    if c.startswith(prefix) and not c.endswith(_TIMESTAMP_FEATURE_SUFFIX):
                         seq_probe[domain] = c
                         probe = c
                         break
@@ -1192,7 +1193,7 @@ def echarts_cross_domain_overlap(user_stats: UserStats) -> dict[str, Any]:
 
 def echarts_feature_auc(label_cond_stats: LabelConditionalStats, *, top_n: int = 25) -> dict[str, Any]:
     """ECharts option for single-feature AUC ranking."""
-    items = sorted(label_cond_stats.feature_auc.items(), key=lambda x: x[1], reverse=True)[:top_n]
+    items = sorted(label_cond_stats.feature_auc.items(), key=lambda x: abs(x[1] - 0.5), reverse=True)[:top_n]
     if not items:
         return {"tooltip": {}, "series": []}
     items_rev = list(reversed(items))
@@ -1203,7 +1204,7 @@ def echarts_feature_auc(label_cond_stats: LabelConditionalStats, *, top_n: int =
         "title": {"text": "单特征 AUC 排名 (top features)"},
         "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
         "grid": {"left": 90, "right": 40, "top": 50, "bottom": 30},
-        "xAxis": {"type": "value", "name": "AUC", "min": 0.45, "max": min(1.0, max(0.55, max(values) + 0.05))},
+        "xAxis": {"type": "value", "name": "AUC", "min": max(0.0, min(values) - 0.05), "max": min(1.0, max(0.55, max(values) + 0.05))},
         "yAxis": {"type": "category", "data": names, "axisLabel": {"fontSize": 9}},
         "series": [{
             "type": "bar",
