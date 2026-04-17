@@ -89,6 +89,11 @@ class TestTechTimelineECharts:
         assert '"type": "graph"' in json.dumps(option, ensure_ascii=False)
 
 class TestTechTimelineApiPaths:
+    def test_default_cache_uses_local_cache_dir(self) -> None:
+        assert tech_timeline._DEFAULT_CACHE == (
+            tech_timeline._REPO_ROOT / ".cache/taac2026/.s2_cache.json"
+        )
+
     def test_fetch_paper_url_encodes_doi_path_segment(self, monkeypatch) -> None:
         captured: dict[str, str] = {}
 

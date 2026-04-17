@@ -182,7 +182,7 @@ def _api_get(url: str, *, api_key: str | None = None) -> dict[str, Any]:
 # reference/citation lookups for graph edges may still require API calls.
 # ---------------------------------------------------------------------------
 
-_DEFAULT_CACHE = _REPO_ROOT / "docs/assets/figures/papers/.s2_cache.json"
+_DEFAULT_CACHE = _REPO_ROOT / ".cache/taac2026/.s2_cache.json"
 
 
 def load_cache(path: Path = _DEFAULT_CACHE) -> dict[str, dict[str, Any]]:
