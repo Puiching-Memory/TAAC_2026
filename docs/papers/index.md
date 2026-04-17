@@ -51,12 +51,14 @@
 
 这一阶段的核心趋势是将序列建模与特征交叉统一到单一 Transformer 主干中，并验证推荐系统中的 Scaling Law。
 
+> 注：本表年份与仓库内技术图谱及 Semantic Scholar 缓存使用的 year 字段保持一致，以避免与图中 x 轴年份冲突。
+
 | 年份 | 里程碑          | 说明                                                                                           | 本仓库                                                           |
 | ---- | --------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | 2024 | **HSTU / GR**   | Meta 提出 Hierarchical Sequential Transducer Units，1.5 万亿参数生成式推荐器，验证 Scaling Law | —                                                                |
 | 2024 | **InterFormer** | UIUC & Meta 提出交错式异构交互学习，双向信息流 + Cross Arch                                    | [论文](interformer.md) · [实验包](../experiments/interformer.md) |
-| 2025 | **HyFormer**    | 字节提出混合 Transformer，统一长序列建模与特征交叉                                             | [论文](hyformer.md) · [实验包](../experiments/hyformer.md)       |
-| 2026 | **OneTrans**    | NTU & 字节提出单 Transformer 主干 + 统一 Tokenizer + KV 缓存                                   | [论文](onetrans.md) · [实验包](../experiments/onetrans.md)       |
+| 2026 | **HyFormer**    | 字节提出混合 Transformer，统一长序列建模与特征交叉                                             | [论文](hyformer.md) · [实验包](../experiments/hyformer.md)       |
+| 2025 | **OneTrans**    | NTU & 字节提出单 Transformer 主干 + 统一 Tokenizer + KV 缓存                                   | [论文](onetrans.md) · [实验包](../experiments/onetrans.md)       |
 
 ## 生成式推荐（2023–2026）
 

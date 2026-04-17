@@ -43,16 +43,50 @@ class TestTechTimelineECharts:
 
         assert option["_height"] == "640px"
         assert option["series"][0]["type"] == "graph"
-        assert option["series"][0]["data"]
+        assert option["series"][0]["data"] == [
+            {
+                "id": "seed-1",
+                "name": "Seed",
+                "x": 50.0,
+                "y": 460,
+                "symbolSize": 18,
+                "category": 6,
+                "label": {"show": True, "fontSize": 11, "fontWeight": "bold"},
+                "title": "Seed paper",
+                "authors": "A. Author",
+                "venue": "arXiv",
+                "paperYear": 2024,
+                "citations": 128,
+                "abstract": "Demo abstract",
+                "paperUrl": "https://example.com/paper",
+            },
+            {
+                "id": "seed-2",
+                "name": "FollowUp",
+                "x": 750.0,
+                "y": 460,
+                "symbolSize": 18,
+                "category": 6,
+                "label": {"show": True, "fontSize": 11, "fontWeight": "bold"},
+                "title": "",
+                "authors": "",
+                "venue": "",
+                "paperYear": 2025,
+                "citations": 256,
+                "abstract": "",
+                "paperUrl": "",
+            },
+        ]
         assert option["series"][0]["links"] == [
             {
-                "source": "Seed",
-                "target": "FollowUp",
+                "source": "seed-1",
+                "target": "seed-2",
+                "sourceName": "Seed",
+                "targetName": "FollowUp",
                 "lineStyle": {"width": 1.5, "opacity": 0.5},
             }
         ]
         assert '"type": "graph"' in json.dumps(option, ensure_ascii=False)
-
 
 class TestTechTimelineApiPaths:
     def test_fetch_paper_url_encodes_doi_path_segment(self, monkeypatch) -> None:
@@ -121,9 +155,50 @@ class TestTechTimelineCacheFallback:
                     short_name="IDGenRec",
                     branch="生成式推荐",
                 )
+            ],
+            api_key="demo-key",
+        )
+
+        node_ids = [node.s2_id for node in graph.nodes]
+        assert node_ids == ["resolved-paper"]
+        assert "" not in node_ids
+
+    def test_build_graph_uses_incomplete_cache_without_api_key(self, monkeypatch) -> None:
+        cached = {
+            "paperId": "",
+            "externalIds": {"ArXiv": "2403.19021"},
+            "title": "IDGenRec: cached only",
+            "year": 2024,
+            "citationCount": 7,
+            "authors": [],
+            "venue": "arXiv",
+            "abstract": "",
+            "url": "https://example.com/cached-only",
+        }
+        monkeypatch.setattr(
+            tech_timeline,
+            "load_cache",
+            lambda path=None: {"IDGenRec": cached},
+        )
+        monkeypatch.setattr(tech_timeline, "save_cache", lambda *args, **kwargs: None)
+        monkeypatch.setattr(tech_timeline, "fetch_references", lambda *args, **kwargs: [])
+        monkeypatch.setattr(tech_timeline, "fetch_citations", lambda *args, **kwargs: [])
+
+        def _unexpected_resolve(*args, **kwargs):
+            raise AssertionError("resolve_paper should not run in cache-only mode")
+
+        monkeypatch.setattr(tech_timeline, "resolve_paper", _unexpected_resolve)
+
+        graph = build_graph(
+            seeds=[
+                SeedPaper(
+                    query="ArXiv:2403.19021",
+                    short_name="IDGenRec",
+                    branch="生成式推荐",
+                )
             ]
         )
 
-        assert [node.s2_id for node in graph.nodes] == ["resolved-paper"]
-        assert graph._id_to_name == {"resolved-paper": "IDGenRec"}
-        assert "" not in graph._id_to_name
+        assert [(node.name, node.s2_id, node.year) for node in graph.nodes] == [
+            ("IDGenRec", "", 2024)
+        ]

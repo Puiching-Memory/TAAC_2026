@@ -80,7 +80,7 @@ SEED_PAPERS: list[SeedPaper] = [
     SeedPaper("ArXiv:2402.17152", "HSTU", "统一建模"),
     SeedPaper("DOI:10.48550/arxiv.2411.09852", "InterFormer", "统一建模", highlight=True),
     SeedPaper("ArXiv:2601.12681", "HyFormer", "统一建模", highlight=True),
-    SeedPaper("OneTrans unified feature interaction sequence modeling one transformer", "OneTrans", "统一建模", highlight=True),
+    SeedPaper("ArXiv:2510.26104", "OneTrans", "统一建模", highlight=True),
     # --- 生成式推荐 ---
     SeedPaper("ArXiv:2307.00457", "GenRec", "生成式推荐"),
     SeedPaper("ArXiv:2403.19021", "IDGenRec", "生成式推荐"),
@@ -177,8 +177,9 @@ def _api_get(url: str, *, api_key: str | None = None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Metadata cache — avoids re-fetching from API on every run.
-# Stores full paper metadata so cached papers need ZERO API calls.
+# Metadata cache — avoids re-fetching paper metadata from the API on every run.
+# Stores full paper metadata, so cached papers need zero metadata API calls;
+# reference/citation lookups for graph edges may still require API calls.
 # ---------------------------------------------------------------------------
 
 _DEFAULT_CACHE = _REPO_ROOT / "docs/assets/figures/papers/.s2_cache.json"
@@ -362,10 +363,16 @@ def build_graph(
     )
     cache_dirty = False
     for query, short_name, branch, highlight in pending:
-        # Use cached metadata if available (zero API calls)
+        # Prefer cached metadata when it is complete. If the cache matches the
+        # query but lacks a paperId, keep docs generation deterministic by
+        # using the cached metadata directly unless an API key is available to
+        # refresh it.
         cached = cache.get(short_name)
         if cached and _has_complete_cache_entry(cached, query):
             data = cached
+        elif cached and cached.get("year") and _cache_matches_query(cached, query) and not api_key:
+            data = cached
+            _log(f"  ⚠ {short_name}: using incomplete cached metadata (cache-only mode)")
         else:
             data = resolve_paper(query, api_key=api_key)
             if data and "year" in data:
@@ -473,7 +480,10 @@ def build_graph(
                 if not is_influential:
                     continue
                 title = citing.get("title", "")
-                short = _shorten(title)
+                short = _dedupe_name(
+                    {existing.name for existing in graph.nodes},
+                    _shorten(title),
+                )
                 branch = node.branch  # inherit parent branch
                 new_node = PaperNode(
                     s2_id=citing_id,
@@ -527,6 +537,18 @@ def _shorten(title: str) -> str:
     return " ".join(words[:3])
 
 
+def _dedupe_name(existing_names: set[str], preferred: str) -> str:
+    """Return a display name that is unique within *existing_names*."""
+    if preferred not in existing_names:
+        return preferred
+    suffix = 2
+    while True:
+        candidate = f"{preferred} #{suffix}"
+        if candidate not in existing_names:
+            return candidate
+        suffix += 1
+
+
 # ---------------------------------------------------------------------------
 # ECharts serialisation
 # ---------------------------------------------------------------------------
@@ -569,15 +591,19 @@ def to_echarts(graph: TimelineGraph) -> dict[str, Any]:
     yr_span = max(max_year - min_year, 1)
 
     nodes_data: list[dict[str, Any]] = []
+    node_key_by_name: dict[str, str] = {}
     for n in graph.nodes:
         if n.year <= 0:
             continue
         y_idx = BRANCH_INDEX.get(n.branch, 0)
+        node_key = n.s2_id or n.name
+        node_key_by_name[n.name] = node_key
         # Spread initial positions across a 800×500 canvas
         x_init = (n.year - min_year) / yr_span * 700 + 50
         y_init = y_idx * 70 + 40
 
         node_dict: dict[str, Any] = {
+            "id": node_key,
             "name": n.name,
             "x": x_init,
             "y": y_init,
@@ -605,18 +631,20 @@ def to_echarts(graph: TimelineGraph) -> dict[str, Any]:
         nodes_data.append(node_dict)
 
     # ── build links (all edges, no filtering) ──
-    node_set = {n.name for n in graph.nodes if n.year > 0}
-
     links_data: list[dict[str, Any]] = []
     for e in graph.edges:
-        if e.source not in node_set or e.target not in node_set:
+        source_id = node_key_by_name.get(e.source)
+        target_id = node_key_by_name.get(e.target)
+        if not source_id or not target_id:
             continue
         style: dict[str, Any] = {"width": 1.5, "opacity": 0.5}
         if e.is_cross_branch:
             style.update(type="dashed", opacity=0.3)
         links_data.append({
-            "source": e.source,
-            "target": e.target,
+            "source": source_id,
+            "target": target_id,
+            "sourceName": e.source,
+            "targetName": e.target,
             "lineStyle": style,
         })
 

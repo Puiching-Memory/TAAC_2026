@@ -248,7 +248,7 @@
         var t = tok()
         var cardWidth = Math.min(420, Math.max((window.innerWidth || 420) - 32, 240))
         if (p.dataType === "edge") {
-          return _esc(p.data.source) + " → " + _esc(p.data.target)
+          return _esc(p.data.sourceName || p.data.source) + " → " + _esc(p.data.targetName || p.data.target)
         }
         var d = p.data || {}
         var lines = []
@@ -294,10 +294,11 @@
             + "</div>"
           )
         }
-        if (d.paperUrl) {
+        var safePaperUrl = _safeExternalUrl(d.paperUrl)
+        if (safePaperUrl) {
           lines.push(
             "<div style='margin-top:10px;padding-top:10px;border-top:1px solid " + t.tipBorder + "'>"
-            + "<a href=\"" + _escAttr(d.paperUrl) + "\" target=\"_blank\" rel=\"noopener noreferrer\" style='font-size:12px;font-weight:600;letter-spacing:0.02em;color:" + t.link + ";text-decoration:none'>"
+            + "<a href=\"" + _escAttr(safePaperUrl) + "\" target=\"_blank\" rel=\"noopener noreferrer\" style='font-size:12px;font-weight:600;letter-spacing:0.02em;color:" + t.link + ";text-decoration:none'>"
             + "查看论文原文"
             + "</a>"
             + "</div>"
@@ -321,6 +322,19 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;")
+  }
+
+  function _safeExternalUrl(s) {
+    if (!s) return ""
+    try {
+      var url = new URL(String(s), document.baseURI)
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        return url.href
+      }
+    } catch (e) {
+      return ""
+    }
+    return ""
   }
 
   function renderChart(container, rawOption) {
