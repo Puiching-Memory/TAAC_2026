@@ -81,10 +81,21 @@ SEED_PAPERS: list[SeedPaper] = [
     SeedPaper("DOI:10.48550/arxiv.2411.09852", "InterFormer", "统一建模", highlight=True),
     SeedPaper("ArXiv:2601.12681", "HyFormer", "统一建模", highlight=True),
     SeedPaper("ArXiv:2510.26104", "OneTrans", "统一建模", highlight=True),
+    SeedPaper("CorpusId:279155116", "GPSD", "统一建模"),
+    SeedPaper("ArXiv:2508.02929", "Foundation-Expert", "统一建模"),
+    SeedPaper("ArXiv:2510.11100", "HoMer", "统一建模"),
+    SeedPaper("ArXiv:2510.15286", "MTmixAtt", "统一建模"),
     # --- 生成式推荐 ---
     SeedPaper("ArXiv:2307.00457", "GenRec", "生成式推荐"),
     SeedPaper("ArXiv:2403.19021", "IDGenRec", "生成式推荐"),
     SeedPaper("ArXiv:2403.10667", "UniMP", "生成式推荐"),
+    SeedPaper("ArXiv:2502.10157", "SessionRec", "生成式推荐"),
+    SeedPaper("ArXiv:2503.02453", "COBRA", "生成式推荐"),
+    SeedPaper("ArXiv:2511.06254", "LLaDA-Rec", "生成式推荐"),
+    SeedPaper("ArXiv:2512.14503", "RecGPT-V2", "生成式推荐"),
+    SeedPaper("ArXiv:2512.11529", "xGR", "生成式推荐"),
+    SeedPaper("ArXiv:2512.22386", "OxygenREC", "生成式推荐"),
+    SeedPaper("ArXiv:2512.24787", "HiGR", "生成式推荐"),
 ]
 
 
@@ -241,7 +252,7 @@ def resolve_paper(
     (uses the paper-lookup API with lenient rate limits).
     Otherwise, search by title (uses the search API with stricter limits).
     """
-    if query.startswith("ArXiv:") or query.startswith("DOI:"):
+    if query.startswith(("ArXiv:", "DOI:", "CorpusId:")):
         return fetch_paper(query, api_key=api_key)
     return search_paper(query, api_key=api_key)
 
