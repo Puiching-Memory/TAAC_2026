@@ -16,10 +16,14 @@ icon: lucide/hard-drive-download
 部分图表数据不纳入版本控制，构建前需先生成：
 
 ```bash
+uv sync --locked --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu --no-install-package triton
 uv run taac-dataset-eda
 uv run taac-tech-timeline
+uv run taac-bench-report
 uv run --no-project --isolated --with zensical zensical build --clean
 ```
+
+如果你本地已经安装了完整训练环境，也可以继续直接使用 `uv sync --locked`。
 
 其中 `uv run taac-tech-timeline` 会在仓库根目录下写入本地缓存 `.cache/taac2026/.s2_cache.json`，该文件仅用于加速 Semantic Scholar 元数据抓取，不需要提交到 Git。
 

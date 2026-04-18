@@ -6,26 +6,42 @@ import pytest
 
 
 UNIT_TEST_FILES = {
+    "test_benchmark_charts.py",
     "test_clean_pycache.py",
+    "test_embedding_collection.py",
     "test_github_cleanup.py",
     "test_dataset_eda.py",
     "test_experiment_packages.py",
     "test_metrics.py",
     "test_model_performance_plot.py",
     "test_model_robustness.py",
+    "test_norms.py",
+    "test_optimizers.py",
     "test_property_based.py",
     "test_payload.py",
+    "test_pooling_heads.py",
     "test_profiling_unit.py",
+    "test_quantization.py",
     "test_runtime_optimization.py",
     "test_schema_contract.py",
     "test_search_trial.py",
     "test_search_worker.py",
     "test_tech_timeline.py",
     "test_test_collection.py",
+    "test_transformer_blocks.py",
+    "test_torchrec_embedding.py",
 }
 
 GPU_TEST_FILES = {
+    "bench_attention_forward.py",
+    "bench_collate.py",
+    "bench_e2e_train_step.py",
+    "bench_embedding_lookup.py",
+    "bench_ffn_forward.py",
+    "bench_inference_latency.py",
+    "bench_rmsnorm.py",
     "test_gpu.py",
+    "test_triton_kernels.py",
 }
 
 INTEGRATION_TEST_FILES = {

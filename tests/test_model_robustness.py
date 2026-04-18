@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from taac2026.infrastructure.nn.defaults import resolve_experiment_builders
 from tests.support import TestWorkspace, create_test_workspace, prepare_experiment
 
 
@@ -26,7 +27,8 @@ def _build_unirec(test_workspace: TestWorkspace):
     """Load the UniRec experiment, build data pipeline + model, and return a batch."""
     experiment = importlib.import_module("config.gen.unirec").EXPERIMENT
     experiment = prepare_experiment(experiment, test_workspace)
-    train_loader, _, data_stats = experiment.build_data_pipeline(
+    builders = resolve_experiment_builders(experiment)
+    train_loader, _, data_stats = builders.build_data_pipeline(
         experiment.data,
         experiment.model,
         experiment.train,

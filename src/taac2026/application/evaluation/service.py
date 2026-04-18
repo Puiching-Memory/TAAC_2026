@@ -10,12 +10,18 @@ from ...domain.metrics import compute_classification_metrics
 from ...infrastructure.experiments.loader import load_experiment_package
 from ...infrastructure.io.console import logger
 from ...infrastructure.io.files import write_json
+from ...infrastructure.nn.defaults import resolve_experiment_builders
+from ...infrastructure.nn.quantization import normalize_quantization_mode
 from ..training.external_profilers import (
     build_evaluation_external_profiler_plan,
     write_external_profiler_plan_artifacts,
 )
 from ..training.profiling import PROFILE_SCHEMA_VERSION, collect_loader_outputs, measure_latency, select_device
-from ..training.runtime_optimization import prepare_runtime_execution
+from .inference import (
+    export_model_for_inference,
+    normalize_inference_export_mode,
+    prepare_evaluation_inference,
+)
 
 
 def _sort_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -43,11 +49,23 @@ def evaluate_checkpoint(
     checkpoint_path: str | Path | None = None,
     output_path: str | Path | None = None,
     experiment: ExperimentSpec | None = None,
+    quantization_mode: str | None = None,
+    export_mode: str | None = None,
+    export_path: str | Path | None = None,
 ) -> dict[str, Any]:
     experiment = experiment.clone() if experiment is not None else load_experiment_package(experiment_path)
-    device = select_device(experiment.train.device)
-    logger.info("evaluate start: experiment={} device={}", experiment_path, device)
-    train_loader, val_loader, data_stats = experiment.build_data_pipeline(
+    resolved_quantization_mode = normalize_quantization_mode(quantization_mode)
+    resolved_export_mode = normalize_inference_export_mode(export_mode)
+    device = torch.device("cpu") if resolved_quantization_mode != "none" else select_device(experiment.train.device)
+    logger.info(
+        "evaluate start: experiment={} device={} quantization={} export={}",
+        experiment_path,
+        device,
+        resolved_quantization_mode,
+        resolved_export_mode,
+    )
+    builders = resolve_experiment_builders(experiment)
+    train_loader, val_loader, data_stats = builders.build_data_pipeline(
         experiment.data,
         experiment.model,
         experiment.train,
@@ -55,9 +73,7 @@ def evaluate_checkpoint(
     del train_loader
     model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
     model = model.to(device)
-    runtime_execution = prepare_runtime_execution(model, experiment.train, device)
-    execution_model = runtime_execution.execution_model
-    loss_fn, _ = experiment.build_loss_stack(
+    loss_fn, _ = builders.build_loss_stack(
         experiment.data,
         experiment.model,
         experiment.train,
@@ -76,6 +92,35 @@ def evaluate_checkpoint(
     except RuntimeError as exc:
         raise RuntimeError(f"incompatible checkpoint: {exc}") from exc
 
+    runtime_execution, quantization_summary, inference_train_config = prepare_evaluation_inference(
+        model,
+        experiment.train,
+        device,
+        quantization_mode=resolved_quantization_mode,
+    )
+    execution_model = runtime_execution.execution_model
+    external_profiler_output_dir = Path(output_path).parent if output_path is not None else Path(experiment.train.output_dir)
+
+    if resolved_export_mode != "none" and resolved_quantization_mode != "none":
+        raise ValueError("Inference export currently requires quantization mode 'none'")
+
+    if resolved_export_mode != "none":
+        example_batch = next(iter(val_loader)).to(runtime_execution.device)
+        resolved_export_path = Path(export_path) if export_path is not None else external_profiler_output_dir / "inference_export.pt2"
+        export_summary = export_model_for_inference(
+            runtime_execution.base_model,
+            example_batch,
+            mode=resolved_export_mode,
+            output_path=resolved_export_path,
+        )
+    else:
+        export_summary = export_model_for_inference(
+            runtime_execution.base_model,
+            next(iter(val_loader)).to(runtime_execution.device),
+            mode=resolved_export_mode,
+            output_path=external_profiler_output_dir / "inference_export.pt2",
+        )
+
     logits, labels, groups, loss = collect_loader_outputs(
         execution_model,
         val_loader,
@@ -92,7 +137,6 @@ def evaluate_checkpoint(
         measure_steps=experiment.train.latency_measure_steps,
         runtime_execution=runtime_execution,
     )
-    external_profiler_output_dir = Path(output_path).parent if output_path is not None else Path(experiment.train.output_dir)
     external_profilers = build_evaluation_external_profiler_plan(
         device=str(device),
         output_dir=external_profiler_output_dir,
@@ -100,7 +144,7 @@ def evaluate_checkpoint(
         checkpoint_path=resolved_checkpoint,
         output_path=output_path,
         run_dir=experiment.train.output_dir,
-        train_config=experiment.train,
+        train_config=inference_train_config,
     )
     write_external_profiler_plan_artifacts(external_profilers)
     report = {
@@ -113,6 +157,8 @@ def evaluate_checkpoint(
         "auc": float(metrics.get("auc", 0.0)),
         "pr_auc": float(metrics.get("pr_auc", 0.0)),
         "metrics": metrics,
+        "quantization": quantization_summary,
+        "export": export_summary,
         "runtime_optimization": runtime_execution.summary(),
         "profiling": {
             "schema_version": PROFILE_SCHEMA_VERSION,
@@ -125,11 +171,13 @@ def evaluate_checkpoint(
     if output_path is not None:
         write_json(output_path, report)
     logger.info(
-        "evaluate complete: experiment={} auc={:.6f} pr_auc={:.6f} latency_ms={:.4f}",
+        "evaluate complete: experiment={} auc={:.6f} pr_auc={:.6f} latency_ms={:.4f} quantization={} export={}",
         experiment_path,
         float(metrics.get("auc", 0.0)),
         float(metrics.get("pr_auc", 0.0)),
         float(report["mean_latency_ms_per_sample"]),
+        quantization_summary["mode"],
+        export_summary["mode"],
     )
     return report
 

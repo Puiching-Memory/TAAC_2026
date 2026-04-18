@@ -3,13 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-
-def masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-	weights = mask.unsqueeze(-1).float()
-	summed = (tokens * weights).sum(dim=1)
-	counts = weights.sum(dim=1).clamp_min(1.0)
-	return summed / counts
+from taac2026.infrastructure.nn.pooling import masked_mean
 
 
 class DisabledAuxiliaryLoss:

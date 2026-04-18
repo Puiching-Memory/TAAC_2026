@@ -4,10 +4,21 @@ import torch
 from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
+from taac2026.domain.features import build_default_feature_schema
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.transformer import TaacTransformerBlock
 
 from .data import TIME_GAP_BUCKET_COUNT
-from .utils import masked_mean
+
+
+SPARSE_TABLE_NAMES = (
+    "user_tokens",
+    "context_tokens",
+    "candidate_tokens",
+    "candidate_post_tokens",
+    "candidate_author_tokens",
+)
 
 
 class SequentialTemporalBlock(nn.Module):
@@ -19,44 +30,18 @@ class SequentialTemporalBlock(nn.Module):
         dropout: float,
     ) -> None:
         super().__init__()
-        if hidden_dim % num_heads != 0:
-            raise ValueError("hidden_dim must be divisible by num_heads")
-        self.hidden_dim = hidden_dim
-        self.num_heads = num_heads
-        self.head_dim = hidden_dim // num_heads
-        self.scale = self.head_dim ** -0.5
-
-        self.pre_attention_norm = nn.LayerNorm(hidden_dim)
-        self.qkv = nn.Linear(hidden_dim, hidden_dim * 3)
-        self.output_projection = nn.Linear(hidden_dim, hidden_dim)
-        self.dropout = nn.Dropout(dropout)
-
-        self.pre_ffn_norm = nn.LayerNorm(hidden_dim)
-        self.feed_forward = nn.Sequential(
-            nn.Linear(hidden_dim, ffn_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(ffn_dim, hidden_dim),
+        self.block = TaacTransformerBlock(
+            hidden_dim=hidden_dim,
+            num_heads=num_heads,
+            ffn_dim=ffn_dim,
+            dropout=dropout,
+            norm_type="layernorm",
+            ffn_type="gelu",
+            attention_type="standard",
         )
 
     def forward(self, hidden_states: torch.Tensor, token_mask: torch.Tensor | None = None) -> torch.Tensor:
-        normalized = self.pre_attention_norm(hidden_states)
-        batch_size, token_count, _ = normalized.shape
-        qkv = self.qkv(normalized).view(batch_size, token_count, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        query, key, value = qkv[0], qkv[1], qkv[2]
-
-        attention_logits = torch.matmul(query, key.transpose(-2, -1)) * self.scale
-        if token_mask is not None:
-            attention_logits = attention_logits.masked_fill(~token_mask.unsqueeze(1).unsqueeze(2), -1.0e4)
-
-        attention_weights = torch.softmax(attention_logits, dim=-1)
-        attended = torch.matmul(attention_weights, value)
-        attended = attended.transpose(1, 2).contiguous().view(batch_size, token_count, self.hidden_dim)
-
-        hidden_states = hidden_states + self.dropout(self.output_projection(attended))
-        hidden_states = hidden_states + self.dropout(self.feed_forward(self.pre_ffn_norm(hidden_states)))
-        return hidden_states
+        return self.block(hidden_states, token_mask)
 
 
 class DeepContextNetModel(nn.Module):
@@ -64,6 +49,10 @@ class DeepContextNetModel(nn.Module):
         super().__init__()
         self.hidden_dim = model_config.hidden_dim
         self.recent_seq_len = max(0, model_config.recent_seq_len)
+        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
+            feature_schema=build_default_feature_schema(data_config, model_config),
+            table_names=SPARSE_TABLE_NAMES,
+        )
 
         self.token_embedding = nn.Embedding(
             num_embeddings=model_config.vocab_size,
@@ -114,8 +103,20 @@ class DeepContextNetModel(nn.Module):
             raise RuntimeError(f"Batch is missing required tensor: {name}")
         return tensor
 
+    def _require_sparse_features(self, batch: BatchTensors):
+        if batch.sparse_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+        return batch.sparse_features
+
     def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
+
+    def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
+        pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
+        return {
+            name: self.token_projection(pooled_sparse[name])
+            for name in SPARSE_TABLE_NAMES
+        }
 
     def _slice_recent(self, tensor: torch.Tensor) -> torch.Tensor:
         if self.recent_seq_len <= 0 or tensor.shape[1] <= self.recent_seq_len:
@@ -123,16 +124,11 @@ class DeepContextNetModel(nn.Module):
         return tensor[:, -self.recent_seq_len :]
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        user_tokens = self._require(batch.user_tokens, "user_tokens")
-        user_mask = self._require(batch.user_mask, "user_mask")
-        candidate_post_tokens = self._require(batch.candidate_post_tokens, "candidate_post_tokens")
-        candidate_post_mask = self._require(batch.candidate_post_mask, "candidate_post_mask")
-        candidate_author_tokens = self._require(batch.candidate_author_tokens, "candidate_author_tokens")
-        candidate_author_mask = self._require(batch.candidate_author_mask, "candidate_author_mask")
         history_post_tokens = self._require(batch.history_post_tokens, "history_post_tokens")
         history_action_tokens = self._require(batch.history_action_tokens, "history_action_tokens")
         history_time_gap = self._require(batch.history_time_gap, "history_time_gap")
         history_group_ids = self._require(batch.history_group_ids, "history_group_ids")
+        sparse_summaries = self._pooled_sparse_summaries(batch)
 
         history_mask = self._slice_recent(batch.history_mask)
         history_post_tokens = self._slice_recent(history_post_tokens)
@@ -140,17 +136,21 @@ class DeepContextNetModel(nn.Module):
         history_time_gap = self._slice_recent(history_time_gap)
         history_group_ids = self._slice_recent(history_group_ids)
 
-        user_summary = masked_mean(self._embed_tokens(user_tokens), user_mask)
-        context_summary = masked_mean(self._embed_tokens(batch.context_tokens), batch.context_mask)
         dense_summary = self.dense_projection(batch.dense_features)
-        user_node = self.user_projection(torch.cat([user_summary, context_summary, dense_summary], dim=-1))
+        user_node = self.user_projection(
+            torch.cat(
+                [sparse_summaries["user_tokens"], sparse_summaries["context_tokens"], dense_summary],
+                dim=-1,
+            )
+        )
 
-        candidate_post_summary = masked_mean(self._embed_tokens(candidate_post_tokens), candidate_post_mask)
-        candidate_author_summary = masked_mean(self._embed_tokens(candidate_author_tokens), candidate_author_mask)
-        candidate_summary = masked_mean(self._embed_tokens(batch.candidate_tokens), batch.candidate_mask)
         item_node = self.item_projection(
             torch.cat(
-                [candidate_post_summary, candidate_author_summary, candidate_summary],
+                [
+                    sparse_summaries["candidate_post_tokens"],
+                    sparse_summaries["candidate_author_tokens"],
+                    sparse_summaries["candidate_tokens"],
+                ],
                 dim=-1,
             )
         )

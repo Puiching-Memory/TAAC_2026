@@ -4,38 +4,20 @@ import torch
 from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
+from taac2026.domain.features import build_default_feature_schema
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.heads import ClassificationHead
+from taac2026.infrastructure.nn.pooling import TargetAwarePool, masked_mean
 
-from .utils import masked_mean
 
-
-class LocalActivationUnit(nn.Module):
-    def __init__(self, hidden_dim: int, dropout: float) -> None:
-        super().__init__()
-        self.scorer = nn.Sequential(
-            nn.Linear(hidden_dim * 4, hidden_dim),
-            nn.PReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def forward(self, query: torch.Tensor, keys: torch.Tensor, key_mask: torch.Tensor) -> torch.Tensor:
-        expanded_query = query.unsqueeze(1).expand_as(keys)
-        attention_inputs = torch.cat(
-            [
-                expanded_query,
-                keys,
-                expanded_query - keys,
-                expanded_query * keys,
-            ],
-            dim=-1,
-        )
-        attention_scores = self.scorer(attention_inputs).squeeze(-1)
-        attention_scores = attention_scores.masked_fill(~key_mask, -1.0e4)
-        attention_weights = torch.softmax(attention_scores, dim=-1)
-        attention_weights = attention_weights * key_mask.float()
-        attention_weights = attention_weights / attention_weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
-        return torch.bmm(attention_weights.unsqueeze(1), keys).squeeze(1)
+SPARSE_TABLE_NAMES = (
+    "user_tokens",
+    "context_tokens",
+    "candidate_tokens",
+    "candidate_post_tokens",
+    "candidate_author_tokens",
+)
 
 
 class CTRBaselineDINModel(nn.Module):
@@ -43,6 +25,10 @@ class CTRBaselineDINModel(nn.Module):
         super().__init__()
         self.hidden_dim = model_config.hidden_dim
         self.recent_seq_len = max(0, model_config.recent_seq_len)
+        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
+            feature_schema=build_default_feature_schema(data_config, model_config),
+            table_names=SPARSE_TABLE_NAMES,
+        )
 
         self.token_embedding = nn.Embedding(
             num_embeddings=model_config.vocab_size,
@@ -74,19 +60,19 @@ class CTRBaselineDINModel(nn.Module):
             nn.LayerNorm(model_config.hidden_dim),
             nn.GELU(),
         )
-        self.attention_layer = LocalActivationUnit(model_config.hidden_dim, model_config.dropout)
+        self.attention_layer = TargetAwarePool(
+            model_config.hidden_dim,
+            activation="prelu",
+            dropout=model_config.dropout,
+        )
 
         head_hidden_dim = model_config.head_hidden_dim or model_config.hidden_dim * 2
         mlp_hidden_dim = max(64, head_hidden_dim // 2)
-        self.output = nn.Sequential(
-            nn.LayerNorm(model_config.hidden_dim * 7),
-            nn.Linear(model_config.hidden_dim * 7, head_hidden_dim),
-            nn.PReLU(),
-            nn.Dropout(model_config.dropout),
-            nn.Linear(head_hidden_dim, mlp_hidden_dim),
-            nn.PReLU(),
-            nn.Dropout(model_config.dropout * 0.5),
-            nn.Linear(mlp_hidden_dim, 1),
+        self.output = ClassificationHead(
+            input_dim=model_config.hidden_dim * 7,
+            hidden_dims=[head_hidden_dim, mlp_hidden_dim],
+            activation="prelu",
+            dropout=[model_config.dropout, model_config.dropout * 0.5],
         )
 
     def _require(self, tensor: torch.Tensor | None, name: str) -> torch.Tensor:
@@ -94,8 +80,20 @@ class CTRBaselineDINModel(nn.Module):
             raise RuntimeError(f"Batch is missing required tensor: {name}")
         return tensor
 
+    def _require_sparse_features(self, batch: BatchTensors):
+        if batch.sparse_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+        return batch.sparse_features
+
     def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
+
+    def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
+        pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
+        return {
+            name: self.token_projection(pooled_sparse[name])
+            for name in SPARSE_TABLE_NAMES
+        }
 
     def _slice_recent(self, tensor: torch.Tensor) -> torch.Tensor:
         if self.recent_seq_len <= 0 or tensor.shape[1] <= self.recent_seq_len:
@@ -103,33 +101,29 @@ class CTRBaselineDINModel(nn.Module):
         return tensor[:, -self.recent_seq_len :]
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        user_tokens = self._require(batch.user_tokens, "user_tokens")
-        user_mask = self._require(batch.user_mask, "user_mask")
-        candidate_post_tokens = self._require(batch.candidate_post_tokens, "candidate_post_tokens")
-        candidate_post_mask = self._require(batch.candidate_post_mask, "candidate_post_mask")
-        candidate_author_tokens = self._require(batch.candidate_author_tokens, "candidate_author_tokens")
-        candidate_author_mask = self._require(batch.candidate_author_mask, "candidate_author_mask")
         history_post_tokens = self._require(batch.history_post_tokens, "history_post_tokens")
         history_author_tokens = self._require(batch.history_author_tokens, "history_author_tokens")
         history_action_tokens = self._require(batch.history_action_tokens, "history_action_tokens")
+        sparse_summaries = self._pooled_sparse_summaries(batch)
 
         history_mask = self._slice_recent(batch.history_mask)
         history_post_tokens = self._slice_recent(history_post_tokens)
         history_author_tokens = self._slice_recent(history_author_tokens)
         history_action_tokens = self._slice_recent(history_action_tokens)
 
-        user_summary = masked_mean(self._embed_tokens(user_tokens), user_mask)
-        context_summary = masked_mean(self._embed_tokens(batch.context_tokens), batch.context_mask)
-        user_representation = self.user_projection(torch.cat([user_summary, context_summary], dim=-1))
+        user_representation = self.user_projection(
+            torch.cat([sparse_summaries["user_tokens"], sparse_summaries["context_tokens"]], dim=-1)
+        )
 
         dense_representation = self.dense_projection(batch.dense_features)
 
-        candidate_post_summary = masked_mean(self._embed_tokens(candidate_post_tokens), candidate_post_mask)
-        candidate_author_summary = masked_mean(self._embed_tokens(candidate_author_tokens), candidate_author_mask)
-        candidate_legacy_summary = masked_mean(self._embed_tokens(batch.candidate_tokens), batch.candidate_mask)
         candidate_representation = self.candidate_projection(
             torch.cat(
-                [candidate_post_summary, candidate_author_summary, candidate_legacy_summary],
+                [
+                    sparse_summaries["candidate_post_tokens"],
+                    sparse_summaries["candidate_author_tokens"],
+                    sparse_summaries["candidate_tokens"],
+                ],
                 dim=-1,
             )
         )

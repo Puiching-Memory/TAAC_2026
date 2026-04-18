@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
 	"datasets>=3.0",
+	"fbgemm-gpu>=1.2; platform_system == 'Linux'",
 	"hypothesis>=6.142",
 	"loguru>=0.7",
 	"matplotlib>=3.10",
@@ -17,13 +18,19 @@ dependencies = [
 	"optuna>=4.4",
 	"pyarrow>=18.0",
 	"pytest>=8.3",
+	"pytest-benchmark>=5.1",
 	"rich>=13.9",
-	"torch>=2.6",
+	"torch>=2.6; platform_system == 'Linux'",
+	"triton>=3.2; platform_system == 'Linux'",
+	"torchrec>=1.0; platform_system == 'Linux'",
 ]
 
 [tool.uv.sources]
 torch = [
-	{ index = "pytorch-cu128", marker = "platform_system == 'Linux' or platform_system == 'Windows'" },
+	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'" },
+]
+"fbgemm-gpu" = [
+	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'" },
 ]
 
 [[tool.uv.index]]
@@ -45,6 +52,7 @@ taac-clean-github-logs = "taac2026.application.maintenance.github_cleanup:main"
 taac-plot-model-performance = "taac2026.application.reporting.cli:main"
 taac-dataset-eda = "taac2026.application.reporting.eda_cli:main"
 taac-tech-timeline = "taac2026.application.reporting.timeline_cli:main"
+taac-bench-report = "taac2026.application.reporting.bench_cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

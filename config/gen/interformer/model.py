@@ -7,8 +7,18 @@ from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.triton_attention import TritonAttention
 
 from .data import AUTHOR_TOKEN_COUNT, TIME_GAP_BUCKET_COUNT
+
+
+SPARSE_FEATURE_WIDTHS = {
+    "user_tokens": "max_feature_tokens",
+    "context_tokens": "max_feature_tokens",
+    "candidate_post_tokens": "max_event_features",
+    "candidate_author_tokens": "author_token_count",
+    "candidate_tokens": "candidate_token_count",
+}
 
 
 def _gather_recent_tokens(
@@ -58,16 +68,16 @@ class SelfGating(nn.Module):
 class StandardSelfAttention(nn.Module):
     def __init__(self, hidden_dim: int, num_heads: int, dropout: float) -> None:
         super().__init__()
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=dropout, batch_first=True)
+        self.attention = TritonAttention(hidden_dim, num_heads, dropout=0.0)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, hidden_states: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        attended, _ = self.attention(
+        attended = self.attention(
             hidden_states,
             hidden_states,
             hidden_states,
-            key_padding_mask=~valid_mask,
-            need_weights=False,
+            key_mask=valid_mask,
+            query_mask=valid_mask,
         )
         attended = self.dropout(attended)
         return attended * valid_mask.unsqueeze(-1).float()
@@ -150,19 +160,18 @@ class PoolingMultiHeadAttention(nn.Module):
         super().__init__()
         self.num_queries = num_queries
         self.queries = nn.Parameter(torch.randn(num_queries, hidden_dim) * 0.02)
-        self.attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=dropout, batch_first=True)
+        self.attention = TritonAttention(hidden_dim, num_heads, dropout=dropout)
         self.output_norm = nn.LayerNorm(hidden_dim)
 
     def forward(self, hidden_states: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         if self.num_queries <= 0:
             return hidden_states.new_zeros(hidden_states.shape[0], 0, hidden_states.shape[-1])
         queries = self.queries.unsqueeze(0).expand(hidden_states.shape[0], -1, -1)
-        pooled, _ = self.attention(
+        pooled = self.attention(
             queries,
             hidden_states,
             hidden_states,
-            key_padding_mask=~valid_mask,
-            need_weights=False,
+            key_mask=valid_mask,
         )
         return self.output_norm(queries + pooled)
 
@@ -208,8 +217,8 @@ class SequenceSummary(nn.Module):
 class BehaviorAwareInteractionArch(nn.Module):
     def __init__(self, hidden_dim: int, num_heads: int, dropout: float, attention_dropout: float) -> None:
         super().__init__()
-        self.self_attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=attention_dropout, batch_first=True)
-        self.cross_attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=attention_dropout, batch_first=True)
+        self.self_attention = TritonAttention(hidden_dim, num_heads, dropout=attention_dropout)
+        self.cross_attention = TritonAttention(hidden_dim, num_heads, dropout=attention_dropout)
         self.value_projection = nn.Sequential(
             nn.LayerNorm(hidden_dim * 4),
             nn.Linear(hidden_dim * 4, hidden_dim * 2),
@@ -231,19 +240,19 @@ class BehaviorAwareInteractionArch(nn.Module):
         sequence_summary: torch.Tensor,
         sequence_summary_mask: torch.Tensor,
     ) -> torch.Tensor:
-        self_context, _ = self.self_attention(
+        self_context = self.self_attention(
             hidden_states,
             hidden_states,
             hidden_states,
-            key_padding_mask=~valid_mask,
-            need_weights=False,
+            key_mask=valid_mask,
+            query_mask=valid_mask,
         )
-        sequence_context, _ = self.cross_attention(
+        sequence_context = self.cross_attention(
             hidden_states,
             sequence_summary,
             sequence_summary,
-            key_padding_mask=~sequence_summary_mask,
-            need_weights=False,
+            key_mask=sequence_summary_mask,
+            query_mask=valid_mask,
         )
         fused_inputs = torch.cat(
             [
@@ -358,6 +367,10 @@ class InterFormerModel(nn.Module):
         self.recent_token_count = max(0, model_config.recent_seq_len)
         self.sequence_count = len(data_config.sequence_names)
         self.hidden_dim = model_config.hidden_dim
+        self.max_feature_tokens = data_config.max_feature_tokens
+        self.max_event_features = max(1, data_config.max_event_features)
+        self.author_token_count = AUTHOR_TOKEN_COUNT
+        self.candidate_token_count = 1
         self.non_sequence_token_count = (
             1
             + data_config.max_feature_tokens
@@ -436,27 +449,41 @@ class InterFormerModel(nn.Module):
     def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
 
+    def _require_sparse_features(self, batch: BatchTensors):
+        if batch.sparse_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+        return batch.sparse_features
+
+    def _dense_sparse_tokens(self, batch: BatchTensors, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        sparse_by_key = self._require_sparse_features(batch).to_dict()
+        jagged = sparse_by_key[name]
+        desired_length = getattr(self, SPARSE_FEATURE_WIDTHS[name])
+        tokens = jagged.to_padded_dense(desired_length=desired_length, padding_value=0).to(dtype=torch.long)
+        lengths = jagged.lengths().to(device=tokens.device)
+        positions = torch.arange(desired_length, device=tokens.device).unsqueeze(0)
+        mask = positions < lengths.unsqueeze(1)
+        return tokens, mask
+
     def _add_non_sequence_group(self, hidden_states: torch.Tensor, group_id: int) -> torch.Tensor:
         group_embedding = self.non_sequence_group_embedding.weight[group_id].view(1, 1, -1)
         return hidden_states + group_embedding
 
     def _build_non_sequence_inputs(self, batch: BatchTensors) -> tuple[torch.Tensor, torch.Tensor]:
-        user_tokens = self._require(batch.user_tokens, "user_tokens")
-        user_mask = self._require(batch.user_mask, "user_mask")
-        candidate_post_tokens = self._require(batch.candidate_post_tokens, "candidate_post_tokens")
-        candidate_post_mask = self._require(batch.candidate_post_mask, "candidate_post_mask")
-        candidate_author_tokens = self._require(batch.candidate_author_tokens, "candidate_author_tokens")
-        candidate_author_mask = self._require(batch.candidate_author_mask, "candidate_author_mask")
+        user_tokens, user_mask = self._dense_sparse_tokens(batch, "user_tokens")
+        context_tokens, context_mask = self._dense_sparse_tokens(batch, "context_tokens")
+        candidate_post_tokens, candidate_post_mask = self._dense_sparse_tokens(batch, "candidate_post_tokens")
+        candidate_author_tokens, candidate_author_mask = self._dense_sparse_tokens(batch, "candidate_author_tokens")
+        candidate_tokens, candidate_mask = self._dense_sparse_tokens(batch, "candidate_tokens")
 
         batch_size = batch.labels.shape[0]
         dense_token = self.dense_projection(batch.dense_features).unsqueeze(1)
         dense_mask = torch.ones(batch_size, 1, dtype=torch.bool, device=batch.labels.device)
 
         user_features = self._add_non_sequence_group(self._embed_tokens(user_tokens), 1)
-        context_features = self._add_non_sequence_group(self._embed_tokens(batch.context_tokens), 2)
+        context_features = self._add_non_sequence_group(self._embed_tokens(context_tokens), 2)
         candidate_post_features = self._add_non_sequence_group(self._embed_tokens(candidate_post_tokens), 3)
         candidate_author_features = self._add_non_sequence_group(self._embed_tokens(candidate_author_tokens), 4)
-        candidate_features = self._add_non_sequence_group(self._embed_tokens(batch.candidate_tokens), 5)
+        candidate_features = self._add_non_sequence_group(self._embed_tokens(candidate_tokens), 5)
 
         hidden_states = torch.cat(
             [
@@ -473,10 +500,10 @@ class InterFormerModel(nn.Module):
             [
                 dense_mask,
                 user_mask,
-                batch.context_mask,
+                context_mask,
                 candidate_post_mask,
                 candidate_author_mask,
-                batch.candidate_mask,
+                candidate_mask,
             ],
             dim=1,
         )

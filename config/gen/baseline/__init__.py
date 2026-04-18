@@ -4,10 +4,9 @@ from pathlib import Path
 
 from taac2026.domain.config import DataConfig, ModelConfig, TrainConfig
 from taac2026.domain.experiment import ExperimentSpec
+from taac2026.domain.features import build_default_feature_schema
 
-from .data import build_data_pipeline
 from .model import build_model_component
-from .utils import build_loss_stack, build_optimizer_component
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -61,9 +60,11 @@ EXPERIMENT = ExperimentSpec(
         latency_warmup_steps=2,
         latency_measure_steps=8,
     ),
-    build_data_pipeline=build_data_pipeline,
+    build_data_pipeline=None,
     build_model_component=build_model_component,
-    build_loss_stack=build_loss_stack,
-    build_optimizer_component=build_optimizer_component,
+    build_loss_stack=None,
+    build_optimizer_component=None,
     switches={"logging": True, "visualization": True},
 )
+
+EXPERIMENT.feature_schema = build_default_feature_schema(EXPERIMENT.data, EXPERIMENT.model)

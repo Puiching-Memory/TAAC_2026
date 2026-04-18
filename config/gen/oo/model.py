@@ -7,176 +7,26 @@ import torch.nn.functional as F
 from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
+from taac2026.domain.features import build_default_feature_schema
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.hstu import (
+    FourierTimeEncoding,
+    RelativeTimeBias,
+    TimeAwareHSTU,
+)
 
 from .data import TIME_GAP_BUCKET_COUNT
 from .utils import masked_mean
 
 
-class RMSNorm(nn.Module):
-    def __init__(self, hidden_dim: int, eps: float = 1.0e-6) -> None:
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_dim))
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        variance = hidden_states.pow(2).mean(dim=-1, keepdim=True)
-        normalized = hidden_states * torch.rsqrt(variance + self.eps)
-        return normalized * self.weight
-
-
-class RotaryEmbedding(nn.Module):
-    def __init__(self, head_dim: int, rope_base: float = 10000.0, rope_fraction: float = 1.0) -> None:
-        super().__init__()
-        rotary_dim = int(head_dim * float(rope_fraction))
-        rotary_dim = max(2, rotary_dim - (rotary_dim % 2))
-        self.head_dim = head_dim
-        self.rotary_dim = rotary_dim
-        inv_freq = 1.0 / (rope_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-    def _build_cos_sin(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
-        positions = torch.arange(seq_len, device=device, dtype=dtype)
-        freqs = torch.einsum("s,f->sf", positions, self.inv_freq.to(device=device, dtype=dtype))
-        cos = torch.cos(freqs)
-        sin = torch.sin(freqs)
-        cos = torch.stack([cos, cos], dim=-1).reshape(seq_len, -1).unsqueeze(0).unsqueeze(0)
-        sin = torch.stack([sin, sin], dim=-1).reshape(seq_len, -1).unsqueeze(0).unsqueeze(0)
-        return cos, sin
-
-    @staticmethod
-    def _rotate_half(hidden_states: torch.Tensor) -> torch.Tensor:
-        first_half = hidden_states[..., ::2]
-        second_half = hidden_states[..., 1::2]
-        rotated = torch.stack((-second_half, first_half), dim=-1)
-        return rotated.flatten(-2)
-
-    def apply_rotary(self, query_states: torch.Tensor, key_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        _, _, seq_len, head_dim = query_states.shape
-        if head_dim != self.head_dim or self.rotary_dim == 0:
-            return query_states, key_states
-        cos, sin = self._build_cos_sin(seq_len, query_states.device, query_states.dtype)
-
-        def apply_one(hidden_states: torch.Tensor) -> torch.Tensor:
-            rotary_part = hidden_states[..., : self.rotary_dim]
-            pass_part = hidden_states[..., self.rotary_dim :]
-            rotated = rotary_part * cos + self._rotate_half(rotary_part) * sin
-            return torch.cat([rotated, pass_part], dim=-1)
-
-        return apply_one(query_states), apply_one(key_states)
-
-
-class RelativeTimeBias(nn.Module):
-    def __init__(self, num_buckets: int) -> None:
-        super().__init__()
-        self.num_buckets = num_buckets
-        self.bucket_weights = nn.Parameter(torch.empty(num_buckets + 1).normal_(mean=0.0, std=0.02))
-
-    def bucketize(self, deltas: torch.Tensor) -> torch.Tensor:
-        bucket_ids = (torch.log2(deltas.clamp(min=1.0)).floor() + 1).long()
-        return bucket_ids.clamp(min=1, max=self.num_buckets)
-
-    def forward(self, timestamps: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        seq_len = timestamps.shape[1]
-        time_i = timestamps.unsqueeze(2)
-        time_j = timestamps.unsqueeze(1)
-        deltas = torch.clamp(time_i - time_j, min=0.0)
-        bucket_ids = self.bucketize(deltas)
-
-        pair_valid = valid_mask.unsqueeze(2) & valid_mask.unsqueeze(1)
-        tril_mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=timestamps.device))
-        diag_mask = torch.eye(seq_len, dtype=torch.bool, device=timestamps.device)
-        pair_valid = pair_valid & tril_mask.unsqueeze(0) & (~diag_mask.unsqueeze(0))
-        bucket_ids = torch.where(pair_valid, bucket_ids, torch.zeros_like(bucket_ids))
-        return self.bucket_weights[bucket_ids]
-
-
-class FourierTimeEncoding(nn.Module):
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_frequencies: int = 8,
-        min_period: float = 1.0,
-        max_period: float = 256.0,
-    ) -> None:
-        super().__init__()
-        periods = torch.logspace(math.log10(min_period), math.log10(max_period), steps=num_frequencies)
-        self.register_buffer("periods", periods, persistent=False)
-        self.register_buffer("two_pi", torch.tensor(2.0 * math.pi), persistent=False)
-        self.projection = nn.Linear(2 * num_frequencies, hidden_dim, bias=False)
-
-    def forward(self, timestamps: torch.Tensor) -> torch.Tensor:
-        angles = (timestamps.unsqueeze(-1) / self.periods) * self.two_pi
-        features = torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)
-        return self.projection(features)
-
-
-class HSTU(nn.Module):
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_heads: int,
-        dropout: float,
-        rope_fraction: float = 1.0,
-        rope_base: float = 10000.0,
-    ) -> None:
-        super().__init__()
-        if hidden_dim % num_heads != 0:
-            raise ValueError("hidden_dim must be divisible by num_heads")
-        self.hidden_dim = hidden_dim
-        self.num_heads = num_heads
-        self.head_dim = hidden_dim // num_heads
-        self.qkvu_linear = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 6, bias=False),
-            nn.SiLU(),
-        )
-        self.out_linear = nn.Linear(hidden_dim * 3, hidden_dim)
-        self.output_dropout = nn.Dropout(dropout)
-        self.rms_norm = RMSNorm(hidden_dim)
-        self.rope = RotaryEmbedding(self.head_dim, rope_base=rope_base, rope_fraction=rope_fraction)
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        rel_ts_bias: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        batch_size, seq_len, _ = hidden_states.shape
-        fused = self.qkvu_linear(hidden_states)
-        gated_states, value_states, query_states, key_states = torch.split(
-            fused,
-            [self.hidden_dim * 3, self.hidden_dim, self.hidden_dim, self.hidden_dim],
-            dim=-1,
-        )
-
-        query_states = query_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        query_rope, key_rope = self.rope.apply_rotary(query_states, key_states)
-
-        qk_attn = torch.matmul(query_states, key_states.transpose(-2, -1))
-        qk_attn = F.relu(qk_attn) / max(seq_len, 1)
-
-        qk_attn_rope = torch.matmul(query_rope, key_rope.transpose(-2, -1))
-        qk_attn_rope = F.relu(qk_attn_rope) / max(seq_len, 1)
-
-        if rel_ts_bias is None:
-            rel_ts_bias = torch.zeros(batch_size, seq_len, seq_len, device=hidden_states.device, dtype=value_states.dtype)
-
-        if attention_mask is not None:
-            masked_positions = attention_mask.logical_not()
-            qk_attn = qk_attn.masked_fill(masked_positions.unsqueeze(1), 0.0)
-            qk_attn_rope = qk_attn_rope.masked_fill(masked_positions.unsqueeze(1), 0.0)
-            rel_ts_bias = rel_ts_bias.masked_fill(masked_positions, 0.0)
-
-        ts_output = torch.einsum("bnm,bhmd->bnhd", rel_ts_bias, value_states)
-        rope_output = torch.einsum("bhnm,bhmd->bnhd", qk_attn_rope, value_states)
-        plain_output = torch.einsum("bhnm,bhmd->bnhd", qk_attn, value_states)
-        combined_output = torch.cat([rope_output, ts_output, plain_output], dim=-1).contiguous()
-        combined_output = combined_output.view(batch_size, seq_len, self.hidden_dim * 3)
-        next_hidden_states = self.out_linear(combined_output * gated_states)
-        next_hidden_states = self.output_dropout(next_hidden_states)
-        return self.rms_norm(next_hidden_states + hidden_states)
+SPARSE_TABLE_NAMES = (
+    "user_tokens",
+    "context_tokens",
+    "candidate_tokens",
+    "candidate_post_tokens",
+    "candidate_author_tokens",
+)
 
 
 class FeatureInteractionEncoder(nn.Module):
@@ -203,6 +53,10 @@ class OOModel(nn.Module):
         super().__init__()
         self.hidden_dim = model_config.hidden_dim
         self.sequence_count = len(data_config.sequence_names)
+        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
+            feature_schema=build_default_feature_schema(data_config, model_config),
+            table_names=SPARSE_TABLE_NAMES,
+        )
 
         self.token_embedding = nn.Embedding(
             num_embeddings=model_config.vocab_size,
@@ -232,7 +86,7 @@ class OOModel(nn.Module):
         self.rel_time_bias = RelativeTimeBias(num_buckets=64)
         self.attention_layers = nn.ModuleList(
             [
-                HSTU(
+                TimeAwareHSTU(
                     hidden_dim=model_config.hidden_dim,
                     num_heads=model_config.num_heads,
                     dropout=model_config.attention_dropout,
@@ -252,16 +106,25 @@ class OOModel(nn.Module):
     def embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
 
+    def _require_sparse_features(self, batch: BatchTensors):
+        if batch.sparse_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+        return batch.sparse_features
+
+    def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
+        pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
+        return {
+            name: self.token_projection(pooled_sparse[name])
+            for name in SPARSE_TABLE_NAMES
+        }
+
     def build_sequence_inputs(self, batch: BatchTensors) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if batch.user_tokens is None or batch.user_mask is None:
-            raise RuntimeError("Batch is missing user token fields")
         if batch.history_post_tokens is None or batch.history_author_tokens is None:
             raise RuntimeError("Batch is missing history entity token fields")
         if batch.history_action_tokens is None or batch.history_time_gap is None or batch.history_group_ids is None:
             raise RuntimeError("Batch is missing history metadata fields")
 
-        user_summary = masked_mean(self.embed_tokens(batch.user_tokens), batch.user_mask)
-        context_summary = masked_mean(self.embed_tokens(batch.context_tokens), batch.context_mask)
+        sparse_summaries = self._pooled_sparse_summaries(batch)
         dense_summary = self.dense_projection(batch.dense_features)
 
         history_hidden = self.embed_tokens(batch.history_tokens)
@@ -272,8 +135,8 @@ class OOModel(nn.Module):
         gap_hidden = self.time_gap_embedding(batch.history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
 
         seq_len = batch.history_tokens.shape[1]
-        user_states = user_summary.unsqueeze(1).expand(-1, seq_len, -1)
-        context_states = context_summary.unsqueeze(1).expand(-1, seq_len, -1)
+        user_states = sparse_summaries["user_tokens"].unsqueeze(1).expand(-1, seq_len, -1)
+        context_states = sparse_summaries["context_tokens"].unsqueeze(1).expand(-1, seq_len, -1)
         dense_states = dense_summary.unsqueeze(1).expand(-1, seq_len, -1)
         sequence_inputs = torch.cat(
             [
@@ -317,18 +180,14 @@ class OOModel(nn.Module):
         return sequence_states[batch_indices, last_indices]
 
     def encode_candidate(self, batch: BatchTensors) -> torch.Tensor:
-        candidate_summary = masked_mean(self.embed_tokens(batch.candidate_tokens), batch.candidate_mask)
-        if batch.candidate_post_tokens is not None and batch.candidate_post_mask is not None:
-            candidate_post_summary = masked_mean(self.embed_tokens(batch.candidate_post_tokens), batch.candidate_post_mask)
-        else:
-            candidate_post_summary = candidate_summary
-        if batch.candidate_author_tokens is not None and batch.candidate_author_mask is not None:
-            candidate_author_summary = masked_mean(self.embed_tokens(batch.candidate_author_tokens), batch.candidate_author_mask)
-        else:
-            candidate_author_summary = candidate_summary
+        sparse_summaries = self._pooled_sparse_summaries(batch)
 
         candidate_inputs = torch.cat(
-            [candidate_summary, candidate_post_summary, candidate_author_summary],
+            [
+                sparse_summaries["candidate_tokens"],
+                sparse_summaries["candidate_post_tokens"],
+                sparse_summaries["candidate_author_tokens"],
+            ],
             dim=-1,
         ).unsqueeze(1)
         candidate_states = self.candidate_encoder(candidate_inputs).squeeze(1)

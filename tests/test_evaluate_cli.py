@@ -114,6 +114,90 @@ def test_evaluate_checkpoint_enables_cpu_bfloat16_amp_when_preconfigured(test_wo
     assert "--amp --amp-dtype bfloat16" in payload["profiling"]["external_profilers"]["tools"]["ncu"]["suggested_command_string"]
 
 
+def test_evaluate_checkpoint_supports_int8_quantized_inference(test_workspace: TestWorkspace) -> None:
+    experiment_path = test_workspace.write_experiment_package()
+    experiment = load_experiment_package(experiment_path)
+    _, _, data_stats = load_dataloaders(
+        config=experiment.data,
+        vocab_size=experiment.model.vocab_size,
+        batch_size=experiment.train.batch_size,
+        eval_batch_size=experiment.train.resolved_eval_batch_size,
+        num_workers=experiment.train.num_workers,
+        seed=experiment.train.seed,
+    )
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+    checkpoint_path = test_workspace.root / "compatible_int8.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+
+    payload = evaluate_checkpoint(
+        experiment_path=experiment_path,
+        checkpoint_path=checkpoint_path,
+        output_path=test_workspace.root / "evaluation_int8.json",
+        quantization_mode="int8",
+    )
+
+    assert payload["device"] == "cpu"
+    assert payload["quantization"]["active"] is True
+    assert payload["quantization"]["mode"] == "int8"
+    assert payload["quantization"]["quantized_linear_layers"] > 0
+    assert payload["quantization"]["runtime_overrides"]["forced_device"] == "cpu"
+
+
+def test_evaluate_checkpoint_can_export_model_for_inference(test_workspace: TestWorkspace) -> None:
+    experiment_path = test_workspace.write_experiment_package()
+    experiment = load_experiment_package(experiment_path)
+    _, _, data_stats = load_dataloaders(
+        config=experiment.data,
+        vocab_size=experiment.model.vocab_size,
+        batch_size=experiment.train.batch_size,
+        eval_batch_size=experiment.train.resolved_eval_batch_size,
+        num_workers=experiment.train.num_workers,
+        seed=experiment.train.seed,
+    )
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+    checkpoint_path = test_workspace.root / "compatible_export.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+    export_path = test_workspace.root / "inference_export.pt2"
+
+    payload = evaluate_checkpoint(
+        experiment_path=experiment_path,
+        checkpoint_path=checkpoint_path,
+        output_path=test_workspace.root / "evaluation_export.json",
+        export_mode="torch-export",
+        export_path=export_path,
+    )
+
+    assert payload["export"]["active"] is True
+    assert payload["export"]["mode"] == "torch-export"
+    assert payload["export"]["artifact_path"] == str(export_path)
+    assert export_path.exists()
+
+
+def test_evaluate_checkpoint_rejects_quantized_export_combination(test_workspace: TestWorkspace) -> None:
+    experiment_path = test_workspace.write_experiment_package()
+    experiment = load_experiment_package(experiment_path)
+    _, _, data_stats = load_dataloaders(
+        config=experiment.data,
+        vocab_size=experiment.model.vocab_size,
+        batch_size=experiment.train.batch_size,
+        eval_batch_size=experiment.train.resolved_eval_batch_size,
+        num_workers=experiment.train.num_workers,
+        seed=experiment.train.seed,
+    )
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+    checkpoint_path = test_workspace.root / "compatible_export_int8.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+
+    with pytest.raises(ValueError, match="requires quantization mode 'none'"):
+        evaluate_checkpoint(
+            experiment_path=experiment_path,
+            checkpoint_path=checkpoint_path,
+            output_path=test_workspace.root / "evaluation_export_int8.json",
+            quantization_mode="int8",
+            export_mode="torch-export",
+        )
+
+
 @pytest.mark.parametrize(
     ("argv", "expected_command", "expected_value"),
     [
@@ -148,6 +232,12 @@ def test_parse_args_accepts_runtime_optimization_flags() -> None:
         "single",
         "--experiment",
         "config/gen/oo",
+        "--quantize",
+        "int8",
+        "--export-mode",
+        "torch-export",
+        "--export-path",
+        "outputs/exported_model.pt2",
         "--compile",
         "--compile-backend",
         "inductor",
@@ -163,6 +253,9 @@ def test_parse_args_accepts_runtime_optimization_flags() -> None:
     assert args.compile_mode == "max-autotune"
     assert args.amp is True
     assert args.amp_dtype == "bfloat16"
+    assert args.quantize == "int8"
+    assert args.export_mode == "torch-export"
+    assert args.export_path == "outputs/exported_model.pt2"
 
 
 def test_parse_args_accepts_batch_runtime_optimization_flags() -> None:
@@ -171,6 +264,10 @@ def test_parse_args_accepts_batch_runtime_optimization_flags() -> None:
         "--experiment-paths",
         "config/gen/baseline",
         "config/gen/interformer",
+        "--quantize",
+        "int8",
+        "--export-mode",
+        "torch-export",
         "--compile",
         "--amp",
     ])
@@ -178,6 +275,8 @@ def test_parse_args_accepts_batch_runtime_optimization_flags() -> None:
     assert args.command == "batch"
     assert args.compile is True
     assert args.amp is True
+    assert args.quantize == "int8"
+    assert args.export_mode == "torch-export"
 
 
 def test_parse_args_requires_explicit_batch_experiments() -> None:

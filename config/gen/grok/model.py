@@ -6,10 +6,23 @@ import torch
 from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
+from taac2026.domain.features import build_default_feature_schema
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.heads import ClassificationHead
+from taac2026.infrastructure.nn.norms import RMSNorm
+from taac2026.infrastructure.nn.pooling import TargetAwarePool, masked_mean
 
 from .data import TIME_GAP_BUCKET_COUNT
-from .utils import masked_mean
+
+
+SPARSE_TABLE_NAMES = (
+    "user_tokens",
+    "context_tokens",
+    "candidate_tokens",
+    "candidate_post_tokens",
+    "candidate_author_tokens",
+)
 
 
 def make_grok_attention_mask(
@@ -30,18 +43,6 @@ def make_grok_attention_mask(
         attention_mask[query_index, :prefix_tokens] = True
         attention_mask[query_index, query_index] = True
     return attention_mask
-
-
-class RMSNorm(nn.Module):
-    def __init__(self, hidden_dim: int, eps: float = 1.0e-5) -> None:
-        super().__init__()
-        self.eps = eps
-        self.scale = nn.Parameter(torch.ones(hidden_dim))
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        variance = hidden_states.pow(2).mean(dim=-1, keepdim=True)
-        normalized = hidden_states * torch.rsqrt(variance + self.eps)
-        return self.scale * normalized
 
 
 def _ffn_size(hidden_dim: int, widening_factor: float) -> int:
@@ -164,6 +165,10 @@ class GrokBaselineModel(nn.Module):
         super().__init__()
         self.history_capacity = len(data_config.sequence_names) * data_config.max_seq_len
         self.hidden_dim = model_config.hidden_dim
+        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
+            feature_schema=build_default_feature_schema(data_config, model_config),
+            table_names=SPARSE_TABLE_NAMES,
+        )
 
         self.token_embedding = nn.Embedding(
             num_embeddings=model_config.vocab_size,
@@ -202,18 +207,20 @@ class GrokBaselineModel(nn.Module):
         self.final_norm = RMSNorm(model_config.hidden_dim)
 
         head_hidden_dim = model_config.head_hidden_dim or model_config.hidden_dim * 2
-        self.readout_scorer = nn.Sequential(
-            nn.LayerNorm(model_config.hidden_dim * 4),
-            nn.Linear(model_config.hidden_dim * 4, head_hidden_dim),
-            nn.GELU(),
-            nn.Linear(head_hidden_dim, 1),
+        self.readout_pool = TargetAwarePool(
+            model_config.hidden_dim,
+            scorer_hidden_dim=head_hidden_dim,
+            activation="gelu",
+            dropout=0.0,
+            include_difference=False,
+            include_absolute_difference=True,
+            include_product=True,
         )
-        self.output = nn.Sequential(
-            nn.LayerNorm(model_config.hidden_dim * 7),
-            nn.Linear(model_config.hidden_dim * 7, head_hidden_dim),
-            nn.GELU(),
-            nn.Dropout(model_config.dropout),
-            nn.Linear(head_hidden_dim, 1),
+        self.output = ClassificationHead(
+            input_dim=model_config.hidden_dim * 7,
+            hidden_dims=head_hidden_dim,
+            activation="gelu",
+            dropout=model_config.dropout,
         )
 
     def _require(self, tensor: torch.Tensor | None, name: str) -> torch.Tensor:
@@ -221,8 +228,27 @@ class GrokBaselineModel(nn.Module):
             raise RuntimeError(f"Batch is missing required tensor: {name}")
         return tensor
 
+    def _require_sparse_features(self, batch: BatchTensors):
+        if batch.sparse_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+        return batch.sparse_features
+
     def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
+
+    def _sparse_feature_bundle(self, batch: BatchTensors) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+        sparse_features = self._require_sparse_features(batch)
+        pooled_sparse = self.sparse_embedding.forward_dict(sparse_features)
+        sparse_by_key = sparse_features.to_dict()
+        summaries = {
+            name: self.token_projection(pooled_sparse[name])
+            for name in SPARSE_TABLE_NAMES
+        }
+        valid = {
+            name: sparse_by_key[name].lengths().gt(0).unsqueeze(1)
+            for name in ("user_tokens", "candidate_post_tokens")
+        }
+        return summaries, valid
 
     def _target_aware_readout(
         self,
@@ -230,62 +256,36 @@ class GrokBaselineModel(nn.Module):
         memory_tokens: torch.Tensor,
         memory_mask: torch.Tensor,
     ) -> torch.Tensor:
-        expanded_query = candidate_query.unsqueeze(1).expand_as(memory_tokens)
-        scores = self.readout_scorer(
-            torch.cat(
-                [
-                    expanded_query,
-                    memory_tokens,
-                    expanded_query * memory_tokens,
-                    torch.abs(expanded_query - memory_tokens),
-                ],
-                dim=-1,
-            )
-        ).squeeze(-1)
-        scores = scores.masked_fill(~memory_mask, -1.0e4)
-        weights = torch.softmax(scores, dim=-1)
-        weights = weights * memory_mask.float()
-        weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
-        return torch.bmm(weights.unsqueeze(1), memory_tokens).squeeze(1)
+        return self.readout_pool(candidate_query, memory_tokens, memory_mask)
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        user_tokens = self._require(batch.user_tokens, "user_tokens")
-        user_mask = self._require(batch.user_mask, "user_mask")
-        candidate_post_tokens = self._require(batch.candidate_post_tokens, "candidate_post_tokens")
-        candidate_post_mask = self._require(batch.candidate_post_mask, "candidate_post_mask")
-        candidate_author_tokens = self._require(batch.candidate_author_tokens, "candidate_author_tokens")
-        candidate_author_mask = self._require(batch.candidate_author_mask, "candidate_author_mask")
         history_post_tokens = self._require(batch.history_post_tokens, "history_post_tokens")
         history_author_tokens = self._require(batch.history_author_tokens, "history_author_tokens")
         history_action_tokens = self._require(batch.history_action_tokens, "history_action_tokens")
         history_time_gap = self._require(batch.history_time_gap, "history_time_gap")
         history_group_ids = self._require(batch.history_group_ids, "history_group_ids")
+        sparse_summaries, sparse_valid = self._sparse_feature_bundle(batch)
 
-        user_summary = masked_mean(self._embed_tokens(user_tokens), user_mask)
-        context_summary = masked_mean(self._embed_tokens(batch.context_tokens), batch.context_mask)
         dense_summary = self.dense_projection(batch.dense_features)
         user_representation = self.user_reduce(
             torch.cat(
                 [
-                    user_summary,
-                    context_summary,
+                    sparse_summaries["user_tokens"],
+                    sparse_summaries["context_tokens"],
                     dense_summary,
-                    user_summary * context_summary,
+                    sparse_summaries["user_tokens"] * sparse_summaries["context_tokens"],
                 ],
                 dim=-1,
             )
         )
 
-        candidate_post_summary = masked_mean(self._embed_tokens(candidate_post_tokens), candidate_post_mask)
-        candidate_author_summary = masked_mean(self._embed_tokens(candidate_author_tokens), candidate_author_mask)
-        candidate_legacy_summary = masked_mean(self._embed_tokens(batch.candidate_tokens), batch.candidate_mask)
         candidate_representation = self.candidate_reduce(
             torch.cat(
                 [
-                    candidate_post_summary,
-                    candidate_author_summary,
-                    candidate_legacy_summary,
-                    candidate_post_summary * candidate_author_summary,
+                    sparse_summaries["candidate_post_tokens"],
+                    sparse_summaries["candidate_author_tokens"],
+                    sparse_summaries["candidate_tokens"],
+                    sparse_summaries["candidate_post_tokens"] * sparse_summaries["candidate_author_tokens"],
                 ],
                 dim=-1,
             )
@@ -307,8 +307,8 @@ class GrokBaselineModel(nn.Module):
         history_representation = history_representation * batch.history_mask.unsqueeze(-1).float()
 
         batch_size = batch.labels.shape[0]
-        user_valid = user_mask.any(dim=1, keepdim=True)
-        candidate_valid = candidate_post_mask.any(dim=1, keepdim=True)
+        user_valid = sparse_valid["user_tokens"]
+        candidate_valid = sparse_valid["candidate_post_tokens"]
         user_segment = self.segment_embedding(
             torch.zeros((batch_size, 1), dtype=torch.long, device=batch.labels.device)
         )
@@ -348,7 +348,7 @@ class GrokBaselineModel(nn.Module):
             torch.cat([user_valid, batch.history_mask], dim=1),
         )
         history_summary = masked_mean(history_output, batch.history_mask)
-        static_context = 0.5 * (context_summary + dense_summary)
+        static_context = 0.5 * (sparse_summaries["context_tokens"] + dense_summary)
 
         fused = torch.cat(
             [

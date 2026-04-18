@@ -6,6 +6,7 @@ from typing import Any
 from ...domain.config import SearchConfig
 from ...domain.experiment import ExperimentSpec
 from ...infrastructure.experiments.payload import apply_serialized_experiment, serialize_experiment
+from ...infrastructure.nn.defaults import resolve_experiment_builders
 from ..training.profiling import (
     collect_inference_profile,
     collect_model_profile,
@@ -51,7 +52,8 @@ def budget_status(
 
 def profile_trial_budget(experiment: ExperimentSpec) -> dict[str, Any]:
     device = select_device(experiment.train.device)
-    train_loader, val_loader, data_stats = experiment.build_data_pipeline(
+    builders = resolve_experiment_builders(experiment)
+    train_loader, val_loader, data_stats = builders.build_data_pipeline(
         experiment.data,
         experiment.model,
         experiment.train,

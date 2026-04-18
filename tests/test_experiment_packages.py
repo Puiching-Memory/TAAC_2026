@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import torch
 
 from taac2026.infrastructure.experiments.loader import load_experiment_package
-from taac2026.infrastructure.io.datasets import resolve_parquet_dataset_path
+from taac2026.infrastructure.io.datasets import iter_dataset_rows, resolve_parquet_dataset_path
+from taac2026.infrastructure.nn.defaults import resolve_experiment_builders
 from tests.support import TestWorkspace, create_test_workspace, prepare_experiment
 
 
@@ -34,8 +36,9 @@ def test_workspace(tmp_path: Path) -> TestWorkspace:
 def test_experiment_package_builds_and_runs_forward(module_path: str, test_workspace: TestWorkspace) -> None:
     experiment = importlib.import_module(module_path).EXPERIMENT
     experiment = prepare_experiment(experiment, test_workspace)
+    builders = resolve_experiment_builders(experiment)
 
-    train_loader, _, data_stats = experiment.build_data_pipeline(
+    train_loader, _, data_stats = builders.build_data_pipeline(
         experiment.data,
         experiment.model,
         experiment.train,
@@ -46,6 +49,60 @@ def test_experiment_package_builds_and_runs_forward(module_path: str, test_works
 
     assert logits.shape == batch.labels.shape
     assert torch.isfinite(logits).all().item()
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "config.gen.baseline",
+        "config.gen.ctr_baseline",
+        "config.gen.onetrans",
+        "config.gen.hyformer",
+        "config.gen.deepcontextnet",
+        "config.gen.grok",
+        "config.gen.interformer",
+        "config.gen.uniscaleformer",
+        "config.gen.oo",
+        "config.gen.unirec",
+    ],
+)
+def test_models_with_pooled_sparse_branches_prefer_torchrec_sparse_features(
+    module_path: str,
+    test_workspace: TestWorkspace,
+) -> None:
+    experiment = importlib.import_module(module_path).EXPERIMENT
+    experiment = prepare_experiment(experiment, test_workspace)
+    builders = resolve_experiment_builders(experiment)
+
+    train_loader, _, data_stats = builders.build_data_pipeline(
+        experiment.data,
+        experiment.model,
+        experiment.train,
+    )
+    batch = next(iter(train_loader))
+    assert batch.sparse_features is not None
+
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+    model.eval()
+    erased_legacy_sparse_batch = replace(
+        batch,
+        candidate_tokens=torch.zeros_like(batch.candidate_tokens),
+        candidate_mask=torch.zeros_like(batch.candidate_mask),
+        context_tokens=torch.zeros_like(batch.context_tokens),
+        context_mask=torch.zeros_like(batch.context_mask),
+        user_tokens=None,
+        user_mask=None,
+        candidate_post_tokens=None,
+        candidate_post_mask=None,
+        candidate_author_tokens=None,
+        candidate_author_mask=None,
+    )
+
+    with torch.inference_mode():
+        expected_logits = model(batch)
+        actual_logits = model(erased_legacy_sparse_batch)
+
+    assert torch.allclose(expected_logits, actual_logits, atol=1.0e-6, rtol=0.0)
 
 
 @pytest.mark.parametrize(
@@ -66,7 +123,60 @@ def test_experiment_package_builds_and_runs_forward(module_path: str, test_works
 def test_experiment_package_owns_its_data_pipeline(module_path: str) -> None:
     experiment = importlib.import_module(module_path).EXPERIMENT
 
-    assert experiment.build_data_pipeline.__module__ == f"{module_path}.data"
+    assert experiment.build_data_pipeline is None
+
+
+@pytest.mark.parametrize(
+    ("module_path", "uses_default_optimizer"),
+    [
+        ("config.gen.baseline", True),
+        ("config.gen.grok", True),
+        ("config.gen.ctr_baseline", True),
+        ("config.gen.deepcontextnet", True),
+        ("config.gen.interformer", True),
+        ("config.gen.onetrans", True),
+        ("config.gen.hyformer", True),
+        ("config.gen.unirec", False),
+        ("config.gen.uniscaleformer", True),
+        ("config.gen.oo", True),
+    ],
+)
+def test_experiment_package_uses_framework_defaults_when_builder_is_omitted(
+    module_path: str,
+    uses_default_optimizer: bool,
+) -> None:
+    experiment = importlib.import_module(module_path).EXPERIMENT
+    builders = resolve_experiment_builders(experiment)
+
+    assert builders.build_loss_stack.__module__ == "taac2026.infrastructure.nn.defaults"
+    if uses_default_optimizer:
+        assert builders.build_optimizer_component.__module__ == "taac2026.infrastructure.nn.defaults"
+    else:
+        assert builders.build_optimizer_component.__module__ == f"{module_path}.utils"
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "config.gen.baseline",
+        "config.gen.grok",
+        "config.gen.ctr_baseline",
+        "config.gen.deepcontextnet",
+        "config.gen.interformer",
+        "config.gen.onetrans",
+        "config.gen.hyformer",
+        "config.gen.unirec",
+        "config.gen.uniscaleformer",
+        "config.gen.oo",
+    ],
+)
+def test_experiment_package_exposes_feature_schema(module_path: str) -> None:
+    experiment = importlib.import_module(module_path).EXPERIMENT
+
+    assert experiment.feature_schema is not None
+    assert experiment.feature_schema.dense_dim == experiment.data.dense_feature_dim
+    assert experiment.feature_schema.sequence_names == experiment.data.sequence_names
+    assert "candidate_tokens" in experiment.feature_schema.table_names
 
 
 @pytest.mark.parametrize(
@@ -132,3 +242,27 @@ def test_resolve_parquet_dataset_path_falls_back_to_recursive_directory_search(t
     candidate.touch()
 
     assert resolve_parquet_dataset_path(dataset_root) == candidate
+
+
+def test_iter_dataset_rows_missing_cache_root_downloads_from_hf(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    dataset_root = tmp_path / "data" / "datasets--TAAC2026--data_sample_1000"
+    captured: dict[str, str | None] = {}
+
+    def fake_load_dataset(path: str, *, split: str, cache_dir: str | None = None, data_files: str | None = None):
+        captured["path"] = path
+        captured["split"] = split
+        captured["cache_dir"] = cache_dir
+        captured["data_files"] = data_files
+        return [{"ok": True}]
+
+    monkeypatch.setattr("datasets.load_dataset", fake_load_dataset)
+
+    rows = iter_dataset_rows(dataset_root)
+
+    assert rows == [{"ok": True}]
+    assert captured == {
+        "path": "TAAC2026/data_sample_1000",
+        "split": "train",
+        "cache_dir": str(dataset_root.parent),
+        "data_files": None,
+    }

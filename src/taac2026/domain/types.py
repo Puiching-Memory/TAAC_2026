@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils import _pytree
+
+if TYPE_CHECKING:
+    from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
+else:
+    KeyedJaggedTensor = Any
 
 
 @dataclass(slots=True)
@@ -32,6 +38,8 @@ class BatchTensors:
     history_action_tokens: torch.Tensor | None = None
     history_time_gap: torch.Tensor | None = None
     history_group_ids: torch.Tensor | None = None
+    sparse_features: KeyedJaggedTensor | None = None
+    sequence_features: KeyedJaggedTensor | None = None
 
     @property
     def batch_size(self) -> int:
@@ -40,6 +48,9 @@ class BatchTensors:
     def to(self, device: torch.device | str) -> "BatchTensors":
         def move_optional(tensor: torch.Tensor | None) -> torch.Tensor | None:
             return None if tensor is None else tensor.to(device)
+
+        def move_optional_feature(feature: Any | None) -> Any | None:
+            return None if feature is None else feature.to(device)
 
         return BatchTensors(
             candidate_tokens=self.candidate_tokens.to(device),
@@ -66,21 +77,45 @@ class BatchTensors:
             history_action_tokens=move_optional(self.history_action_tokens),
             history_time_gap=move_optional(self.history_time_gap),
             history_group_ids=move_optional(self.history_group_ids),
+            sparse_features=move_optional_feature(self.sparse_features),
+            sequence_features=move_optional_feature(self.sequence_features),
         )
 
 
 _BATCH_TENSOR_FIELD_NAMES = tuple(field.name for field in fields(BatchTensors))
 
 
-def _flatten_batch_tensors(batch: BatchTensors) -> tuple[list[torch.Tensor | None], tuple[str, ...]]:
+def _flatten_batch_tensors(batch: BatchTensors) -> tuple[list[object], tuple[str, ...]]:
     return [getattr(batch, name) for name in _BATCH_TENSOR_FIELD_NAMES], _BATCH_TENSOR_FIELD_NAMES
 
 
-def _unflatten_batch_tensors(values: list[torch.Tensor | None], context: tuple[str, ...]) -> BatchTensors:
+def _flatten_batch_tensors_with_keys(
+    batch: BatchTensors,
+) -> tuple[list[tuple[_pytree.KeyEntry, object]], tuple[str, ...]]:
+    return [(_pytree.GetAttrKey(name), getattr(batch, name)) for name in _BATCH_TENSOR_FIELD_NAMES], _BATCH_TENSOR_FIELD_NAMES
+
+
+def _dump_batch_tensors_context(context: tuple[str, ...]) -> list[str]:
+    return list(context)
+
+
+def _load_batch_tensors_context(context: list[str]) -> tuple[str, ...]:
+    return tuple(context)
+
+
+def _unflatten_batch_tensors(values: list[object], context: tuple[str, ...]) -> BatchTensors:
     return BatchTensors(**dict(zip(context, values, strict=True)))
 
 
-_pytree.register_pytree_node(BatchTensors, _flatten_batch_tensors, _unflatten_batch_tensors)
+_pytree.register_pytree_node(
+    BatchTensors,
+    _flatten_batch_tensors,
+    _unflatten_batch_tensors,
+    serialized_type_name="taac2026.domain.types.BatchTensors",
+    to_dumpable_context=_dump_batch_tensors_context,
+    from_dumpable_context=_load_batch_tensors_context,
+    flatten_with_keys_fn=_flatten_batch_tensors_with_keys,
+)
 
 
 @dataclass(slots=True)

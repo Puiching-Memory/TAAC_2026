@@ -1,5 +1,6 @@
 from .config import DataConfig, ModelConfig, SearchConfig, TrainConfig
 from .experiment import ExperimentSpec
+from .features import FeatureSchema, FeatureTableSpec
 from .metrics import (
     binary_auc,
     binary_brier,
@@ -21,6 +22,8 @@ __all__ = [
     "DataConfig",
     "DataStats",
     "ExperimentSpec",
+    "FeatureSchema",
+    "FeatureTableSpec",
     "Layer",
     "LayerStack",
     "ModelConfig",

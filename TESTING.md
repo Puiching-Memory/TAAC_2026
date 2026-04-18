@@ -4,7 +4,7 @@
 
 测试套件位于 `tests/`，使用 [pytest](https://docs.pytest.org/) 运行。所有测试按文件名自动标记为 **unit**、**integration** 或 **gpu**——无需手写 `@pytest.mark`，由 `tests/conftest.py` 中的文件名集合统一管理。
 
-CI（`.github/workflows/ci.yml`）依次执行 unit → integration，合并 coverage 后强制通过门槛检查。
+CI（`.github/workflows/ci.yml`）现在拆分为 CPU unit/integration、独立 GPU job，以及最终 coverage 合并报告。
 
 ## 快速开始
 
@@ -81,13 +81,15 @@ uv run pytest tests/test_metrics.py tests/test_property_based.py -q
 
 ## CI 流程
 
-CI 在 `ubuntu-latest` + Python 3.13 上运行：
+CI 在 `ubuntu-latest` + Python 3.13 上运行 CPU 与 coverage 汇总，在自托管 GPU runner 上运行 CUDA 测试：
 
 1. `uv sync --locked` — 严格锁定环境
 2. `uv run python scripts/lint_torch.py` — torch 导入规范检查
-3. `coverage run -m pytest -m unit` — 单元测试 + 覆盖率采集
-4. `coverage run --append -m pytest -m integration` — 集成测试（追加覆盖率）
-5. `coverage report` — 门槛校验（< 70 % 失败）
-6. 上传 `coverage.xml` 为 artifact
+3. `coverage run --data-file=.coverage.cpu -m pytest -m unit` — CPU 单元测试 + 覆盖率采集
+4. `coverage run --data-file=.coverage.cpu --append -m pytest -m integration` — CPU 集成测试（追加覆盖率）
+5. `coverage run --data-file=.coverage.gpu -m pytest -m gpu` — GPU 集成测试（自托管 runner）
+6. `coverage combine .coverage.cpu .coverage.gpu` — 合并 CPU + GPU 覆盖率
+7. `coverage report` — 门槛校验（< 70 % 失败）
+8. 上传 `coverage.xml` 为 artifact
 
-GPU 测试不在常规 CI 中运行，使用 `scripts/run_gpu_tests.py` 在本地 CUDA 机器上手动执行。
+如果只在本地 CUDA 机器上复现实验，可继续使用 `scripts/run_gpu_tests.py`。

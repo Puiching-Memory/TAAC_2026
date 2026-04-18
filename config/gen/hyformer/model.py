@@ -6,19 +6,23 @@ import torch
 from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
+from taac2026.domain.features import build_default_feature_schema
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.heads import ClassificationHead
+from taac2026.infrastructure.nn.pooling import masked_mean
+from taac2026.infrastructure.nn.transformer import TaacCrossAttentionBlock, TaacTransformerBlock
 
 from .data import TIME_GAP_BUCKET_COUNT
-from .utils import masked_mean
 
 
-def masked_sequence_mean(sequence_states: torch.Tensor, sequence_mask: torch.Tensor) -> torch.Tensor:
-    weights = sequence_mask.unsqueeze(-1).float()
-    summed = (sequence_states * weights).sum(dim=2)
-    counts = weights.sum(dim=2).clamp_min(1.0)
-    return summed / counts
-
-
+SPARSE_TABLE_NAMES = (
+    "user_tokens",
+    "context_tokens",
+    "candidate_tokens",
+    "candidate_post_tokens",
+    "candidate_author_tokens",
+)
 class SemanticGroupedNSTokenizer(nn.Module):
     def __init__(self, dense_dim: int, hidden_dim: int, ns_token_count: int, dropout: float) -> None:
         super().__init__()
@@ -41,21 +45,14 @@ class SemanticGroupedNSTokenizer(nn.Module):
             )
         )
 
-    def forward(self, batch: BatchTensors, embed_tokens) -> torch.Tensor:
-        if batch.user_tokens is None or batch.user_mask is None:
-            raise RuntimeError("Batch is missing user token fields")
-        if batch.candidate_post_tokens is None or batch.candidate_post_mask is None:
-            raise RuntimeError("Batch is missing candidate post token fields")
-        if batch.candidate_author_tokens is None or batch.candidate_author_mask is None:
-            raise RuntimeError("Batch is missing candidate author token fields")
-
+    def forward(self, batch: BatchTensors, sparse_summaries: dict[str, torch.Tensor]) -> torch.Tensor:
         base_tokens = torch.stack(
             [
-                masked_mean(embed_tokens(batch.user_tokens), batch.user_mask),
-                masked_mean(embed_tokens(batch.context_tokens), batch.context_mask),
-                masked_mean(embed_tokens(batch.candidate_tokens), batch.candidate_mask),
-                masked_mean(embed_tokens(batch.candidate_post_tokens), batch.candidate_post_mask),
-                masked_mean(embed_tokens(batch.candidate_author_tokens), batch.candidate_author_mask),
+                sparse_summaries["user_tokens"],
+                sparse_summaries["context_tokens"],
+                sparse_summaries["candidate_tokens"],
+                sparse_summaries["candidate_post_tokens"],
+                sparse_summaries["candidate_author_tokens"],
             ],
             dim=1,
         )
@@ -154,35 +151,19 @@ class MultiSequenceEventTokenizer(nn.Module):
 class SequenceEncoderLayer(nn.Module):
     def __init__(self, hidden_dim: int, num_heads: int, ffn_dim: int, dropout: float, attention_dropout: float) -> None:
         super().__init__()
-        self.attention_norm = nn.LayerNorm(hidden_dim)
-        self.self_attention = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
+        self.block = TaacTransformerBlock(
+            hidden_dim=hidden_dim,
             num_heads=num_heads,
-            dropout=attention_dropout,
-            batch_first=True,
+            ffn_dim=ffn_dim,
+            dropout=dropout,
+            attention_dropout=attention_dropout,
+            norm_type="layernorm",
+            ffn_type="silu",
+            attention_type="standard",
         )
-        self.ffn_norm = nn.LayerNorm(hidden_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(hidden_dim, ffn_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(ffn_dim, hidden_dim),
-        )
-        self.dropout = nn.Dropout(dropout)
 
     def forward(self, sequence_states: torch.Tensor, sequence_mask: torch.Tensor) -> torch.Tensor:
-        normalized_states = self.attention_norm(sequence_states)
-        attention_output, _ = self.self_attention(
-            normalized_states,
-            normalized_states,
-            normalized_states,
-            key_padding_mask=~sequence_mask,
-            need_weights=False,
-        )
-        sequence_states = (sequence_states + self.dropout(attention_output)) * sequence_mask.unsqueeze(-1).float()
-        ffn_output = self.ffn(self.ffn_norm(sequence_states))
-        sequence_states = (sequence_states + self.dropout(ffn_output)) * sequence_mask.unsqueeze(-1).float()
-        return sequence_states
+        return self.block(sequence_states, sequence_mask)
 
 
 class QueryGenerator(nn.Module):
@@ -239,22 +220,15 @@ class QueryGenerator(nn.Module):
 class QueryDecodingBlock(nn.Module):
     def __init__(self, hidden_dim: int, num_heads: int, ffn_dim: int, dropout: float, attention_dropout: float) -> None:
         super().__init__()
-        self.query_norm = nn.LayerNorm(hidden_dim)
-        self.sequence_norm = nn.LayerNorm(hidden_dim)
-        self.cross_attention = nn.MultiheadAttention(
-            embed_dim=hidden_dim,
+        self.block = TaacCrossAttentionBlock(
+            hidden_dim=hidden_dim,
             num_heads=num_heads,
-            dropout=attention_dropout,
-            batch_first=True,
+            ffn_dim=ffn_dim,
+            dropout=dropout,
+            attention_dropout=attention_dropout,
+            norm_type="layernorm",
+            ffn_type="silu",
         )
-        self.ffn_norm = nn.LayerNorm(hidden_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(hidden_dim, ffn_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(ffn_dim, hidden_dim),
-        )
-        self.dropout = nn.Dropout(dropout)
 
     def forward(
         self,
@@ -262,18 +236,7 @@ class QueryDecodingBlock(nn.Module):
         sequence_states: torch.Tensor,
         sequence_mask: torch.Tensor,
     ) -> torch.Tensor:
-        normalized_queries = self.query_norm(query_states)
-        normalized_sequence = self.sequence_norm(sequence_states)
-        attention_output, _ = self.cross_attention(
-            normalized_queries,
-            normalized_sequence,
-            normalized_sequence,
-            key_padding_mask=~sequence_mask,
-            need_weights=False,
-        )
-        decoded_queries = query_states + self.dropout(attention_output)
-        decoded_queries = decoded_queries + self.dropout(self.ffn(self.ffn_norm(decoded_queries)))
-        return decoded_queries
+        return self.block(query_states, sequence_states, context_mask=sequence_mask)
 
 
 class QueryBoosting(nn.Module):
@@ -383,6 +346,10 @@ class HyFormerModel(nn.Module):
         self.total_token_count = self.query_count + self.ns_token_count
         self.hidden_dim = model_config.hidden_dim
         self.ffn_dim = int(model_config.hidden_dim * model_config.ffn_multiplier)
+        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
+            feature_schema=build_default_feature_schema(data_config, model_config),
+            table_names=SPARSE_TABLE_NAMES,
+        )
 
         self.token_embedding = nn.Embedding(
             num_embeddings=model_config.vocab_size,
@@ -430,24 +397,32 @@ class HyFormerModel(nn.Module):
         )
         head_hidden_dim = model_config.head_hidden_dim or model_config.hidden_dim * 4
         head_input_dim = self.total_token_count * model_config.hidden_dim
-        self.output_head = nn.Sequential(
-            nn.LayerNorm(head_input_dim),
-            nn.Linear(head_input_dim, head_hidden_dim),
-            nn.SiLU(),
-            nn.Dropout(model_config.dropout),
-            nn.Linear(head_hidden_dim, model_config.hidden_dim * 2),
-            nn.SiLU(),
-            nn.Dropout(model_config.dropout),
-            nn.Linear(model_config.hidden_dim * 2, 1),
+        self.output_head = ClassificationHead(
+            input_dim=head_input_dim,
+            hidden_dims=[head_hidden_dim, model_config.hidden_dim * 2],
+            activation="silu",
+            dropout=[model_config.dropout, model_config.dropout],
         )
 
     def embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
 
+    def _require_sparse_features(self, batch: BatchTensors):
+        if batch.sparse_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+        return batch.sparse_features
+
+    def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
+        pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
+        return {
+            name: self.token_projection(pooled_sparse[name])
+            for name in SPARSE_TABLE_NAMES
+        }
+
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        ns_tokens = self.ns_tokenizer(batch, self.embed_tokens)
+        ns_tokens = self.ns_tokenizer(batch, self._pooled_sparse_summaries(batch))
         sequence_states, sequence_mask = self.sequence_tokenizer(batch, self.embed_tokens)
-        sequence_pools = masked_sequence_mean(sequence_states, sequence_mask)
+        sequence_pools = masked_mean(sequence_states, sequence_mask, dim=2)
         query_states = self.query_generator(ns_tokens, sequence_pools)
 
         for layer in self.layers:

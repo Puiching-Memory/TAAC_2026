@@ -1,26 +1,28 @@
 from __future__ import annotations
 
-import math
-
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from taac2026.domain.config import DataConfig, ModelConfig
+from taac2026.domain.features import build_default_feature_schema
 from taac2026.domain.types import BatchTensors
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.heads import ClassificationHead
+from taac2026.infrastructure.nn.norms import RMSNorm
+from taac2026.infrastructure.nn.triton_attention import TritonAttention
 
 from .data import TIME_GAP_BUCKET_COUNT
 from .utils import masked_mean
 
 
-class RMSNorm(nn.Module):
-	def __init__(self, dim: int, eps: float = 1.0e-6) -> None:
-		super().__init__()
-		self.weight = nn.Parameter(torch.ones(dim))
-		self.eps = eps
-
-	def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-		return hidden_states * torch.rsqrt(hidden_states.pow(2).mean(dim=-1, keepdim=True) + self.eps) * self.weight
+SPARSE_TABLE_NAMES = (
+	"user_tokens",
+	"context_tokens",
+	"candidate_tokens",
+	"candidate_post_tokens",
+	"candidate_author_tokens",
+)
 
 
 class SwiGLU(nn.Module):
@@ -40,14 +42,7 @@ class SimpleMHA(nn.Module):
 		super().__init__()
 		if d_model % n_heads != 0:
 			raise ValueError("d_model must be divisible by n_heads")
-		self.d_model = d_model
-		self.n_heads = n_heads
-		self.head_dim = d_model // n_heads
-		self.q = nn.Linear(d_model, d_model)
-		self.k = nn.Linear(d_model, d_model)
-		self.v = nn.Linear(d_model, d_model)
-		self.o = nn.Linear(d_model, d_model)
-		self.dropout = nn.Dropout(dropout)
+		self.attention = TritonAttention(d_model, n_heads, dropout=0.0)
 
 	def forward(
 		self,
@@ -55,20 +50,15 @@ class SimpleMHA(nn.Module):
 		key_states: torch.Tensor,
 		value_states: torch.Tensor,
 		kv_mask: torch.Tensor | None = None,
+		query_mask: torch.Tensor | None = None,
 	) -> torch.Tensor:
-		batch_size, query_len, _ = query_states.shape
-		key_len = key_states.shape[1]
-
-		query_states = self.q(query_states).view(batch_size, query_len, self.n_heads, self.head_dim).transpose(1, 2)
-		key_states = self.k(key_states).view(batch_size, key_len, self.n_heads, self.head_dim).transpose(1, 2)
-		value_states = self.v(value_states).view(batch_size, key_len, self.n_heads, self.head_dim).transpose(1, 2)
-
-		score = torch.matmul(query_states, key_states.transpose(-2, -1)) / math.sqrt(self.head_dim)
-		if kv_mask is not None:
-			score = score.masked_fill(~kv_mask[:, None, None, :].bool(), -1.0e4)
-		attention = self.dropout(score.softmax(dim=-1))
-		output = torch.matmul(attention, value_states).transpose(1, 2).contiguous().view(batch_size, query_len, self.d_model)
-		return self.o(output)
+		return self.attention(
+			query_states,
+			key_states,
+			value_states,
+			key_mask=kv_mask,
+			query_mask=query_mask,
+		)
 
 
 class CrossAttentionBlock(nn.Module):
@@ -94,7 +84,7 @@ class SelfAttentionBlock(nn.Module):
 
 	def forward(self, hidden_states: torch.Tensor, token_mask: torch.Tensor | None = None) -> torch.Tensor:
 		normalized = self.norm(hidden_states)
-		return hidden_states + self.dropout(self.attn(normalized, normalized, normalized, token_mask))
+		return hidden_states + self.dropout(self.attn(normalized, normalized, normalized, token_mask, token_mask))
 
 
 class FeedForwardBlock(nn.Module):
@@ -175,6 +165,10 @@ class UniScaleFormerModel(nn.Module):
 		self.extra_static_count = max(0, model_config.segment_count - self.base_static_count)
 		self.static_token_count = self.base_static_count + self.extra_static_count
 		self.last_aux_similarity: torch.Tensor | None = None
+		self.sparse_embedding = TorchRecEmbeddingBagAdapter(
+			feature_schema=build_default_feature_schema(data_config, model_config),
+			table_names=SPARSE_TABLE_NAMES,
+		)
 
 		self.token_embedding = nn.Embedding(
 			num_embeddings=model_config.vocab_size,
@@ -250,12 +244,11 @@ class UniScaleFormerModel(nn.Module):
 		self.final_attn = SelfAttentionBlock(self.d_model, model_config.num_heads, model_config.dropout)
 		self.fm = FMHead()
 		head_hidden_dim = model_config.head_hidden_dim or self.d_model * 2
-		self.head = nn.Sequential(
-			nn.LayerNorm(self.d_model * 3 + 1),
-			nn.Linear(self.d_model * 3 + 1, head_hidden_dim),
-			nn.GELU(),
-			nn.Dropout(model_config.dropout),
-			nn.Linear(head_hidden_dim, 1),
+		self.head = ClassificationHead(
+			input_dim=self.d_model * 3 + 1,
+			hidden_dims=head_hidden_dim,
+			activation="gelu",
+			dropout=model_config.dropout,
 		)
 		self._init_weights()
 
@@ -275,8 +268,20 @@ class UniScaleFormerModel(nn.Module):
 			raise RuntimeError(f"Batch is missing required tensor: {name}")
 		return tensor
 
+	def _require_sparse_features(self, batch: BatchTensors):
+		if batch.sparse_features is None:
+			raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
+		return batch.sparse_features
+
 	def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
 		return self.token_projection(self.token_embedding(tokens))
+
+	def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
+		pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
+		return {
+			name: self.token_projection(pooled_sparse[name])
+			for name in SPARSE_TABLE_NAMES
+		}
 
 	def _embed_hashed_indices(self, indices: torch.Tensor) -> torch.Tensor:
 		vocab_limit = self.model_config.vocab_size - 1
@@ -284,31 +289,20 @@ class UniScaleFormerModel(nn.Module):
 		return self._embed_tokens(token_ids.unsqueeze(1)).squeeze(1)
 
 	def _build_static_tokens(self, batch: BatchTensors) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		user_tokens = self._require(batch.user_tokens, "user_tokens")
-		user_mask = self._require(batch.user_mask, "user_mask")
-		candidate_post_tokens = self._require(batch.candidate_post_tokens, "candidate_post_tokens")
-		candidate_post_mask = self._require(batch.candidate_post_mask, "candidate_post_mask")
-		candidate_author_tokens = self._require(batch.candidate_author_tokens, "candidate_author_tokens")
-		candidate_author_mask = self._require(batch.candidate_author_mask, "candidate_author_mask")
-
 		user_id_token = self._embed_hashed_indices(batch.user_indices)
 		item_id_token = self._embed_hashed_indices(batch.item_indices)
-		user_summary = masked_mean(self._embed_tokens(user_tokens), user_mask)
-		context_summary = masked_mean(self._embed_tokens(batch.context_tokens), batch.context_mask)
-		candidate_summary = masked_mean(self._embed_tokens(batch.candidate_tokens), batch.candidate_mask)
-		candidate_post_summary = masked_mean(self._embed_tokens(candidate_post_tokens), candidate_post_mask)
-		candidate_author_summary = masked_mean(self._embed_tokens(candidate_author_tokens), candidate_author_mask)
+		sparse_summaries = self._pooled_sparse_summaries(batch)
 		dense_summary = self.dense_projection(batch.dense_features)
 
 		static_tokens = torch.stack(
 			[
 				user_id_token,
 				item_id_token,
-				user_summary,
-				context_summary,
-				candidate_summary,
-				candidate_post_summary,
-				candidate_author_summary,
+				sparse_summaries["user_tokens"],
+				sparse_summaries["context_tokens"],
+				sparse_summaries["candidate_tokens"],
+				sparse_summaries["candidate_post_tokens"],
+				sparse_summaries["candidate_author_tokens"],
 				dense_summary,
 			],
 			dim=1,
