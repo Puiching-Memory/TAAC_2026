@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from config.gen.baseline.data import DENSE_FEATURE_DIM, load_dataloaders
+from config.baseline.data import DENSE_FEATURE_DIM, load_dataloaders
 from taac2026.infrastructure.io.files import stable_hash64
 from tests.support import TestWorkspace, build_edge_case_rows, create_test_workspace
 
@@ -51,10 +51,45 @@ def test_streaming_collate_batch_contract(test_workspace: TestWorkspace) -> None
     assert train_batch.candidate_author_mask is not None
     assert train_batch.candidate_post_mask.any().item()
     assert train_batch.candidate_author_mask.any().item()
+    assert train_batch.sparse_features is not None
+    assert train_batch.sequence_features is not None
     assert val_batch.labels.ndim == 1
     assert train_batch.user_indices.dtype == torch.long
     assert train_batch.item_logq.dtype == torch.float32
     assert torch.isfinite(train_batch.item_logq).all().item()
+
+    sparse_by_key = train_batch.sparse_features.to_dict()
+    sequence_by_key = train_batch.sequence_features.to_dict()
+
+    assert set(train_batch.sparse_features.keys()) == {
+        "user_tokens",
+        "context_tokens",
+        "candidate_tokens",
+        "candidate_post_tokens",
+        "candidate_author_tokens",
+    }
+    assert set(sequence_by_key) == {
+        "history_tokens",
+        "history_post_tokens",
+        "history_author_tokens",
+        "history_action_tokens",
+        "history_time_gap",
+        "history_group_ids",
+        *(f"sequence:{name}" for name in test_workspace.data_config.sequence_names),
+    }
+    assert sparse_by_key["user_tokens"].lengths().tolist() == train_batch.user_mask.sum(dim=1).to(torch.int32).tolist()
+    assert sparse_by_key["candidate_tokens"].lengths().tolist() == train_batch.candidate_mask.sum(dim=1).to(torch.int32).tolist()
+    assert sequence_by_key["history_tokens"].lengths().tolist() == train_batch.history_mask.sum(dim=1).to(torch.int32).tolist()
+
+    for sequence_index, sequence_name in enumerate(test_workspace.data_config.sequence_names):
+        expected_lengths = train_batch.sequence_mask[:, sequence_index, :].sum(dim=1).to(torch.int32)
+        assert sequence_by_key[f"sequence:{sequence_name}"].lengths().tolist() == expected_lengths.tolist()
+
+    moved_batch = train_batch.to("cpu")
+    assert moved_batch.sparse_features is not None
+    assert moved_batch.sequence_features is not None
+    assert moved_batch.sparse_features.values().device.type == "cpu"
+    assert moved_batch.sequence_features.values().device.type == "cpu"
 
 
 def test_train_split_item_logq_tracks_frequency(test_workspace: TestWorkspace) -> None:

@@ -29,7 +29,7 @@ def test_budget_status_tracks_parameter_and_latency_limits() -> None:
     status = budget_status(
         {"parameter_size_mb": 128.0},
         {"estimated_end_to_end_inference_seconds": 12.5},
-        load_experiment_package("config/gen/baseline").search,
+        load_experiment_package("config/baseline").search,
     )
 
     assert status["constraints_met"] is True

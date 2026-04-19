@@ -44,14 +44,14 @@ UniScaleFormer 内置 InterFormer / OneTrans / HyFormer / base 配置对比与 s
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/gen/uniscaleformer
-uv run taac-evaluate single --experiment config/gen/uniscaleformer
+uv run taac-train --experiment config/uniscaleformer
+uv run taac-evaluate single --experiment config/uniscaleformer
 ```
 
 ## 输出目录
 
 ```
-outputs/gen/uniscaleformer/
+outputs/config/uniscaleformer/
 ```
 
 ## 来源

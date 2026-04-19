@@ -33,14 +33,14 @@ icon: lucide/flask-conical
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/gen/grok
-uv run taac-evaluate single --experiment config/gen/grok
+uv run taac-train --experiment config/grok
+uv run taac-evaluate single --experiment config/grok
 ```
 
 ## 输出目录
 
 ```
-outputs/gen/grok/
+outputs/config/grok/
 ```
 
 ## 来源

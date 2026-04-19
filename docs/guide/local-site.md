@@ -16,10 +16,14 @@ icon: lucide/hard-drive-download
 部分图表数据不纳入版本控制，构建前需先生成：
 
 ```bash
+uv sync --locked --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu --no-install-package triton
 uv run taac-dataset-eda
 uv run taac-tech-timeline
+uv run taac-bench-report
 uv run --no-project --isolated --with zensical zensical build --clean
 ```
+
+如果你本地已经安装了完整训练环境，也可以继续直接使用 `uv sync --locked`。
 
 其中 `uv run taac-tech-timeline` 会在仓库根目录下写入本地缓存 `.cache/taac2026/.s2_cache.json`，该文件仅用于加速 Semantic Scholar 元数据抓取，不需要提交到 Git。
 
@@ -35,12 +39,12 @@ uv run --no-project --isolated --with zensical zensical serve
 
 ## 常见操作
 
-| 操作 | 说明 |
-| --- | --- |
-| 新增页面 | 在 `docs/` 下创建 `.md` 文件，然后在 `zensical.toml` 的 `nav` 中添加条目 |
-| 修改导航 | 编辑 `zensical.toml` 中的 `nav` 数组 |
-| 自定义样式 | 编辑 `docs/assets/stylesheets/extra.css` |
-| 数学公式 | 使用 `$...$`（行内）或 `$$...$$`（块级），由 MathJax 渲染 |
+| 操作       | 说明                                                                     |
+| ---------- | ------------------------------------------------------------------------ |
+| 新增页面   | 在 `docs/` 下创建 `.md` 文件，然后在 `zensical.toml` 的 `nav` 中添加条目 |
+| 修改导航   | 编辑 `zensical.toml` 中的 `nav` 数组                                     |
+| 自定义样式 | 编辑 `docs/assets/stylesheets/extra.css`                                 |
+| 数学公式   | 使用 `$...$`（行内）或 `$$...$$`（块级），由 MathJax 渲染                |
 
 ## 故障排查
 

@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 import torch
 from torch import nn
 
-from config.gen.baseline.data import load_dataloaders
+from config.baseline.data import load_dataloaders
 from taac2026.domain.config import DataConfig, ModelConfig, TrainConfig
 from taac2026.domain.experiment import ExperimentSpec
 from taac2026.domain.types import BatchTensors
@@ -239,7 +239,7 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from config.gen.baseline.data import load_dataloaders
+from config.baseline.data import load_dataloaders
 from taac2026.domain.config import DataConfig, ModelConfig, TrainConfig
 from taac2026.domain.experiment import ExperimentSpec
 from taac2026.domain.types import BatchTensors

@@ -57,7 +57,7 @@ def test_load_base_points_falls_back_to_experiments_doc(tmp_path: Path) -> None:
                 "",
                 "| 实验包 | 目录 | 模型 | AUC | PR AUC | Brier | Logloss | 延迟 | 约束 | TFLOPs | 模型大小(MB) |",
                 "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-                "| Baseline | config/gen/baseline | baseline | 0.812 | 0.000 | 0.000 | 0.000 | 0.000 | yes | 2.5 | 24.0 |",
+                "| Baseline | config/baseline | baseline | 0.812 | 0.000 | 0.000 | 0.000 | 0.000 | yes | 2.5 | 24.0 |",
             ]
         ),
         encoding="utf-8",
@@ -84,7 +84,7 @@ def test_plot_model_performance_merges_search_trials_and_writes_outputs(tmp_path
             ),
         )
 
-    search_root = tmp_path / "outputs" / "gen"
+    search_root = tmp_path / "outputs" / "config"
     _write_json(
         search_root / "baseline_optuna" / "trial_0000" / "summary.json",
         _summary_payload(
@@ -120,7 +120,7 @@ def test_plot_model_performance_merges_search_trials_and_writes_outputs(tmp_path
 
 def test_reporting_cli_main_uses_metric_specific_defaults(tmp_path: Path, monkeypatch) -> None:
     summary_root = tmp_path / "outputs" / "smoke"
-    search_root = tmp_path / "outputs" / "gen"
+    search_root = tmp_path / "outputs" / "config"
     experiments_doc = tmp_path / "docs" / "experiments.md"
     output_path = tmp_path / "figures" / "model_performance_vs_compute.png"
     captured: dict[str, object] = {}

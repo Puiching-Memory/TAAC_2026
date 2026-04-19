@@ -4,11 +4,13 @@ outputs/
 __pycache__/
 .pytest_cache/
 .hypothesis/
+.benchmarks/
 .coverage
 *.egg-info/
 site/
 .cache/
 *.echarts.json
+docs/assets/figures/benchmarks/benchmark_acceptance.json
 
 # TAAC2026 Symbiosis
-config/gen/symbiosis/
+config/symbiosis/

@@ -36,6 +36,7 @@ def apply_serialized_experiment(
     experiment.train = TrainConfig(**train_payload)
     experiment.search = SearchConfig(**dict(payload["search"]))
     experiment.switches = dict(payload.get("switches") or {})
+    experiment.refresh_feature_schema()
     return experiment
 
 

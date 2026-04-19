@@ -58,13 +58,13 @@ uv python install 3.13
 uv sync --locked
 
 # 训练 baseline
-uv run taac-train --experiment config/gen/baseline
+uv run taac-train --experiment config/baseline
 
 # 评估
-uv run taac-evaluate single --experiment config/gen/baseline
+uv run taac-evaluate single --experiment config/baseline
 
 # 超参数搜索
-uv run taac-search --experiment config/gen/baseline --trials 20
+uv run taac-search --experiment config/baseline --trials 20
 ```
 
 → 详细步骤见 [快速开始](getting-started.md)

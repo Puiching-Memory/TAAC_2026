@@ -108,7 +108,7 @@ def test_build_training_external_profiler_plan_contains_uv_commands(monkeypatch:
     plan = build_training_external_profiler_plan(
         device="cuda",
         output_dir=tmp_path,
-        experiment_path="config/gen/baseline",
+        experiment_path="config/baseline",
     )
 
     assert plan["schema_version"] == 1
@@ -131,7 +131,7 @@ def test_build_training_external_profiler_plan_contains_uv_commands(monkeypatch:
         "none",
         "-o",
     ]
-    assert "uv run taac-train --experiment config/gen/baseline" in plan["tools"]["ncu"]["suggested_command_string"]
+    assert "uv run taac-train --experiment config/baseline" in plan["tools"]["ncu"]["suggested_command_string"]
 
 
 def test_build_training_external_profiler_plan_includes_runtime_flags(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -147,7 +147,7 @@ def test_build_training_external_profiler_plan_includes_runtime_flags(monkeypatc
     plan = build_training_external_profiler_plan(
         device="cuda",
         output_dir=tmp_path,
-        experiment_path="config/gen/baseline",
+        experiment_path="config/baseline",
         train_config=TrainConfig(enable_torch_compile=True, torch_compile_backend="inductor", enable_amp=True, amp_dtype="bfloat16"),
     )
 
@@ -172,7 +172,7 @@ def test_build_evaluation_external_profiler_plan_includes_runtime_flags(monkeypa
     plan = build_evaluation_external_profiler_plan(
         device="cuda",
         output_dir=tmp_path,
-        experiment_path="config/gen/baseline",
+        experiment_path="config/baseline",
         checkpoint_path=tmp_path / "best.pt",
         output_path=tmp_path / "evaluation.json",
         run_dir=tmp_path / "run",

@@ -49,26 +49,12 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install project dependencies
-        run: uv sync --locked
-
       - name: Restore EDA figures cache
         id: cache-eda-figures
         uses: actions/cache/restore@v5
         with:
           path: docs/assets/figures/eda
           key: ${{ runner.os }}-docs-eda-${{ hashFiles('pyproject.toml', 'uv.lock', 'src/taac2026/application/reporting/eda_cli.py', 'src/taac2026/domain/metrics.py', 'src/taac2026/infrastructure/io/datasets.py', 'src/taac2026/reporting/dataset_eda.py') }}
-
-      - name: Generate EDA figures
-        if: steps.cache-eda-figures.outputs.cache-hit != 'true'
-        run: uv run taac-dataset-eda
-
-      - name: Save EDA figures cache
-        if: steps.cache-eda-figures.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: docs/assets/figures/eda
-          key: ${{ steps.cache-eda-figures.outputs.cache-primary-key }}
 
       - name: Restore tech timeline cache
         id: cache-tech-timeline
@@ -80,6 +66,41 @@ jobs:
           key: ${{ runner.os }}-docs-tech-timeline-${{ hashFiles('pyproject.toml', 'uv.lock', 'src/taac2026/application/reporting/timeline_cli.py', 'src/taac2026/reporting/tech_timeline.py') }}
           restore-keys: |
             ${{ runner.os }}-docs-tech-timeline-
+
+      - name: Restore benchmark charts cache
+        id: cache-benchmark-charts
+        uses: actions/cache/restore@v5
+        with:
+          path: docs/assets/figures/benchmarks
+          key: ${{ runner.os }}-docs-bench-${{ hashFiles('src/taac2026/reporting/benchmark_charts.py', 'src/taac2026/application/reporting/bench_cli.py', 'outputs/performance/**', 'benchmark-result.json') }}
+          restore-keys: |
+            ${{ runner.os }}-docs-bench-
+
+      - name: Check if artifact generation is needed
+        id: generation-check
+        run: |
+          if [[ "${{ steps.cache-eda-figures.outputs.cache-hit }}" != "true" ]] || \
+             [[ "${{ steps.cache-tech-timeline.outputs.cache-hit }}" != "true" ]] || \
+             [[ "${{ steps.cache-benchmark-charts.outputs.cache-hit }}" != "true" ]]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install project dependencies
+        if: steps.generation-check.outputs.needed == 'true'
+        run: uv sync --locked --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu
+
+      - name: Generate EDA figures
+        if: steps.cache-eda-figures.outputs.cache-hit != 'true'
+        run: uv run taac-dataset-eda
+
+      - name: Save EDA figures cache
+        if: steps.cache-eda-figures.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: docs/assets/figures/eda
+          key: ${{ steps.cache-eda-figures.outputs.cache-primary-key }}
 
       - name: Generate tech timeline
         if: steps.cache-tech-timeline.outputs.cache-hit != 'true'
@@ -95,6 +116,17 @@ jobs:
             .cache/taac2026
             docs/assets/figures/papers/tech-timeline.echarts.json
           key: ${{ steps.cache-tech-timeline.outputs.cache-primary-key }}
+
+      - name: Generate benchmark charts
+        if: steps.cache-benchmark-charts.outputs.cache-hit != 'true'
+        run: uv run taac-bench-report
+
+      - name: Save benchmark charts cache
+        if: steps.cache-benchmark-charts.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: docs/assets/figures/benchmarks
+          key: ${{ steps.cache-benchmark-charts.outputs.cache-primary-key }}
 
       - name: Build Zensical site
         run: uv run --no-project --isolated --with zensical zensical build --clean

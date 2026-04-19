@@ -12,6 +12,7 @@ icon: lucide/chart-column
 uv run taac-dataset-eda                            # 默认 sample 数据集
 uv run taac-dataset-eda --dataset path/to/data     # 自定义数据路径
 uv run taac-dataset-eda --json-path figures/eda/stats.json  # 同时输出 JSON
+uv run taac-bench-report                           # 生成性能基准图表 JSON
 ```
 
 ## 文档索引
@@ -19,6 +20,7 @@ uv run taac-dataset-eda --json-path figures/eda/stats.json  # 同时输出 JSON
 | 文档                                 | 说明                                           |
 | ------------------------------------ | ---------------------------------------------- |
 | [数据集 EDA 报告](dataset-eda.md)    | 本届数据集的自动化分析报告（含图表）           |
+| [性能基准](benchmarks.md)            | benchmark JSON 到 ECharts 图表的自动化汇总页   |
 | [评估指标分析](evaluation.md)        | 评估协议解读与指标优化方向                     |
 | [TAAC 2025 论文洞察](taac2025-insights.md) | TAAC 2025 论文关键经验提炼 |
 

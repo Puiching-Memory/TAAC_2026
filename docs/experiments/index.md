@@ -6,7 +6,7 @@ icon: lucide/folder-open
 
 ## 什么是实验包
 
-实验包是 `config/gen/<name>/` 下的一个 Python 目录包，包含数据管道、模型架构和训练工具的完整实现。每个包导出一个 `EXPERIMENT` 对象，框架通过它驱动训练、评估和搜索。
+实验包是 `config/<name>/` 下的一个 Python 目录包，包含数据管道、模型架构和训练工具的完整实现。每个包导出一个 `EXPERIMENT` 对象，框架通过它驱动训练、评估和搜索。
 
 → 契约详情见 [架构与概念](../architecture.md)
 
@@ -71,7 +71,7 @@ icon: lucide/folder-open
 
 - [**InterFormer**](interformer.md) — 行为感知交互块，个性化 FFN（CIKM 2025）
 - [**HyFormer**](hyformer.md) — 多序列分支 + Query Decode/Boost 架构
-- [**DeepContextNet**](deepcontextnet.md) — 上下文感知深度建模，HSTU 风格
+- [**DeepContextNet**](deepcontextnet.md) — 上下文感知深度建模，标准 Transformer 风格
 
 ### 多阶段融合方向
 
@@ -82,11 +82,11 @@ icon: lucide/folder-open
 
 ```bash
 # 训练
-uv run taac-train --experiment config/gen/<name>
+uv run taac-train --experiment config/<name>
 
 # 评估
-uv run taac-evaluate single --experiment config/gen/<name>
+uv run taac-evaluate single --experiment config/<name>
 
 # 搜索
-uv run taac-search --experiment config/gen/<name> --trials 20
+uv run taac-search --experiment config/<name> --trials 20
 ```

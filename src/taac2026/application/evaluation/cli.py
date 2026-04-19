@@ -36,6 +36,7 @@ def _print_batch_table(records: list[dict[str, Any]]) -> None:
     table = Table(title="taac-evaluate batch", box=box.SIMPLE_HEAVY, header_style="bold cyan")
     table.add_column("Rank", justify="right", style="cyan", no_wrap=True)
     table.add_column("Experiment", style="white")
+    table.add_column("Quantization", justify="center")
     table.add_column("AUC", justify="right")
     table.add_column("PR AUC", justify="right")
     table.add_column("Latency ms/sample", justify="right")
@@ -43,6 +44,7 @@ def _print_batch_table(records: list[dict[str, Any]]) -> None:
         table.add_row(
             str(index),
             str(record.get("experiment_path") or record.get("experiment") or record.get("model_name")),
+            str(record.get("quantization", {}).get("mode", "none")),
             f"{float(record.get('metrics', {}).get('auc', record.get('auc', 0.0))):.6f}",
             f"{float(record.get('metrics', {}).get('pr_auc', record.get('pr_auc', 0.0))):.6f}",
             f"{float(record.get('mean_latency_ms_per_sample', 0.0)):.4f}",
@@ -64,6 +66,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     single_parser.add_argument("--compile-mode")
     single_parser.add_argument("--amp", action="store_true")
     single_parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16")
+    single_parser.add_argument("--quantize", choices=("none", "int8"), default="none")
+    single_parser.add_argument("--export-mode", choices=("none", "torch-export"), default="none")
+    single_parser.add_argument("--export-path")
 
     batch_parser = subparsers.add_parser("batch")
     batch_parser.add_argument("--experiment-paths", nargs="+", required=True)
@@ -72,6 +77,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     batch_parser.add_argument("--compile-mode")
     batch_parser.add_argument("--amp", action="store_true")
     batch_parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16")
+    batch_parser.add_argument("--quantize", choices=("none", "int8"), default="none")
+    batch_parser.add_argument("--export-mode", choices=("none", "torch-export"), default="none")
 
     return parser.parse_args(argv)
 
@@ -92,6 +99,9 @@ def main(argv: list[str] | None = None) -> int:
             checkpoint_path=checkpoint,
             output_path=args.output_path,
             experiment=experiment,
+            quantization_mode=args.quantize,
+            export_mode=args.export_mode,
+            export_path=args.export_path,
         )
         print_summary_table(
             "taac-evaluate single",
@@ -100,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
                 ("experiment_path", report["experiment_path"]),
                 ("checkpoint_path", report["checkpoint_path"]),
                 ("device", report["device"]),
+                ("quantization", report["quantization"]["mode"]),
+                ("export", report["export"]["mode"]),
+                ("export_artifact", report["export"].get("artifact_path") or "-"),
                 ("loss", f"{float(report['loss']):.6f}"),
                 ("auc", f"{float(report['metrics'].get('auc', 0.0)):.6f}"),
                 ("pr_auc", f"{float(report['metrics'].get('pr_auc', 0.0)):.6f}"),
@@ -120,7 +133,14 @@ def main(argv: list[str] | None = None) -> int:
         for experiment_path in args.experiment_paths:
             experiment = load_experiment_package(experiment_path)
             _apply_runtime_optimization_args(experiment, args)
-            reports.append(evaluate_checkpoint(experiment_path=experiment_path, experiment=experiment))
+            reports.append(
+                evaluate_checkpoint(
+                    experiment_path=experiment_path,
+                    experiment=experiment,
+                    quantization_mode=args.quantize,
+                    export_mode=args.export_mode,
+                )
+            )
             if progress_bar is not None:
                 progress_bar.update()
                 progress_bar.set_postfix({"last": experiment_path}, refresh=False)

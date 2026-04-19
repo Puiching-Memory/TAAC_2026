@@ -65,7 +65,7 @@ def test_parse_train_args_hypothesis_preserves_runtime_flags(
     amp_enabled: bool,
     amp_dtype: str,
 ) -> None:
-    argv = ["--experiment", "config/gen/baseline"]
+    argv = ["--experiment", "config/baseline"]
     if compile_enabled:
         argv.append("--compile")
     if compile_backend is not None:

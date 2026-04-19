@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   test:
-    name: Unit, Integration, and Coverage
+    name: CPU Unit & Integration
     runs-on: ubuntu-latest
 
     steps:
@@ -54,10 +54,87 @@ jobs:
         run: uv run python scripts/lint_torch.py
 
       - name: Run unit tests with coverage
-        run: uv run --with coverage coverage run -m pytest -m unit -v
+        run: uv run --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v
 
       - name: Run integration tests with coverage
-        run: uv run --with coverage coverage run --append -m pytest -m integration -v
+        run: uv run --with coverage coverage run --data-file=.coverage.cpu --append -m pytest -m integration -v
+
+      - name: Upload CPU coverage data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-cpu-data
+          path: .coverage.cpu
+
+  gpu-test:
+    name: GPU Integration & Triton Kernels
+    runs-on: [self-hosted, gpu, linux]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Sync project environment
+        run: uv sync --locked
+
+      - name: Run GPU tests with coverage
+        run: uv run --with coverage coverage run --data-file=.coverage.gpu -m pytest -m gpu -v
+
+      - name: Upload GPU coverage data
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-gpu-data
+          path: .coverage.gpu
+
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs:
+      - test
+      - gpu-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Download CPU coverage data
+        uses: actions/download-artifact@v5
+        with:
+          name: coverage-cpu-data
+          path: .coverage-artifacts/cpu
+
+      - name: Download GPU coverage data
+        uses: actions/download-artifact@v5
+        with:
+          name: coverage-gpu-data
+          path: .coverage-artifacts/gpu
+
+      - name: Combine coverage data
+        run: |
+          cp .coverage-artifacts/cpu/.coverage.cpu .
+          cp .coverage-artifacts/gpu/.coverage.gpu .
+          uv run --with coverage coverage combine .coverage.cpu .coverage.gpu
 
       - name: Enforce coverage gate
         run: uv run --with coverage coverage report
@@ -72,3 +149,63 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: [self-hosted, gpu, linux]
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Sync project environment
+        run: uv sync --locked
+
+      - name: Run benchmark suite
+        run: |
+          rm -rf .benchmarks outputs/performance benchmark-result.json
+          uv run pytest tests/benchmarks -o python_files='bench_*.py' --benchmark-json=benchmark-result.json -v
+
+      - name: Store benchmark result
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: pytest
+          output-file-path: benchmark-result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: "115%"
+          comment-on-alert: true
+          fail-on-alert: true
+
+      - name: Generate benchmark charts
+        run: uv run taac-bench-report --input benchmark-result.json
+
+      - name: Upload benchmark raw results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-raw-results
+          path: |
+            benchmark-result.json
+            outputs/performance
+
+      - name: Upload benchmark charts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-charts
+          path: docs/assets/figures/benchmarks

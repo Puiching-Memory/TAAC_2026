@@ -70,6 +70,19 @@ def _resolve_from_huggingface_cache_root(cache_root: Path) -> Path | None:
     return _resolve_from_snapshot_container(snapshots_dir)
 
 
+def _infer_hf_dataset_name_from_cache_root(dataset_path: Path) -> tuple[str, str] | None:
+    name = dataset_path.name
+    if not name.startswith("datasets--"):
+        return None
+    payload = name.removeprefix("datasets--")
+    if "--" not in payload:
+        return None
+    owner, repo_name = payload.split("--", 1)
+    if not owner or not repo_name:
+        return None
+    return f"{owner}/{repo_name}", str(dataset_path.parent)
+
+
 def resolve_parquet_dataset_path(dataset_path: str | Path) -> Path:
     path = Path(dataset_path).expanduser()
     if path.is_file():
@@ -106,6 +119,11 @@ def iter_dataset_rows(dataset_path: str | Path) -> Iterable[dict[str, Any]]:
     if path.is_dir():
         resolved = resolve_parquet_dataset_path(dataset_path)
         return load_dataset("parquet", data_files=str(resolved), split="train")
+
+    inferred_dataset = _infer_hf_dataset_name_from_cache_root(path)
+    if inferred_dataset is not None:
+        dataset_name, cache_dir = inferred_dataset
+        return load_dataset(dataset_name, split="train", cache_dir=cache_dir)
 
     return load_dataset(str(dataset_path), split="train")
 

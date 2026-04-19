@@ -42,14 +42,14 @@ InterFormer 提出了行为感知交互块（Behavior-Aware Interaction Block）
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/gen/interformer
-uv run taac-evaluate single --experiment config/gen/interformer
+uv run taac-train --experiment config/interformer
+uv run taac-evaluate single --experiment config/interformer
 ```
 
 ## 输出目录
 
 ```
-outputs/gen/interformer/
+outputs/config/interformer/
 ```
 
 ## 来源

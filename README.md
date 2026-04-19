@@ -19,7 +19,7 @@
 <p align="center">
   <a href="https://algo.qq.com/#intro">Competition</a> ·
   <a href="docs/getting-started.md">Quick Start</a> ·
-  <a href="docs/experiments.md">Experiments</a> ·
+  <a href="docs/experiments/index.md">Experiments</a> ·
   <a href="docs/index.md">Docs</a>
 </p>
 
@@ -31,8 +31,7 @@
 > [!IMPORTANT]
 > 本项目会继续维护，但仍有几条边界需要提前说明：
 > 1. 我们无法保证 API 长期稳定。
-> 2. 我们可能会按需要整理或压缩 commit 历史。(预定在比赛正式开始后进行一次)
-> 3. 各子模型的研究与复现状态并不等于 100% 官方还原。
+> 2. 各子模型的研究与复现状态并不等于 100% 官方还原。
 >
 > 当前仓库更擅长的事情是：
 > 1. 提供开箱可用的训练与评估框架。
@@ -58,7 +57,7 @@
 我们的目标很简单：在一套统一的 parquet batch 上，能快速接进来、跑起来、评估掉、还有回归保障。
 
 1. `src/taac2026`：共享底座，提供 FolderExperiment 加载、训练入口、评估入口、基础指标，以及 checkpoint / summary 的读写能力。
-2. `config/gen/<name>`：目录式实验包。每个包自己管理 `data.py`、`model.py`、`utils.py`、`__init__.py`，配套说明统一收口到 `docs/packages/<name>.md`，并直接导出 `EXPERIMENT`。
+2. `config/<name>`：目录式实验包。每个包自己管理 `data.py`、`model.py`、`utils.py`、`__init__.py`，配套说明统一收口到 `docs/experiments/<name>.md`，并直接导出 `EXPERIMENT`。
 
 ## 快速开始
 
@@ -67,19 +66,21 @@ uv python install 3.13
 uv sync --locked
 
 # 训练 starter baseline
-uv run taac-train --experiment config/gen/baseline
+uv run taac-train --experiment config/baseline
 
 # 用 optuna 搜索 baseline，默认会按当前可见 GPU 空闲显存自动并行派发 trial
 # 默认约束仍然是参数量 <= 3 GiB、验证集端到端推理总时长 <= 180 秒
-uv run taac-search --experiment config/gen/baseline --trials 20
+uv run taac-search --experiment config/baseline --trials 20
 
 # 评估默认输出目录中的 best.pt；single 模式始终只评估一个实验/一个 checkpoint
-uv run taac-evaluate single --experiment config/gen/baseline
+uv run taac-evaluate single --experiment config/baseline
+```
 
 仓库在 `pyproject.toml` 里固定了 `uv` 的 canonical 默认索引，用来保证 `uv.lock` 在本机和 CI 间保持一致。
 如果你的机器全局把 `uv` 换到国内镜像，普通 `uv sync --locked` 仍会按项目配置工作；不要再额外传 `--default-index` 或 `--index-url` 指向镜像，否则 `uv` 会判定 `uv.lock` 需要更新。
 如果只是想加速下载，优先使用系统代理、透明代理或企业缓存代理；如果你确实临时用镜像做过一次重锁，提交前请执行 `uv lock --default-index https://pypi.org/simple --python 3.13` 把锁文件归一回仓库基线。
 
+```bash
 # 跑完整训练栈回归
 uv run pytest tests -q
 ```
@@ -114,18 +115,18 @@ uv run taac-clean-github-logs --repo Puiching-Memory/TAAC_2026 --pages-only --ex
 
 | 实验包         | 目录                                                   | 公开来源                                                                                                                                      | 默认输出目录                 | 可复核状态                         |
 | -------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------- |
-| Baseline       | [config/gen/baseline](config/gen/baseline)             | 本仓库维护的 starter/reference package，强调可扩展性、注释与二次开发体验                                                                     | `outputs/gen/baseline`       | 可直接运行，待新一轮 smoke 记录    |
-| Grok           | [config/gen/grok](config/gen/grok)                     | 从旧 `baseline` 中拆分出来的本地 grok 方案                                                                                                   | `outputs/gen/grok`           | 历史产物仍保留在 legacy baseline 路径 |
-| CTR Baseline   | [config/gen/ctr_baseline](config/gen/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       | `outputs/gen/ctr_baseline`   | forward regression + smoke summary |
-| DeepContextNet | [config/gen/deepcontextnet](config/gen/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) | `outputs/gen/deepcontextnet` | forward regression + smoke summary |
-| InterFormer    | [config/gen/interformer](config/gen/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         | `outputs/gen/interformer`    | forward regression + smoke summary |
-| OneTrans       | [config/gen/onetrans](config/gen/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            | `outputs/gen/onetrans`       | forward regression + smoke summary |
-| HyFormer       | [config/gen/hyformer](config/gen/hyformer)             | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            | `outputs/gen/hyformer`       | forward regression + smoke summary |
-| UniRec         | [config/gen/unirec](config/gen/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     | `outputs/gen/unirec`         | forward regression + smoke summary |
-| UniScaleFormer | [config/gen/uniscaleformer](config/gen/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             | `outputs/gen/uniscaleformer` | forward regression + smoke summary |
-| O_o            | [config/gen/oo](config/gen/oo)                         | [salmon1802/O_o](https://github.com/salmon1802/O_o)                                                                                           | `outputs/gen/oo`             | forward regression + smoke summary |
+| Baseline       | [config/baseline](config/baseline)                     | 本仓库维护的 starter/reference package，强调可扩展性、注释与二次开发体验                                                                     | `outputs/config/baseline`    | 可直接运行，待新一轮 smoke 记录    |
+| Grok           | [config/grok](config/grok)                             | 从旧 `baseline` 中拆分出来的本地 grok 方案                                                                                                   | `outputs/config/grok`        | 历史产物仍保留在 legacy baseline 路径 |
+| CTR Baseline   | [config/ctr_baseline](config/ctr_baseline)             | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       | `outputs/config/ctr_baseline` | forward regression + smoke summary |
+| DeepContextNet | [config/deepcontextnet](config/deepcontextnet)         | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) | `outputs/config/deepcontextnet` | forward regression + smoke summary |
+| InterFormer    | [config/interformer](config/interformer)               | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         | `outputs/config/interformer` | forward regression + smoke summary |
+| OneTrans       | [config/onetrans](config/onetrans)                     | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            | `outputs/config/onetrans`    | forward regression + smoke summary |
+| HyFormer       | [config/hyformer](config/hyformer)                     | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            | `outputs/config/hyformer`    | forward regression + smoke summary |
+| UniRec         | [config/unirec](config/unirec)                         | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     | `outputs/config/unirec`      | forward regression + smoke summary |
+| UniScaleFormer | [config/uniscaleformer](config/uniscaleformer)         | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             | `outputs/config/uniscaleformer` | forward regression + smoke summary |
+| O_o            | [config/oo](config/oo)                                 | [salmon1802/O_o](https://github.com/salmon1802/O_o)                                                                                           | `outputs/config/oo`          | forward regression + smoke summary |
 
-更详细的训练命令、输出文件说明、当前 smoke 记录和各实验包说明，可以看 [docs/dev.md](docs/dev.md)、[docs/experiments.md](docs/experiments.md) 和 [docs/packages/index.md](docs/packages/index.md)。
+更详细的训练命令、输出文件说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。
 
 ------
 

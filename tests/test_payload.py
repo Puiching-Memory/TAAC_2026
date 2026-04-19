@@ -17,6 +17,7 @@ def test_workspace(tmp_path: Path) -> TestWorkspace:
 def test_payload_round_trip_restores_sequence_names_and_null_switches(test_workspace: TestWorkspace) -> None:
     experiment = load_experiment_package(test_workspace.write_experiment_package())
     experiment.data.sequence_names = ("action_seq", "bonus_seq")
+    experiment.refresh_feature_schema()
     payload = serialize_experiment(experiment)
     payload["data"]["sequence_names"] = list(payload["data"]["sequence_names"])
     payload["train"]["switches"] = None
@@ -27,6 +28,8 @@ def test_payload_round_trip_restores_sequence_names_and_null_switches(test_works
     assert restored.data.sequence_names == ("action_seq", "bonus_seq")
     assert restored.train.switches == {}
     assert restored.switches == {}
+    assert restored.feature_schema is not None
+    assert restored.feature_schema.sequence_names == ("action_seq", "bonus_seq")
 
 
 def test_apply_serialized_experiment_requires_all_sections(test_workspace: TestWorkspace) -> None:
@@ -67,4 +70,4 @@ def test_load_experiment_package_propagates_import_failures(tmp_path: Path) -> N
 
 def test_load_experiment_package_rejects_unknown_module_path() -> None:
     with pytest.raises(ModuleNotFoundError):
-        load_experiment_package("config.gen.this_package_does_not_exist")
+        load_experiment_package("config.this_package_does_not_exist")

@@ -7,7 +7,7 @@ independent sources of truth:
    human declares what columns the flat-column dataset must contain.
 2. The **test fixture** ``build_row()`` — the synthetic rows used by all
    other tests.
-3. The **production parsing code** in ``config.gen.baseline.data`` — the
+3. The **production parsing code** in ``config.baseline.data`` — the
    ``DOMAIN_COLUMN_PREFIXES`` dict and label/user/item parsing logic.
 
 If the upstream HuggingFace schema changes, a developer must update the
@@ -18,7 +18,7 @@ instead of silently passing with stale test data.
 
 from __future__ import annotations
 
-from config.gen.baseline.data import DOMAIN_COLUMN_PREFIXES
+from config.baseline.data import DOMAIN_COLUMN_PREFIXES
 from taac2026.domain.config import DEFAULT_SEQUENCE_NAMES
 from tests.support import (
     EXPECTED_DOMAIN_PREFIXES,

@@ -12,10 +12,10 @@ icon: lucide/search
 
 ```bash
 # 对 baseline 搜索 20 个 trial
-uv run taac-search --experiment config/gen/baseline --trials 20
+uv run taac-search --experiment config/baseline --trials 20
 
 # 指定调度模式
-uv run taac-search --experiment config/gen/baseline --trials 20 --scheduler auto
+uv run taac-search --experiment config/baseline --trials 20 --scheduler auto
 ```
 
 ## 搜索约束
@@ -72,16 +72,16 @@ def build_search_experiment(
 
 ## 搜索产物
 
-搜索完成后，产物保存在实验输出目录下：
+搜索完成后，产物默认保存在实验输出目录的同级 `_optuna` 目录下：
 
 ```
-outputs/gen/<name>/search/
-├── study.db               # Optuna study 持久化
+outputs/config/<name>_optuna/
+├── best_experiment.json   # 最优 trial 对应的实验配置
+├── study_summary.json     # 搜索摘要
 ├── trial_<N>/             # 每个 trial 的训练产物
 │   ├── best.pt
 │   ├── summary.json
 │   └── ...
-└── search_summary.json    # 搜索总结
 ```
 
 ## Trial 状态

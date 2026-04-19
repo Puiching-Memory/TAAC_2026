@@ -20,7 +20,7 @@ def test_parse_args_accepts_budget_overrides() -> None:
     args = parse_args(
         [
             "--experiment",
-            "config/gen/baseline",
+            "config/baseline",
             "--study-dir",
             "outputs/search/baseline",
             "--trials",
@@ -51,7 +51,7 @@ def test_parse_args_accepts_budget_overrides() -> None:
         ]
     )
 
-    assert args.experiment == "config/gen/baseline"
+    assert args.experiment == "config/baseline"
     assert args.study_dir == "outputs/search/baseline"
     assert args.trials == 12
     assert args.timeout_seconds == 900

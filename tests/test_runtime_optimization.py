@@ -113,7 +113,7 @@ def test_parse_train_args_accepts_runtime_optimization_flags() -> None:
     args = parse_train_args(
         [
             "--experiment",
-            "config/gen/baseline",
+            "config/baseline",
             "--compile",
             "--compile-backend",
             "inductor",

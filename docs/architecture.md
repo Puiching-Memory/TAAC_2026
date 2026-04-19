@@ -12,7 +12,7 @@ TAAC_2026/
 │   ├── domain/            # 领域模型：配置、指标、运行时
 │   ├── application/       # 应用层：训练、评估、搜索、报告 CLI
 │   └── infrastructure/    # 基础设施：实验加载、数据集解析、GPU 调度
-├── config/gen/            # 目录式实验包（每个包独立）
+├── config/                # 目录式实验包（每个包独立）
 ├── tests/                 # 测试套件
 ├── docs/                  # 文档
 └── outputs/               # 训练输出产物（git 忽略）
@@ -22,7 +22,22 @@ TAAC_2026/
 
 ### ExperimentSpec
 
-`ExperimentSpec` 是实验包与框架之间的唯一契约。每个实验包的 `__init__.py` 必须导出一个名为 `EXPERIMENT` 的模块级对象：
+## 工程结构
+
+```
+TAAC_2026/
+├── src/taac2026/domain/            # 配置、ExperimentSpec、FeatureSchema、BatchTensors
+├── src/taac2026/application/       # 训练、评估、搜索、报告 CLI 与服务层
+├── src/taac2026/infrastructure/    # 数据管道、TorchRec 适配器、共享 nn 组件、实验加载
+├── config/                         # 10 个目录式实验包
+├── tests/                          # 单元 / 集成 / GPU 测试
+├── docs/                           # 文档站点
+└── outputs/                        # 训练与评估产物（git 忽略）
+```
+
+## ExperimentSpec 合约
+
+当前框架遵循“默认实现 + Callable 逃生口”的模式。实验包仍然保留完整自由度，但大多数包已经不再需要自写 data / loss / optimizer builder。
 
 ```python
 @dataclass(slots=True)
@@ -32,104 +47,147 @@ class ExperimentSpec:
     model: ModelConfig
     train: TrainConfig
 
-    # 四个构建函数——由实验包各自实现
-    build_data_pipeline: Callable       # → (train_loader, val_loader, DataStats)
-    build_model_component: Callable     # → nn.Module
-    build_loss_stack: Callable          # → (loss_fn, auxiliary_loss)
-    build_optimizer_component: Callable # → optimizer
+    feature_schema: FeatureSchema | None = None
 
-    switches: dict[str, bool]           # 子系统开关（logging, visualization）
-    search: SearchConfig                # Optuna 搜索参数
-    build_search_experiment: Callable | None  # 可选：搜索空间构建器
+    build_data_pipeline: Callable | None = None
+    build_model_component: Callable = ...
+    build_loss_stack: Callable | None = None
+    build_optimizer_component: Callable | None = None
+
+    switches: dict[str, bool] = field(default_factory=dict)
+    search: SearchConfig = field(default_factory=SearchConfig)
+    build_search_experiment: Callable | None = None
 ```
 
-`ExperimentSpec` 支持 `clone()` 和 `derive(**overrides)` 方法，便于在搜索 trial 中派生新配置。
+框架入口会通过 `resolve_experiment_builders()` 把 `None` builder 自动解析到共享默认实现：
 
-### 配置体系
+- 数据管道：`default_build_data_pipeline()`
+- 损失：`default_build_loss_stack()`
+- 优化器：`default_build_optimizer()`
 
-```
-DataConfig          ModelConfig            TrainConfig           SearchConfig
-├─ dataset_path     ├─ vocab_size          ├─ epochs             ├─ n_trials
-├─ max_seq_len      ├─ embedding_dim       ├─ batch_size         ├─ timeout_seconds
-├─ max_feature_     ├─ hidden_dim          ├─ learning_rate      ├─ max_parameter_bytes
-│  tokens           ├─ num_layers          ├─ weight_decay       │  (默认 3 GiB)
-├─ label_action_    ├─ num_heads           ├─ grad_clip_norm     └─ max_end_to_end_
-│  type             ├─ segment_count       ├─ pairwise_weight       inference_seconds
-├─ dense_feature_   ├─ memory_slots        ├─ enable_torch_         (默认 180s)
-│  dim              ├─ feature_cross_      │  compile
-└─ val_ratio        │  layers              ├─ enable_amp
-                    ├─ sequence_layers     └─ output_dir
-                    ├─ fusion_layers
-                    └─ num_queries
-```
+这让 baseline、ctr_baseline、grok、hyformer、interformer、onetrans、oo、uniscaleformer 都可以只保留模型核心代码；目前仍显式自定义 optimizer builder 的实验包是 DeepContextNet 和 UniRec。
 
-### 实验包隔离原则
-
-每个实验包独立拥有自己的实现文件：
-
-```
-config/gen/<name>/
-├── __init__.py    # 导出 EXPERIMENT
-├── data.py        # build_data_pipeline 实现
-├── model.py       # build_model_component 实现（模型架构）
-└── utils.py       # build_loss_stack / build_optimizer_component 实现
-```
-
-!!! important "不允许跨包导入"
-    `build_loss_stack` 和 `build_optimizer_component` 必须解析到各包自己的 `utils` 模块，不能从其他实验包导入。这保证了实验的独立可复现性。
-
-## 训练流程
+## 数据流
 
 ```mermaid
 graph TD
-    A[加载实验包] --> B[build_data_pipeline]
-    B --> C[build_model_component]
-    C --> D[运行时优化<br>torch.compile / AMP]
-    D --> E[build_loss_stack + build_optimizer_component]
-    E --> F[Epoch 循环]
-    F --> G{验证 AUC 提升?}
-    G -->|是| H[保存 best.pt]
-    G -->|否| F
-    F --> I[写入 summary.json + training_curves.json]
+    A[原始 parquet / HuggingFace rows] --> B[default_data_pipeline]
+    B --> C[FeatureSchema]
+    B --> D[BatchTensors]
+    D --> E[sparse_features<br/>KeyedJaggedTensor]
+    D --> F[sequence_features<br/>KeyedJaggedTensor]
+    D --> G[dense_features<br/>torch.Tensor]
+    E --> H[TorchRecEmbeddingBagAdapter]
+    F --> I[模型内部序列编码]
+    G --> J[特征拼接 / 交互]
+    H --> J
+    I --> J
+    J --> K[共享 pooling / heads / norms]
+    K --> L[logits]
 ```
 
-1. **加载实验包**：框架通过文件系统路径定位 `config/gen/<name>/`，发现项目导入根，动态导入并提取 `EXPERIMENT` 对象
-2. **构建数据管道**：调用 `build_data_pipeline`，返回 `(train_loader, val_loader, DataStats)`
-3. **构建模型**：调用 `build_model_component`，传入 `DataConfig`、`ModelConfig` 和 `dense_dim`
-4. **运行时优化**：根据 `TrainConfig` 配置 `torch.compile` 与 AMP autocast
-5. **构建损失与优化器**：各包自行选择损失函数组合（BCE + 可选 pairwise 损失）和优化器
-6. **Epoch 循环**：前向 → 损失 → 反向 → 梯度裁剪 → 优化 → 验证
-7. **产物输出**：最佳 checkpoint、训练摘要、曲线数据和 profiling 报告
+### BatchTensors
 
-## 评估指标
+当前 `BatchTensors` 已经从旧的“多组 padded token + mask”表示迁移到更统一的批处理结构：
 
-| 指标            | 说明                         | 函数               |
-| --------------- | ---------------------------- | ------------------ |
-| **AUC**         | ROC 曲线下面积（主排名指标） | `binary_auc()`     |
-| **PR-AUC**      | 精确率-召回率曲线下面积      | `binary_pr_auc()`  |
-| **Brier Score** | 概率校准误差                 | `binary_brier()`   |
-| **LogLoss**     | 二元交叉熵损失               | `binary_logloss()` |
-| **GAUC**        | 分组 AUC（按用户/会话分组）  | `group_auc()`      |
+- `sparse_features`：所有候选 / 用户 / 上下文等稀疏 token 特征
+- `sequence_features`：行为序列特征
+- `dense_features`：稠密数值特征
+- `labels`、`user_indices`、`item_indices`、`item_logq`
 
-## 损失组合
+其中稀疏与序列特征都可以直接映射到 TorchRec 的 `KeyedJaggedTensor` 路径。
 
-框架使用 `Packet` / `Blackboard` / `LayerStack` 机制组合损失：
+## 共享基础设施
 
-- **主损失**：BCE（二元交叉熵）
-- **辅助损失**：可选 pairwise ranking loss（通过 `pairwise_weight` 控制权重）
-- **子系统门控**：通过 `switches` 字典控制各损失层的开关
+### 特征与数据管道
 
-## 数据集
+- `FeatureSchema` 统一声明表名、family、embedding 维度、pooling 策略与序列属性
+- `default_data_pipeline` 负责从 parquet/HF 行构建 `BatchTensors`
+- `sparse_collate` 负责把 masked dense batch 转成 `KeyedJaggedTensor`
 
-当前使用 HuggingFace 上的样例数据集 [`TAAC2026/data_sample_1000`](https://huggingface.co/datasets/TAAC2026/data_sample_1000)。
+### 嵌入层
 
-**数据格式（扁平列布局）：**
+- `TorchRecEmbeddingBagAdapter` 封装 `EmbeddingBagCollection`
+- 实验包不再直接管理 `nn.Embedding`
+- 稀疏特征按 schema 选择表并输出拼接后的 pooled embedding
 
-- **ID 与标签**：`user_id`、`item_id`、`label_type`（int32）、`label_time`、`timestamp`
-- **用户特征**：`user_int_feats_{fid}`（标量/数组整型）、`user_dense_feats_{fid}`（浮点数组）
-- **物品特征**：`item_int_feats_{fid}`（标量/数组整型）
-- **域行为序列**：`domain_{a,b,c,d}_seq_{fid}`（`list<int64>`，4 个行为域共 45 列）
+### 共享神经网络组件
 
-**标签**：`label_type == 2`（转化）作为二分类正样本（`label_action_type = 2`）。当前采样数据仅含点击（1）与转化（2），不含曝光（0），因此离线任务本质是**点击样本中的转化预测**
+当前已经稳定共享的组件：
 
-**批处理张量**（`BatchTensors`）包含：候选 token、上下文 token、历史序列 token、掩码、稠密特征、标签、分组 ID。
+- `pooling.py`：`masked_mean`、`MaskedMeanPool`、`TargetAwarePool`
+- `heads.py`：`ClassificationHead`
+- `norms.py`：`rms_norm()`、`RMSNorm`
+- `optimizers.py`：`Muon`、`CombinedOptimizer`、`build_hybrid_optimizer()`
+- `transformer.py`：`TaacTransformerBlock`、`TaacCrossAttentionBlock`
+- `hstu.py`：`HSTUBlock`、`TimeAwareHSTU`、`BranchTransducer`、`MixtureOfTransducers`、`BlockAttnRes`、时间偏置 / RoPE helper
+- `quantization.py`：评估侧动态 int8 量化入口（`nn.Linear` + `EmbeddingBagCollection`）
+- `triton_norm.py`：首个 Triton RMSNorm kernel 与测试支架
+
+这些组件已经覆盖了主干里的共享注意力、RMSNorm、HSTU 与混合优化器路径；当前未完成的重点收尾转为 fp8 kernel，以及基于 benchmark 的最终验收报告。
+
+## 训练与评估流程
+
+```mermaid
+graph TD
+    A[加载 EXPERIMENT] --> B[resolve_experiment_builders]
+    B --> C[build_data_pipeline]
+    B --> D[build_model_component]
+    B --> E[build_loss_stack]
+    B --> F[build_optimizer_component]
+    D --> G[runtime optimization<br/>torch.compile / AMP]
+    C --> H[train/val loaders + DataStats]
+    H --> I[epoch loop]
+    E --> I
+    F --> I
+    G --> I
+    I --> J[best.pt / summary.json / training_curves.json / profiling]
+```
+
+训练服务会统一处理：
+
+- `torch.compile` 与 AMP 选项
+- 训练 / 验证循环
+- checkpoint 与 profiling 产物落盘
+- Optuna search 过程中对 ExperimentSpec 的派生与覆写
+
+评估 CLI 复用相同的实验包定义，并支持在 `single` / `batch` 模式下额外打开编译、AMP、CPU 动态 int8 量化，以及 `torch.export` 评估图导出。
+
+## 配置对象
+
+核心配置分为四个 dataclass：
+
+- `DataConfig`：数据集路径、序列长度、dense 维度、切分比例等
+- `ModelConfig`：embedding / hidden 维度、层数、头数、各种子结构参数
+- `TrainConfig`：epochs、batch size、学习率、AMP、compile、输出目录
+- `SearchConfig`：Optuna trial 数、时间预算、参数量限制、推理时延预算
+
+这些配置既用于训练 / 评估，也用于测试里的最小实验包构造。
+
+## 指标与输出产物
+
+共享指标实现位于 `src/taac2026/domain/metrics.py`，当前评估报告会输出：
+
+- AUC
+- PR-AUC
+- Brier Score
+- LogLoss
+- GAUC
+- mean / p95 latency
+
+标准运行目录会包含：
+
+- `best.pt`
+- `summary.json`
+- `training_curves.json`
+- `profiling/`
+
+## 当前边界
+
+当前仓库已经完成 TorchRec 稀疏特征、默认 builder、共享 HSTU 原语和 GPU CI 收口，但仍未完成以下计划项：
+
+- Triton attention / FFN 的 fp8 路径
+- Muon 的 Triton 化矩阵投影
+- 基于 benchmark 的最终 AUC / 时延验收报告
+
+文档中的架构描述以已经合并到仓库的实现为准，而不是以重构计划中的目标态为准。

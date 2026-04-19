@@ -34,14 +34,14 @@ Baseline 是本仓库维护的 starter/reference package，强调可扩展性、
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/gen/baseline
-uv run taac-evaluate single --experiment config/gen/baseline
+uv run taac-train --experiment config/baseline
+uv run taac-evaluate single --experiment config/baseline
 ```
 
 ## 输出目录
 
 ```
-outputs/gen/baseline/
+outputs/config/baseline/
 ```
 
 ## 来源

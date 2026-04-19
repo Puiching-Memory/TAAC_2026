@@ -35,12 +35,15 @@ nav = [
     { "数据集分析" = [
         { "总览" = "analysis/index.md" },
         { "EDA 报告" = "analysis/dataset-eda.md" },
+        { "性能基准" = "analysis/benchmarks.md" },
         { "评估指标分析" = "analysis/evaluation.md" },
         { "TAAC 2025 论文洞察" = "analysis/taac2025-insights.md" },
     ] },
     { "指南" = [
         { "超参数搜索" = "guide/search.md" },
         { "测试" = "guide/testing.md" },
+        { "开发容器 (WSL2 + Docker)" = "guide/devcontainer.md" },
+        { "Triton Kernel 开发" = "guide/triton-kernels.md" },
         { "仓库日志管理" = "guide/repo-log-management.md" },
         { "本地生成站点" = "guide/local-site.md" },
         { "新增实验包" = "guide/contributing.md" },

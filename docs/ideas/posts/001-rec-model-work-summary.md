@@ -89,7 +89,7 @@ icon: lucide/lightbulb
 
 ## 实施清单
 
-- [ ] **STCA 注意力机制**：在 baseline 或 interformer 的 `model.py` 中实现 STCA（SWiGLU-Q + 多层堆叠 + KV 复用），作为新实验包 `config/gen/stca/`
+- [ ] **STCA 注意力机制**：在 baseline 或 interformer 的 `model.py` 中实现 STCA（SWiGLU-Q + 多层堆叠 + KV 复用），作为新实验包 `config/stca/`
 - [ ] **行为序列融合 tokenizer**：在 `data.py` 中实现按时间排序的统一行为序列构造，将 `action_type` 作为嵌入特征融入 token 表示
 - [ ] **生成式辅助 loss**：在 `utils.py` 的 `build_loss_stack` 中加入类目层级 NTP 辅助任务（半因果 mask，只训练不推理）
 - [ ] **MoE 特征交叉**：在 RankMixer 思路下实现 MoE 版特征交叉层，替换现有 `feature_cross_layers`，注意加 balancing loss

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Static lint rules for common PyTorch footguns.
 
-Checks model code under ``config/gen/`` for patterns that have caused real
+Checks model code under ``config/`` for patterns that have caused real
 bugs in code review:
 
   T001  torch.zeros / torch.ones without inheriting dtype/device from an
@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 SCAN_ROOTS = [
-    Path("config/gen"),
+    Path("config"),
     Path("src/taac2026"),
 ]
 

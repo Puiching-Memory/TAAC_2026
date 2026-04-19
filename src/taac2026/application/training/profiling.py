@@ -12,6 +12,7 @@ from torch.profiler import ProfilerActivity, profile
 
 from ...domain.experiment import ExperimentSpec
 from ...domain.metrics import percentile, safe_mean
+from ...infrastructure.nn.defaults import resolve_experiment_builders
 from .runtime_optimization import RuntimeExecution, prepare_runtime_execution
 
 
@@ -478,7 +479,10 @@ def collect_compute_profile(
         profile_model = profile_model.to(device)
         profile_runtime = prepare_runtime_execution(profile_model, experiment.train, device)
         profile_execution_model = profile_runtime.execution_model
-        profile_optimizer = experiment.build_optimizer_component(profile_model, experiment.train)
+        profile_optimizer = resolve_experiment_builders(experiment).build_optimizer_component(
+            profile_model,
+            experiment.train,
+        )
         profile_execution_model.train()
 
         if device.type == "cuda":

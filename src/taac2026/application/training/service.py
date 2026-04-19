@@ -8,6 +8,7 @@ from ...domain.experiment import ExperimentSpec
 from ...domain.metrics import compute_classification_metrics, safe_mean
 from ...infrastructure.io.console import create_progress_bar, logger
 from ...infrastructure.io.files import ensure_dir, replace_file, write_json
+from ...infrastructure.nn.defaults import resolve_experiment_builders
 from .artifacts import write_training_curve_artifacts
 from .external_profilers import (
     build_training_external_profiler_plan,
@@ -48,7 +49,8 @@ def run_training(
         experiment.train.batch_size,
     )
 
-    train_loader, val_loader, data_stats = experiment.build_data_pipeline(
+    builders = resolve_experiment_builders(experiment)
+    train_loader, val_loader, data_stats = builders.build_data_pipeline(
         experiment.data,
         experiment.model,
         experiment.train,
@@ -57,14 +59,14 @@ def run_training(
     model = model.to(device)
     runtime_execution = prepare_runtime_execution(model, experiment.train, device)
     execution_model = runtime_execution.execution_model
-    loss_fn, auxiliary_loss = experiment.build_loss_stack(
+    loss_fn, auxiliary_loss = builders.build_loss_stack(
         experiment.data,
         experiment.model,
         experiment.train,
         data_stats,
         device,
     )
-    optimizer = experiment.build_optimizer_component(model, experiment.train)
+    optimizer = builders.build_optimizer_component(model, experiment.train)
     model_profile = collect_model_profile(model, val_loader, device, runtime_execution=runtime_execution)
     logger.info(
         "runtime optimization: compile_active={} amp_active={} amp_dtype={}",

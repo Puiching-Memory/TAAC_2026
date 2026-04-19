@@ -8,7 +8,7 @@ from ...reporting.model_performance_plot import plot_model_performance
 
 ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SUMMARY_ROOT = ROOT / "outputs" / "smoke"
-DEFAULT_SEARCH_ROOT = ROOT / "outputs" / "gen"
+DEFAULT_SEARCH_ROOT = ROOT / "outputs" / "config"
 DEFAULT_EXPERIMENTS_DOC_PATH = ROOT / "docs" / "experiments.md"
 DEFAULT_OUTPUT_PATHS = {
     "size": ROOT / "figures" / "model_performance_vs_size.png",
