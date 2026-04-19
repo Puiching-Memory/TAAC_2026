@@ -100,18 +100,12 @@ def run_training(
                     loss = loss_fn(logits, batch.labels)
                 if getattr(auxiliary_loss, "enabled", False) and getattr(auxiliary_loss, "requires_aux", False):
                     raise RuntimeError("Auxiliary losses requiring extra tensors are not implemented")
-                if runtime_execution.gradient_scaler is not None:
-                    runtime_execution.gradient_scaler.scale(loss).backward()
-                    if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
-                        runtime_execution.gradient_scaler.unscale_(optimizer)
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), experiment.train.grad_clip_norm)
-                    runtime_execution.gradient_scaler.step(optimizer)
-                    runtime_execution.gradient_scaler.update()
-                else:
-                    loss.backward()
-                    if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), experiment.train.grad_clip_norm)
-                    optimizer.step()
+                runtime_execution.backward_and_step(
+                    loss,
+                    optimizer,
+                    model_parameters=model.parameters(),
+                    grad_clip_norm=experiment.train.grad_clip_norm,
+                )
                 batch_losses.append(float(loss.detach().cpu().item()))
 
             train_loss = safe_mean(batch_losses)

@@ -119,10 +119,64 @@ def masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return summed / counts
 
 
+def require_sequence_features(batch: BatchTensors) -> dict[str, Any]:
+    if batch.sequence_features is None:
+        raise RuntimeError("Batch is missing sequence_features")
+    return batch.sequence_features.to_dict()
+
+
+def require_sparse_features(batch: BatchTensors) -> dict[str, Any]:
+    if batch.sparse_features is None:
+        raise RuntimeError("Batch is missing sparse_features")
+    return batch.sparse_features.to_dict()
+
+
+def dense_sparse_tokens(
+    sparse_by_key: dict[str, Any],
+    name: str,
+    desired_length: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    jagged = sparse_by_key[name]
+    tokens = jagged.to_padded_dense(desired_length=desired_length, padding_value=0).to(dtype=torch.long)
+    lengths = jagged.lengths().to(device=tokens.device)
+    positions = torch.arange(desired_length, device=tokens.device).unsqueeze(0)
+    return tokens, positions < lengths.unsqueeze(1)
+
+
+def dense_sequence_tokens(
+    sequence_by_key: dict[str, Any],
+    name: str,
+    desired_length: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    jagged = sequence_by_key[name]
+    tokens = jagged.to_padded_dense(desired_length=desired_length, padding_value=0).to(dtype=torch.long)
+    lengths = jagged.lengths().to(device=tokens.device)
+    positions = torch.arange(desired_length, device=tokens.device).unsqueeze(0)
+    return tokens, positions < lengths.unsqueeze(1)
+
+
+def dense_sequence_grid(
+    sequence_by_key: dict[str, Any],
+    sequence_names: tuple[str, ...],
+    max_seq_len: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    sequence_tokens: list[torch.Tensor] = []
+    sequence_mask: list[torch.Tensor] = []
+    for sequence_name in sequence_names:
+        tokens, mask = dense_sequence_tokens(sequence_by_key, "sequence:" + sequence_name, max_seq_len)
+        sequence_tokens.append(tokens)
+        sequence_mask.append(mask)
+    return torch.stack(sequence_tokens, dim=1), torch.stack(sequence_mask, dim=1)
+
+
 class TinyExperimentModel(nn.Module):
     def __init__(self, data_config: DataConfig, model_config: ModelConfig, dense_dim: int) -> None:
         super().__init__()
         self.sequence_count = len(data_config.sequence_names)
+        self.sequence_names = tuple(data_config.sequence_names)
+        self.max_seq_len = data_config.max_seq_len
+        self.max_feature_tokens = data_config.max_feature_tokens
+        self.history_capacity = self.sequence_count * data_config.max_seq_len
         self.token_embedding = nn.Embedding(model_config.vocab_size, model_config.embedding_dim)
         self.token_projection = nn.Sequential(
             nn.Linear(model_config.embedding_dim, model_config.hidden_dim),
@@ -155,13 +209,19 @@ class TinyExperimentModel(nn.Module):
         return self.token_projection(self.token_embedding(tokens))
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        candidate = masked_mean(self._encode_tokens(batch.candidate_tokens), batch.candidate_mask)
-        context = masked_mean(self._encode_tokens(batch.context_tokens), batch.context_mask)
-        history = masked_mean(self._encode_tokens(batch.history_tokens), batch.history_mask)
+        sparse_by_key = require_sparse_features(batch)
+        sequence_by_key = require_sequence_features(batch)
+        candidate_tokens, candidate_mask = dense_sparse_tokens(sparse_by_key, "candidate_tokens", 1)
+        context_tokens, context_mask = dense_sparse_tokens(sparse_by_key, "context_tokens", self.max_feature_tokens)
+        history_tokens, history_mask = dense_sequence_tokens(sequence_by_key, "history_tokens", self.history_capacity)
+        sequence_tokens, sequence_mask = dense_sequence_grid(sequence_by_key, self.sequence_names, self.max_seq_len)
+        candidate = masked_mean(self._encode_tokens(candidate_tokens), candidate_mask)
+        context = masked_mean(self._encode_tokens(context_tokens), context_mask)
+        history = masked_mean(self._encode_tokens(history_tokens), history_mask)
 
-        batch_size, sequence_count, sequence_len = batch.sequence_tokens.shape
-        flat_tokens = batch.sequence_tokens.reshape(batch_size * sequence_count, sequence_len)
-        flat_mask = batch.sequence_mask.reshape(batch_size * sequence_count, sequence_len)
+        batch_size, sequence_count, sequence_len = sequence_tokens.shape
+        flat_tokens = sequence_tokens.reshape(batch_size * sequence_count, sequence_len)
+        flat_mask = sequence_mask.reshape(batch_size * sequence_count, sequence_len)
         flat_summary = masked_mean(self._encode_tokens(flat_tokens), flat_mask)
         grouped = self.group_projection(flat_summary.reshape(batch_size, sequence_count, -1).reshape(batch_size, -1))
 
@@ -252,10 +312,52 @@ def _masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return summed / counts
 
 
+def _require_sequence_features(batch: BatchTensors):
+    if batch.sequence_features is None:
+        raise RuntimeError("Batch is missing sequence_features")
+    return batch.sequence_features.to_dict()
+
+
+def _require_sparse_features(batch: BatchTensors):
+    if batch.sparse_features is None:
+        raise RuntimeError("Batch is missing sparse_features")
+    return batch.sparse_features.to_dict()
+
+
+def _dense_sparse_tokens(sparse_by_key, name: str, desired_length: int):
+    jagged = sparse_by_key[name]
+    tokens = jagged.to_padded_dense(desired_length=desired_length, padding_value=0).to(dtype=torch.long)
+    lengths = jagged.lengths().to(device=tokens.device)
+    positions = torch.arange(desired_length, device=tokens.device).unsqueeze(0)
+    return tokens, positions < lengths.unsqueeze(1)
+
+
+def _dense_sequence_tokens(sequence_by_key, name: str, desired_length: int):
+    jagged = sequence_by_key[name]
+    tokens = jagged.to_padded_dense(desired_length=desired_length, padding_value=0).to(dtype=torch.long)
+    lengths = jagged.lengths().to(device=tokens.device)
+    positions = torch.arange(desired_length, device=tokens.device).unsqueeze(0)
+    return tokens, positions < lengths.unsqueeze(1)
+
+
+def _dense_sequence_grid(sequence_by_key, sequence_names, max_seq_len: int):
+    sequence_tokens = []
+    sequence_mask = []
+    for sequence_name in sequence_names:
+        tokens, mask = _dense_sequence_tokens(sequence_by_key, "sequence:" + sequence_name, max_seq_len)
+        sequence_tokens.append(tokens)
+        sequence_mask.append(mask)
+    return torch.stack(sequence_tokens, dim=1), torch.stack(sequence_mask, dim=1)
+
+
 class _LocalExperimentModel(nn.Module):
     def __init__(self, data_config: DataConfig, model_config: ModelConfig, dense_dim: int) -> None:
         super().__init__()
         self.sequence_count = len(data_config.sequence_names)
+        self.sequence_names = tuple(data_config.sequence_names)
+        self.max_seq_len = data_config.max_seq_len
+        self.max_feature_tokens = data_config.max_feature_tokens
+        self.history_capacity = self.sequence_count * data_config.max_seq_len
         self.token_embedding = nn.Embedding(model_config.vocab_size, model_config.embedding_dim)
         self.token_projection = nn.Sequential(
             nn.Linear(model_config.embedding_dim, model_config.hidden_dim),
@@ -288,12 +390,18 @@ class _LocalExperimentModel(nn.Module):
         return self.token_projection(self.token_embedding(tokens))
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        candidate = _masked_mean(self._encode_tokens(batch.candidate_tokens), batch.candidate_mask)
-        context = _masked_mean(self._encode_tokens(batch.context_tokens), batch.context_mask)
-        history = _masked_mean(self._encode_tokens(batch.history_tokens), batch.history_mask)
-        batch_size, sequence_count, sequence_len = batch.sequence_tokens.shape
-        flat_tokens = batch.sequence_tokens.reshape(batch_size * sequence_count, sequence_len)
-        flat_mask = batch.sequence_mask.reshape(batch_size * sequence_count, sequence_len)
+        sparse_by_key = _require_sparse_features(batch)
+        sequence_by_key = _require_sequence_features(batch)
+        candidate_tokens, candidate_mask = _dense_sparse_tokens(sparse_by_key, "candidate_tokens", 1)
+        context_tokens, context_mask = _dense_sparse_tokens(sparse_by_key, "context_tokens", self.max_feature_tokens)
+        history_tokens, history_mask = _dense_sequence_tokens(sequence_by_key, "history_tokens", self.history_capacity)
+        sequence_tokens, sequence_mask = _dense_sequence_grid(sequence_by_key, self.sequence_names, self.max_seq_len)
+        candidate = _masked_mean(self._encode_tokens(candidate_tokens), candidate_mask)
+        context = _masked_mean(self._encode_tokens(context_tokens), context_mask)
+        history = _masked_mean(self._encode_tokens(history_tokens), history_mask)
+        batch_size, sequence_count, sequence_len = sequence_tokens.shape
+        flat_tokens = sequence_tokens.reshape(batch_size * sequence_count, sequence_len)
+        flat_mask = sequence_mask.reshape(batch_size * sequence_count, sequence_len)
         flat_summary = _masked_mean(self._encode_tokens(flat_tokens), flat_mask)
         grouped = self.group_projection(flat_summary.reshape(batch_size, sequence_count, -1).reshape(batch_size, -1))
         dense = self.dense_projection(batch.dense_features)

@@ -24,6 +24,15 @@ SPARSE_TABLE_NAMES = (
 	"candidate_author_tokens",
 )
 
+SEQUENCE_FEATURE_KEYS = (
+	"history_tokens",
+	"history_post_tokens",
+	"history_author_tokens",
+	"history_action_tokens",
+	"history_time_gap",
+	"history_group_ids",
+)
+
 
 class SwiGLU(nn.Module):
 	def __init__(self, dim: int, hidden_dim: int, dropout: float = 0.0) -> None:
@@ -158,6 +167,7 @@ class UniScaleFormerModel(nn.Module):
 		self.model_config = model_config
 		self.sequence_names = tuple(data_config.sequence_names)
 		self.sequence_count = len(self.sequence_names)
+		self.history_capacity = self.sequence_count * data_config.max_seq_len
 		self.d_model = model_config.hidden_dim
 		self.memory_tokens = max(1, model_config.memory_slots)
 		self.num_queries = max(1, model_config.num_queries)
@@ -273,6 +283,11 @@ class UniScaleFormerModel(nn.Module):
 			raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
 		return batch.sparse_features
 
+	def _require_sequence_features(self, batch: BatchTensors):
+		if batch.sequence_features is None:
+			raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sequence_features")
+		return batch.sequence_features
+
 	def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
 		return self.token_projection(self.token_embedding(tokens))
 
@@ -287,6 +302,14 @@ class UniScaleFormerModel(nn.Module):
 		vocab_limit = self.model_config.vocab_size - 1
 		token_ids = (indices.remainder(vocab_limit) + 1).long()
 		return self._embed_tokens(token_ids.unsqueeze(1)).squeeze(1)
+
+	def _dense_sequence_tokens(self, sequence_by_key, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+		jagged = sequence_by_key[name]
+		tokens = jagged.to_padded_dense(desired_length=self.history_capacity, padding_value=0).to(dtype=torch.long)
+		lengths = jagged.lengths().to(device=tokens.device)
+		positions = torch.arange(self.history_capacity, device=tokens.device).unsqueeze(0)
+		mask = positions < lengths.unsqueeze(1)
+		return tokens, mask
 
 	def _build_static_tokens(self, batch: BatchTensors) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		user_id_token = self._embed_hashed_indices(batch.user_indices)
@@ -315,30 +338,43 @@ class UniScaleFormerModel(nn.Module):
 		static_mask = torch.ones(batch.batch_size, self.static_token_count, dtype=torch.bool, device=static_tokens.device)
 		return static_tokens, static_mask, item_id_token
 
-	def _build_event_states(self, batch: BatchTensors) -> torch.Tensor:
-		history_post_tokens = self._require(batch.history_post_tokens, "history_post_tokens")
-		history_author_tokens = self._require(batch.history_author_tokens, "history_author_tokens")
-		history_action_tokens = self._require(batch.history_action_tokens, "history_action_tokens")
-		history_time_gap = self._require(batch.history_time_gap, "history_time_gap")
+	def _build_event_states(self, batch: BatchTensors) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		sequence_by_key = self._require_sequence_features(batch).to_dict()
+		missing_keys = [name for name in SEQUENCE_FEATURE_KEYS if name not in sequence_by_key]
+		if missing_keys:
+			missing = ", ".join(missing_keys)
+			raise RuntimeError(f"Batch sequence_features is missing required keys: {missing}")
 
-		history_hidden = self._embed_tokens(batch.history_tokens)
+		history_tokens, history_mask = self._dense_sequence_tokens(sequence_by_key, "history_tokens")
+		history_post_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_post_tokens")
+		history_author_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_author_tokens")
+		history_action_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_action_tokens")
+		history_time_gap, _ = self._dense_sequence_tokens(sequence_by_key, "history_time_gap")
+		history_group_ids, _ = self._dense_sequence_tokens(sequence_by_key, "history_group_ids")
+
+		history_hidden = self._embed_tokens(history_tokens)
 		post_hidden = self._embed_tokens(history_post_tokens)
 		author_hidden = self._embed_tokens(history_author_tokens)
 		action_hidden = self._embed_tokens(history_action_tokens)
 		gap_hidden = self.time_gap_embedding(history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
 		event_inputs = torch.cat([history_hidden, post_hidden, author_hidden, action_hidden, gap_hidden], dim=-1)
-		return self.event_projection(event_inputs) * batch.history_mask.unsqueeze(-1).float()
+		event_states = self.event_projection(event_inputs) * history_mask.unsqueeze(-1).float()
+		return event_states, history_group_ids, history_mask
 
-	def _split_sequences(self, batch: BatchTensors, event_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-		history_group_ids = self._require(batch.history_group_ids, "history_group_ids")
-		batch_size = batch.batch_size
+	def _split_sequences(
+		self,
+		event_states: torch.Tensor,
+		history_group_ids: torch.Tensor,
+		history_mask: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		batch_size = event_states.shape[0]
 		max_seq_len = self.data_config.max_seq_len
 		device = event_states.device
 		sequence_states = event_states.new_zeros(batch_size, self.sequence_count, max_seq_len, self.d_model)
 		sequence_mask = torch.zeros(batch_size, self.sequence_count, max_seq_len, dtype=torch.bool, device=device)
 
 		for batch_index in range(batch_size):
-			valid_positions = torch.nonzero(batch.history_mask[batch_index], as_tuple=False).squeeze(-1)
+			valid_positions = torch.nonzero(history_mask[batch_index], as_tuple=False).squeeze(-1)
 			for sequence_index in range(self.sequence_count):
 				if valid_positions.numel() > 0:
 					selected_positions = valid_positions[
@@ -368,8 +404,8 @@ class UniScaleFormerModel(nn.Module):
 			static_states = block(static_states, static_mask)
 		static_pool = masked_mean(static_states, static_mask)
 
-		event_states = self._build_event_states(batch)
-		sequence_states, sequence_mask = self._split_sequences(batch, event_states)
+		event_states, history_group_ids, history_mask = self._build_event_states(batch)
+		sequence_states, sequence_mask = self._split_sequences(event_states, history_group_ids, history_mask)
 
 		memories = []
 		sequence_pools = []

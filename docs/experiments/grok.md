@@ -17,6 +17,8 @@ icon: lucide/flask-conical
 - 4 个行为分段（segment_count=4）
 - Recent sequence length 16
 
+当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。Grok 会从 TorchRec `KeyedJaggedTensor` 重建分段历史事件流，而不再依赖实验包私有的 legacy collate 序列张量。
+
 ## 默认配置
 
 | 参数              | 值   |

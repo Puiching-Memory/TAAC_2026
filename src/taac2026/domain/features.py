@@ -152,7 +152,7 @@ def build_default_feature_schema(data_config: DataConfig, model_config: ModelCon
         tables=tables,
         dense_dim=int(data_config.dense_feature_dim),
         sequence_names=sequence_names,
-        variant="legacy_batch_v1",
+        variant="kjt_batch_v2",
         auto_sync=True,
     )
 

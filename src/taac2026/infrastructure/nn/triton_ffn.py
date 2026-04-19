@@ -36,11 +36,11 @@ def _ffn_activation_kernel(
         col_offsets = offsets % hidden_dim
         value_offsets = row_offsets * hidden_dim * 2 + col_offsets
         gate_offsets = value_offsets + hidden_dim
-        values = tl.load(input_ptr + value_offsets, mask=mask, other=0.0)
-        gates = tl.load(input_ptr + gate_offsets, mask=mask, other=0.0)
+        values = tl.load(input_ptr + value_offsets, mask=mask, other=0.0).to(tl.float32)
+        gates = tl.load(input_ptr + gate_offsets, mask=mask, other=0.0).to(tl.float32)
         activated = values * (gates * tl.sigmoid(gates))
     else:
-        values = tl.load(input_ptr + offsets, mask=mask, other=0.0)
+        values = tl.load(input_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
         if MODE == 0:
             inv_sqrt_2 = 0.7071067811865476
             activated = 0.5 * values * (1.0 + tl.erf(values * inv_sqrt_2))
@@ -71,11 +71,24 @@ def _apply_precision(projected: torch.Tensor, precision: FeedForwardPrecision | 
     return projected.to(_FP8_DTYPE_MAP[resolved_precision]).to(dtype=projected.dtype)
 
 
-def _can_use_triton_activation(tensor: torch.Tensor, backend: FeedForwardBackend | str) -> bool:
+def _supports_triton_fp8(device: torch.device) -> bool:
+    if device.type != "cuda":
+        return False
+    capability_major, _ = torch.cuda.get_device_capability(device)
+    return capability_major >= 9
+
+
+def _can_use_triton_activation(
+    tensor: torch.Tensor,
+    backend: FeedForwardBackend | str,
+    precision: FeedForwardPrecision | str,
+) -> bool:
     normalized_backend = str(backend).strip().lower()
     if normalized_backend == "torch":
         return False
     if tensor.device.type != "cuda" or tensor.requires_grad:
+        return False
+    if _normalize_precision_name(precision) != "native" and not _supports_triton_fp8(tensor.device):
         return False
     return tensor.dtype in {torch.float16, torch.bfloat16, torch.float32}
 
@@ -108,21 +121,25 @@ def triton_ffn_activation(
     if projected.ndim < 2:
         raise ValueError("projected tensor must have at least two dimensions")
 
-    projected = _apply_precision(projected, resolved_precision)
-
-    if not _can_use_triton_activation(projected, backend):
+    if not _can_use_triton_activation(projected, backend, resolved_precision):
         return reference_ffn_activation(projected, resolved, precision=resolved_precision)
 
+    original_dtype = projected.dtype
+    if resolved_precision == "native":
+        projected_for_kernel = projected
+    else:
+        projected_for_kernel = projected.to(dtype=_FP8_DTYPE_MAP[resolved_precision])
+
     if resolved == "swiglu":
-        hidden_dim = projected.shape[-1] // 2
-        flattened_input = projected.contiguous().view(-1, hidden_dim * 2)
-        output = torch.empty(flattened_input.shape[0] * hidden_dim, device=projected.device, dtype=projected.dtype)
+        hidden_dim = projected_for_kernel.shape[-1] // 2
+        flattened_input = projected_for_kernel.contiguous().view(-1, hidden_dim * 2)
+        output = torch.empty(flattened_input.shape[0] * hidden_dim, device=projected.device, dtype=original_dtype)
         total_elements = output.numel()
         mode = 2
     else:
-        hidden_dim = projected.shape[-1]
-        flattened_input = projected.contiguous().view(-1)
-        output = torch.empty_like(flattened_input)
+        hidden_dim = projected_for_kernel.shape[-1]
+        flattened_input = projected_for_kernel.contiguous().view(-1)
+        output = torch.empty(flattened_input.shape[0], device=projected.device, dtype=original_dtype)
         total_elements = output.numel()
         mode = 0 if resolved == "gelu" else 1
 
@@ -138,7 +155,7 @@ def triton_ffn_activation(
     )
 
     if resolved == "swiglu":
-        return output.view(*projected.shape[:-1], hidden_dim)
+        return output.view(*projected_for_kernel.shape[:-1], hidden_dim)
     return output.view_as(projected)
 
 

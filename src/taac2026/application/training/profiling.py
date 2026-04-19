@@ -498,18 +498,12 @@ def collect_compute_profile(
             with profile_runtime.autocast_context():
                 logits = profile_execution_model(train_profile_batch)
                 loss = loss_fn(logits, train_profile_batch.labels)
-            if profile_runtime.gradient_scaler is not None:
-                profile_runtime.gradient_scaler.scale(loss).backward()
-                if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
-                    profile_runtime.gradient_scaler.unscale_(profile_optimizer)
-                    torch.nn.utils.clip_grad_norm_(profile_model.parameters(), experiment.train.grad_clip_norm)
-                profile_runtime.gradient_scaler.step(profile_optimizer)
-                profile_runtime.gradient_scaler.update()
-            else:
-                loss.backward()
-                if experiment.train.grad_clip_norm and experiment.train.grad_clip_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(profile_model.parameters(), experiment.train.grad_clip_norm)
-                profile_optimizer.step()
+            profile_runtime.backward_and_step(
+                loss,
+                profile_optimizer,
+                model_parameters=profile_model.parameters(),
+                grad_clip_norm=experiment.train.grad_clip_norm,
+            )
         if device.type == "cuda":
             torch.cuda.synchronize(device)
         train_step_wall_time_ms = (time.perf_counter() - start) * 1000.0

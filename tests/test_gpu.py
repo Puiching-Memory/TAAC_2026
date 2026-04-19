@@ -138,7 +138,10 @@ class TestDevicePlacement:
         train_loader, _, _ = build_local_data_pipeline(data_cfg, model_cfg, train_cfg)
         batch = next(iter(train_loader)).to(gpu_device)
         assert batch.labels.device.type == "cuda"
-        assert batch.candidate_tokens.device.type == "cuda"
+        assert batch.sparse_features is not None
+        assert batch.sequence_features is not None
+        assert batch.sparse_features.values().device.type == "cuda"
+        assert batch.sequence_features.values().device.type == "cuda"
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +188,7 @@ class TestAmpFloat16:
         rt = prepare_runtime_execution(model, train_cfg, gpu_device)
         assert rt.amp_active is True
         assert rt.amp_resolved_dtype == "float16"
-        assert rt.gradient_scaler is not None
+        assert rt.uses_grad_scaler is True
 
     def test_amp_float16_forward_backward(self, gpu_workspace: Path, gpu_device: torch.device):
         data_cfg, model_cfg, train_cfg = _make_configs(gpu_workspace, enable_amp=True, amp_dtype="float16")
@@ -200,9 +203,7 @@ class TestAmpFloat16:
         with rt.autocast_context():
             logits = rt.execution_model(batch)
             loss = loss_fn(logits, batch.labels)
-        rt.gradient_scaler.scale(loss).backward()
-        rt.gradient_scaler.step(optimizer)
-        rt.gradient_scaler.update()
+        rt.backward_and_step(loss, optimizer, model_parameters=model.parameters())
 
         assert torch.isfinite(loss).item(), "AMP float16 produced non-finite loss"
 
@@ -222,9 +223,7 @@ class TestAmpFloat16:
             with rt.autocast_context():
                 logits = rt.execution_model(batch)
                 loss = loss_fn(logits, batch.labels)
-            rt.gradient_scaler.scale(loss).backward()
-            rt.gradient_scaler.step(optimizer)
-            rt.gradient_scaler.update()
+            rt.backward_and_step(loss, optimizer, model_parameters=model.parameters())
             losses.append(float(loss.detach().cpu().item()))
 
         assert all(np.isfinite(l) for l in losses), f"Non-finite loss in AMP training: {losses}"
@@ -243,7 +242,7 @@ class TestAmpBfloat16:
         assert rt.amp_active is True
         assert rt.amp_resolved_dtype == "bfloat16"
         # bfloat16 does NOT use gradient scaler
-        assert rt.gradient_scaler is None
+        assert rt.uses_grad_scaler is False
 
     @pytest.mark.skipif(
         torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
@@ -502,11 +501,12 @@ class TestGpuTrainingLoop:
                 with rt.autocast_context():
                     logits = rt.execution_model(batch)
                     loss = loss_fn(logits, batch.labels)
-                rt.gradient_scaler.scale(loss).backward()
-                rt.gradient_scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), train_cfg.grad_clip_norm)
-                rt.gradient_scaler.step(optimizer)
-                rt.gradient_scaler.update()
+                rt.backward_and_step(
+                    loss,
+                    optimizer,
+                    model_parameters=model.parameters(),
+                    grad_clip_norm=train_cfg.grad_clip_norm,
+                )
                 all_losses.append(float(loss.detach().cpu().item()))
 
         assert all(np.isfinite(l) for l in all_losses)

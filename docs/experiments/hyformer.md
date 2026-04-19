@@ -21,6 +21,8 @@ HyFormer（Hybrid Former）重新审视了 CTR 预估中序列建模与特征交
 - **QueryDecodingBlock**：跨序列 Cross-Attention
 - **QueryBoosting**：逐 token FFN 增强
 
+当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。HyFormer 会从 TorchRec `KeyedJaggedTensor` 重建历史事件流并按语义分组拆回多条序列，而不再依赖实验包私有的 legacy collate 序列张量。
+
 关键特性：独立的位置编码和序列 ID 编码。
 
 ## 默认配置

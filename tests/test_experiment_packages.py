@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -11,6 +10,19 @@ from taac2026.infrastructure.experiments.loader import load_experiment_package
 from taac2026.infrastructure.io.datasets import iter_dataset_rows, resolve_parquet_dataset_path
 from taac2026.infrastructure.nn.defaults import resolve_experiment_builders
 from tests.support import TestWorkspace, create_test_workspace, prepare_experiment
+
+
+LEGACY_SEQUENCE_FIELD_NAMES = (
+    "history_tokens",
+    "history_mask",
+    "history_post_tokens",
+    "history_author_tokens",
+    "history_action_tokens",
+    "history_time_gap",
+    "history_group_ids",
+    "sequence_tokens",
+    "sequence_mask",
+)
 
 
 @pytest.fixture
@@ -84,25 +96,76 @@ def test_models_with_pooled_sparse_branches_prefer_torchrec_sparse_features(
 
     model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
     model.eval()
-    erased_legacy_sparse_batch = replace(
-        batch,
-        candidate_tokens=torch.zeros_like(batch.candidate_tokens),
-        candidate_mask=torch.zeros_like(batch.candidate_mask),
-        context_tokens=torch.zeros_like(batch.context_tokens),
-        context_mask=torch.zeros_like(batch.context_mask),
-        user_tokens=None,
-        user_mask=None,
-        candidate_post_tokens=None,
-        candidate_post_mask=None,
-        candidate_author_tokens=None,
-        candidate_author_mask=None,
-    )
 
     with torch.inference_mode():
-        expected_logits = model(batch)
-        actual_logits = model(erased_legacy_sparse_batch)
+        actual_logits = model(batch)
 
-    assert torch.allclose(expected_logits, actual_logits, atol=1.0e-6, rtol=0.0)
+    assert not hasattr(batch, "candidate_tokens")
+    assert not hasattr(batch, "context_tokens")
+    assert not hasattr(batch, "user_tokens")
+    assert actual_logits.shape == batch.labels.shape
+
+
+def test_interformer_uses_shared_lookup_modules_without_legacy_nn_embedding(test_workspace: TestWorkspace) -> None:
+    experiment = importlib.import_module("config.interformer").EXPERIMENT
+    experiment = prepare_experiment(experiment, test_workspace)
+    builders = resolve_experiment_builders(experiment)
+
+    _, _, data_stats = builders.build_data_pipeline(
+        experiment.data,
+        experiment.model,
+        experiment.train,
+    )
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+
+    assert not hasattr(model, "token_embedding")
+    assert not hasattr(model, "time_gap_embedding")
+    assert not hasattr(model, "history_group_embedding")
+    assert hasattr(model, "sparse_embedding")
+    assert hasattr(model, "sequence_embedding")
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "config.baseline",
+        "config.ctr_baseline",
+        "config.deepcontextnet",
+        "config.grok",
+        "config.interformer",
+        "config.oo",
+        "config.onetrans",
+        "config.hyformer",
+        "config.unirec",
+        "config.uniscaleformer",
+    ],
+)
+def test_models_with_sequence_branches_prefer_torchrec_sequence_features(
+    module_path: str,
+    test_workspace: TestWorkspace,
+) -> None:
+    experiment = importlib.import_module(module_path).EXPERIMENT
+    experiment = prepare_experiment(experiment, test_workspace)
+    builders = resolve_experiment_builders(experiment)
+
+    train_loader, _, data_stats = builders.build_data_pipeline(
+        experiment.data,
+        experiment.model,
+        experiment.train,
+    )
+    batch = next(iter(train_loader))
+    assert batch.sequence_features is not None
+    for field_name in LEGACY_SEQUENCE_FIELD_NAMES:
+        assert not hasattr(batch, field_name)
+
+    model = experiment.build_model_component(experiment.data, experiment.model, data_stats.dense_dim)
+    model.eval()
+
+    with torch.inference_mode():
+        actual_logits = model(batch)
+
+    assert actual_logits.shape == batch.labels.shape
+    assert torch.isfinite(actual_logits).all().item()
 
 
 @pytest.mark.parametrize(

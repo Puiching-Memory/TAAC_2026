@@ -69,7 +69,7 @@ def _attention_forward_kernel(
         query_ptr + batch_head_index * query_bh_stride + query_index * query_seq_stride + dim_offsets * query_dim_stride,
         mask=dim_mask,
         other=0.0,
-    )
+    ).to(tl.float32)
     key_values = tl.load(
         key_ptr
         + batch_head_index * key_bh_stride
@@ -77,7 +77,7 @@ def _attention_forward_kernel(
         + dim_offsets[None, :] * key_dim_stride,
         mask=key_mask[:, None] & dim_mask[None, :],
         other=0.0,
-    )
+    ).to(tl.float32)
     scores = tl.sum(key_values * query_values[None, :], axis=1) * scale
 
     if HAS_BIAS:
@@ -117,7 +117,7 @@ def _attention_forward_kernel(
         + dim_offsets[None, :] * value_dim_stride,
         mask=key_mask[:, None] & dim_mask[None, :],
         other=0.0,
-    )
+    ).to(tl.float32)
     output_values = tl.sum(weights[:, None] * value_values, axis=0)
     tl.store(
         output_ptr + batch_head_index * output_bh_stride + query_index * output_seq_stride + dim_offsets * output_dim_stride,
@@ -145,6 +145,13 @@ def _apply_attention_precision(tensor: torch.Tensor, precision: AttentionPrecisi
     if resolved_precision == "native":
         return tensor
     return tensor.to(_FP8_DTYPE_MAP[resolved_precision]).to(dtype=tensor.dtype)
+
+
+def _supports_triton_fp8(device: torch.device) -> bool:
+    if device.type != "cuda":
+        return False
+    capability_major, _ = torch.cuda.get_device_capability(device)
+    return capability_major >= 9
 
 
 def _resolve_attention_mask(
@@ -242,6 +249,7 @@ def _can_use_triton_attention(
     key: torch.Tensor,
     value: torch.Tensor,
     backend: AttentionBackend | str,
+    precision: AttentionPrecision | str,
 ) -> bool:
     normalized_backend = str(backend).strip().lower()
     if normalized_backend == "torch":
@@ -251,6 +259,8 @@ def _can_use_triton_attention(
     if query.requires_grad or key.requires_grad or value.requires_grad:
         return False
     if query.dtype not in {torch.float16, torch.bfloat16, torch.float32}:
+        return False
+    if _normalize_attention_precision(precision) != "native" and not _supports_triton_fp8(query.device):
         return False
     if key.shape[-2] > 256 or query.shape[-2] > 256 or query.shape[-1] > 128:
         return False
@@ -293,11 +303,7 @@ def triton_attention(
         is_causal=is_causal,
     )
 
-    query = _apply_attention_precision(query, resolved_precision)
-    key = _apply_attention_precision(key, resolved_precision)
-    value = _apply_attention_precision(value, resolved_precision)
-
-    if not _can_use_triton_attention(query, key, value, backend):
+    if not _can_use_triton_attention(query, key, value, backend, resolved_precision):
         return reference_attention(
             query,
             key,
@@ -311,10 +317,25 @@ def triton_attention(
             precision=resolved_precision,
         )
 
-    flattened_query = query.contiguous().view(batch_size * num_heads, query_length, head_dim)
-    flattened_key = key.contiguous().view(batch_size * num_heads, key_length, head_dim)
-    flattened_value = value.contiguous().view(batch_size * num_heads, key_length, head_dim)
-    output = torch.empty_like(flattened_query)
+    output_dtype = query.dtype
+    if resolved_precision == "native":
+        query_for_kernel = query
+        key_for_kernel = key
+        value_for_kernel = value
+    else:
+        target_dtype = _FP8_DTYPE_MAP[resolved_precision]
+        query_for_kernel = query.to(dtype=target_dtype)
+        key_for_kernel = key.to(dtype=target_dtype)
+        value_for_kernel = value.to(dtype=target_dtype)
+
+    flattened_query = query_for_kernel.contiguous().view(batch_size * num_heads, query_length, head_dim)
+    flattened_key = key_for_kernel.contiguous().view(batch_size * num_heads, key_length, head_dim)
+    flattened_value = value_for_kernel.contiguous().view(batch_size * num_heads, key_length, head_dim)
+    output = torch.empty(
+        (batch_size * num_heads, query_length, head_dim),
+        device=query.device,
+        dtype=output_dtype,
+    )
 
     if additive_bias is None:
         additive_bias = torch.zeros(batch_size, query_length, key_length, device=query.device, dtype=torch.float32)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any, Iterable
 
 from taac2026.infrastructure.io.files import write_json
@@ -24,6 +25,7 @@ ACCEPTANCE_THRESHOLDS = {
     "embedding_throughput_min_gain": 2.0,
     "attention_latency_max_ratio": 0.7,
 }
+PHASE_NAME_PATTERN = re.compile(r"^phase-(\d+)$", re.IGNORECASE)
 
 
 def serialize_echarts(option: dict[str, Any]) -> str:
@@ -210,16 +212,48 @@ def load_benchmark_records(
 def _select_candidate_phase(phases: list[str], baseline_phase: str, candidate_phase: str | None) -> str | None:
     if candidate_phase is not None:
         return candidate_phase
-    for phase in reversed(phases):
-        if phase != baseline_phase:
-            return phase
-    return None
+    return _select_latest_phase([phase for phase in phases if phase != baseline_phase], baseline_phase)
+
+
+def _phase_sort_key(phase: str, baseline_phase: str) -> tuple[int, int, str]:
+    if phase == baseline_phase:
+        return (0, -1, phase)
+    match = PHASE_NAME_PATTERN.match(phase)
+    if match is not None:
+        return (2, int(match.group(1)), phase)
+    return (1, 0, phase)
+
+
+def _select_latest_phase(phases: Iterable[str], baseline_phase: str) -> str | None:
+    ordered = _dedupe(phase for phase in phases if phase != baseline_phase)
+    if not ordered:
+        return None
+    return max(ordered, key=lambda phase: _phase_sort_key(phase, baseline_phase))
+
+
+def _select_component_candidate_phase(
+    phases: list[str],
+    values_by_phase: dict[str, dict[str, float]],
+    component: str,
+    *,
+    baseline_phase: str,
+    candidate_phase: str | None,
+) -> str | None:
+    if candidate_phase is not None:
+        if component in values_by_phase.get(candidate_phase, {}):
+            return candidate_phase
+        return None
+    return _select_latest_phase(
+        (phase for phase in phases if component in values_by_phase.get(phase, {})),
+        baseline_phase,
+    )
 
 
 def _acceptance_check(
     *,
     baseline_value: float | None,
     candidate_value: float | None,
+    candidate_phase: str | None,
     threshold: float,
     higher_is_better: bool,
 ) -> dict[str, Any]:
@@ -228,6 +262,7 @@ def _acceptance_check(
             "status": "not_enough_data",
             "baseline_value": baseline_value,
             "candidate_value": candidate_value,
+            "candidate_phase": candidate_phase,
             "threshold": threshold,
             "ratio": None,
         }
@@ -238,6 +273,7 @@ def _acceptance_check(
         "status": "pass" if passed else "fail",
         "baseline_value": baseline_value,
         "candidate_value": candidate_value,
+        "candidate_phase": candidate_phase,
         "threshold": threshold,
         "ratio": ratio,
     }
@@ -251,7 +287,6 @@ def build_benchmark_acceptance_summary(
 ) -> dict[str, Any]:
     normalized = [_normalize_record(record) for record in records]
     phases = _dedupe(record["phase"] for record in normalized)
-    resolved_candidate_phase = _select_candidate_phase(phases, baseline_phase, candidate_phase)
 
     latency_by_phase: dict[str, dict[str, float]] = {}
     throughput_by_phase: dict[str, dict[str, float]] = {}
@@ -264,15 +299,40 @@ def build_benchmark_acceptance_summary(
     quantization_records = [record for record in normalized if record["component"] == "quantization"]
     inference_records = [record for record in normalized if record["component"] == "inference"]
 
+    embedding_candidate_phase = _select_component_candidate_phase(
+        phases,
+        throughput_by_phase,
+        "embedding",
+        baseline_phase=baseline_phase,
+        candidate_phase=candidate_phase,
+    )
+    attention_candidate_phase = _select_component_candidate_phase(
+        phases,
+        latency_by_phase,
+        "attention",
+        baseline_phase=baseline_phase,
+        candidate_phase=candidate_phase,
+    )
+    candidate_phases = {
+        "embedding": embedding_candidate_phase,
+        "attention": attention_candidate_phase,
+    }
+    resolved_candidate_phase = candidate_phase
+    if resolved_candidate_phase is None:
+        unique_candidate_phases = _dedupe(phase for phase in candidate_phases.values() if phase is not None)
+        resolved_candidate_phase = unique_candidate_phases[0] if len(unique_candidate_phases) == 1 else None
+
     embedding_check = _acceptance_check(
         baseline_value=throughput_by_phase.get(baseline_phase, {}).get("embedding"),
-        candidate_value=None if resolved_candidate_phase is None else throughput_by_phase.get(resolved_candidate_phase, {}).get("embedding"),
+        candidate_value=None if embedding_candidate_phase is None else throughput_by_phase.get(embedding_candidate_phase, {}).get("embedding"),
+        candidate_phase=embedding_candidate_phase,
         threshold=ACCEPTANCE_THRESHOLDS["embedding_throughput_min_gain"],
         higher_is_better=True,
     )
     attention_check = _acceptance_check(
         baseline_value=latency_by_phase.get(baseline_phase, {}).get("attention"),
-        candidate_value=None if resolved_candidate_phase is None else latency_by_phase.get(resolved_candidate_phase, {}).get("attention"),
+        candidate_value=None if attention_candidate_phase is None else latency_by_phase.get(attention_candidate_phase, {}).get("attention"),
+        candidate_phase=attention_candidate_phase,
         threshold=ACCEPTANCE_THRESHOLDS["attention_latency_max_ratio"],
         higher_is_better=False,
     )
@@ -280,6 +340,7 @@ def build_benchmark_acceptance_summary(
     return {
         "baseline_phase": baseline_phase,
         "candidate_phase": resolved_candidate_phase,
+        "candidate_phases": candidate_phases,
         "phases": phases,
         "component_latency_ms": latency_by_phase,
         "component_throughput": throughput_by_phase,

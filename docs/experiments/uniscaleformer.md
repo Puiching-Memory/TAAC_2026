@@ -21,6 +21,8 @@ UniScaleFormer 内置 InterFormer / OneTrans / HyFormer / base 配置对比与 s
 - **4 个 Query**
 - 8 个行为分段
 
+当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。UniScaleFormer 会从 TorchRec `KeyedJaggedTensor` 重建历史事件流并按语义拆回多条序列，而不再依赖实验包私有的 legacy collate 序列张量。
+
 ## 默认配置
 
 | 参数                   | 值   |

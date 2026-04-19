@@ -17,6 +17,37 @@ AMP_DTYPE_LOOKUP: dict[str, torch.dtype] = {
 
 
 @dataclass(slots=True)
+class OptimizerStepController:
+    scaler: Any | None = None
+
+    @property
+    def uses_grad_scaler(self) -> bool:
+        return self.scaler is not None
+
+    def backward_and_step(
+        self,
+        loss: torch.Tensor,
+        optimizer: Any,
+        *,
+        model_parameters,
+        grad_clip_norm: float | None = None,
+    ) -> None:
+        if self.scaler is None:
+            loss.backward()
+            if grad_clip_norm and grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model_parameters, grad_clip_norm)
+            optimizer.step()
+            return
+
+        self.scaler.scale(loss).backward()
+        if grad_clip_norm and grad_clip_norm > 0:
+            self.scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model_parameters, grad_clip_norm)
+        self.scaler.step(optimizer)
+        self.scaler.update()
+
+
+@dataclass(slots=True)
 class RuntimeExecution:
     base_model: torch.nn.Module
     execution_model: torch.nn.Module
@@ -31,7 +62,7 @@ class RuntimeExecution:
     amp_requested_dtype: str | None
     amp_resolved_dtype: str | None
     amp_reason: str | None
-    gradient_scaler: Any | None = None
+    optimizer_step_controller: OptimizerStepController
 
     def autocast_context(self):
         if not self.amp_active or self.amp_resolved_dtype is None:
@@ -56,10 +87,29 @@ class RuntimeExecution:
                 "active": self.amp_active,
                 "requested_dtype": self.amp_requested_dtype,
                 "resolved_dtype": self.amp_resolved_dtype,
-                "gradient_scaler": self.gradient_scaler is not None,
+                "gradient_scaler": self.optimizer_step_controller.uses_grad_scaler,
                 "reason": self.amp_reason,
             },
         }
+
+    @property
+    def uses_grad_scaler(self) -> bool:
+        return self.optimizer_step_controller.uses_grad_scaler
+
+    def backward_and_step(
+        self,
+        loss: torch.Tensor,
+        optimizer: Any,
+        *,
+        model_parameters,
+        grad_clip_norm: float | None = None,
+    ) -> None:
+        self.optimizer_step_controller.backward_and_step(
+            loss,
+            optimizer,
+            model_parameters=model_parameters,
+            grad_clip_norm=grad_clip_norm,
+        )
 
 
 def _normalize_amp_dtype_name(name: str) -> str:
@@ -142,7 +192,7 @@ def prepare_runtime_execution(
         amp_requested_dtype=amp_requested_dtype,
         amp_resolved_dtype=amp_resolved_dtype,
         amp_reason=amp_reason,
-        gradient_scaler=gradient_scaler,
+        optimizer_step_controller=OptimizerStepController(scaler=gradient_scaler),
     )
 
 

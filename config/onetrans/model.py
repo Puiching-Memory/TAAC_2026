@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
 from torch import nn
 
@@ -20,6 +22,15 @@ SPARSE_TABLE_NAMES = (
     "candidate_tokens",
     "candidate_post_tokens",
     "candidate_author_tokens",
+)
+
+SEQUENCE_FEATURE_KEYS = (
+    "history_tokens",
+    "history_post_tokens",
+    "history_author_tokens",
+    "history_action_tokens",
+    "history_time_gap",
+    "history_group_ids",
 )
 
 
@@ -66,9 +77,17 @@ class AutoSplitNSTokenizer(nn.Module):
 
 
 class UnifiedSequentialTokenizer(nn.Module):
-    def __init__(self, max_sequence_tokens: int, hidden_dim: int, sequence_group_count: int, dropout: float) -> None:
+    def __init__(
+        self,
+        max_sequence_tokens: int,
+        history_capacity: int,
+        hidden_dim: int,
+        sequence_group_count: int,
+        dropout: float,
+    ) -> None:
         super().__init__()
         self.max_sequence_tokens = max_sequence_tokens
+        self.history_capacity = history_capacity
         self.hidden_dim = hidden_dim
         self.event_projection = nn.Sequential(
             nn.LayerNorm(hidden_dim * 6),
@@ -82,18 +101,43 @@ class UnifiedSequentialTokenizer(nn.Module):
         self.sequence_position_embedding = nn.Embedding(max_sequence_tokens, hidden_dim)
         self.sep_token = nn.Parameter(torch.randn(hidden_dim) * 0.02)
 
-    def forward(self, batch: BatchTensors, token_embedding: nn.Embedding) -> tuple[torch.Tensor, torch.Tensor]:
-        if batch.history_post_tokens is None or batch.history_author_tokens is None:
-            raise RuntimeError("Batch is missing history entity token fields")
-        if batch.history_action_tokens is None or batch.history_time_gap is None or batch.history_group_ids is None:
-            raise RuntimeError("Batch is missing history metadata fields")
+    def _require_sequence_features(self, batch: BatchTensors):
+        if batch.sequence_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sequence_features")
+        return batch.sequence_features
 
-        history_hidden = token_embedding(batch.history_tokens)
-        post_hidden = token_embedding(batch.history_post_tokens)
-        author_hidden = token_embedding(batch.history_author_tokens)
-        action_hidden = token_embedding(batch.history_action_tokens)
-        time_hidden = self.time_gap_embedding(batch.history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
-        group_hidden = self.sequence_group_embedding(batch.history_group_ids)
+    def _dense_sequence_tokens(self, sequence_by_key, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        jagged = sequence_by_key[name]
+        tokens = jagged.to_padded_dense(desired_length=self.history_capacity, padding_value=0).to(dtype=torch.long)
+        lengths = jagged.lengths().to(device=tokens.device)
+        positions = torch.arange(self.history_capacity, device=tokens.device).unsqueeze(0)
+        mask = positions < lengths.unsqueeze(1)
+        return tokens, mask
+
+    def forward(
+        self,
+        batch: BatchTensors,
+        token_embedding: Callable[[torch.Tensor], torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        sequence_by_key = self._require_sequence_features(batch).to_dict()
+        missing_keys = [name for name in SEQUENCE_FEATURE_KEYS if name not in sequence_by_key]
+        if missing_keys:
+            missing = ", ".join(missing_keys)
+            raise RuntimeError(f"Batch sequence_features is missing required keys: {missing}")
+
+        history_tokens, history_mask = self._dense_sequence_tokens(sequence_by_key, "history_tokens")
+        history_post_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_post_tokens")
+        history_author_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_author_tokens")
+        history_action_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_action_tokens")
+        history_time_gap, _ = self._dense_sequence_tokens(sequence_by_key, "history_time_gap")
+        history_group_ids, _ = self._dense_sequence_tokens(sequence_by_key, "history_group_ids")
+
+        history_hidden = token_embedding(history_tokens)
+        post_hidden = token_embedding(history_post_tokens)
+        author_hidden = token_embedding(history_author_tokens)
+        action_hidden = token_embedding(history_action_tokens)
+        time_hidden = self.time_gap_embedding(history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
+        group_hidden = self.sequence_group_embedding(history_group_ids)
         event_inputs = torch.cat(
             [
                 history_hidden,
@@ -106,7 +150,7 @@ class UnifiedSequentialTokenizer(nn.Module):
             dim=-1,
         )
         event_tokens = self.event_projection(event_inputs)
-        return self.merge_with_sep(event_tokens, batch.history_group_ids, batch.history_mask)
+        return self.merge_with_sep(event_tokens, history_group_ids, history_mask)
 
     def merge_with_sep(
         self,
@@ -169,6 +213,7 @@ class OneTransModel(nn.Module):
         )
         self.sequential_tokenizer = UnifiedSequentialTokenizer(
             max_sequence_tokens=self.max_sequence_tokens,
+            history_capacity=self.history_capacity,
             hidden_dim=model_config.hidden_dim,
             sequence_group_count=self.sequence_group_count,
             dropout=model_config.dropout,

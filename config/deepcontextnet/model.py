@@ -20,6 +20,13 @@ SPARSE_TABLE_NAMES = (
     "candidate_author_tokens",
 )
 
+SEQUENCE_FEATURE_KEYS = (
+    "history_post_tokens",
+    "history_action_tokens",
+    "history_time_gap",
+    "history_group_ids",
+)
+
 
 class SequentialTemporalBlock(nn.Module):
     def __init__(
@@ -49,6 +56,7 @@ class DeepContextNetModel(nn.Module):
         super().__init__()
         self.hidden_dim = model_config.hidden_dim
         self.recent_seq_len = max(0, model_config.recent_seq_len)
+        self.history_capacity = len(data_config.sequence_names) * data_config.max_seq_len
         self.sparse_embedding = TorchRecEmbeddingBagAdapter(
             feature_schema=build_default_feature_schema(data_config, model_config),
             table_names=SPARSE_TABLE_NAMES,
@@ -108,6 +116,11 @@ class DeepContextNetModel(nn.Module):
             raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
         return batch.sparse_features
 
+    def _require_sequence_features(self, batch: BatchTensors):
+        if batch.sequence_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sequence_features")
+        return batch.sequence_features
+
     def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
 
@@ -123,14 +136,28 @@ class DeepContextNetModel(nn.Module):
             return tensor
         return tensor[:, -self.recent_seq_len :]
 
+    def _dense_sequence_tokens(self, sequence_by_key, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        jagged = sequence_by_key[name]
+        tokens = jagged.to_padded_dense(desired_length=self.history_capacity, padding_value=0).to(dtype=torch.long)
+        lengths = jagged.lengths().to(device=tokens.device)
+        positions = torch.arange(self.history_capacity, device=tokens.device).unsqueeze(0)
+        mask = positions < lengths.unsqueeze(1)
+        return tokens, mask
+
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        history_post_tokens = self._require(batch.history_post_tokens, "history_post_tokens")
-        history_action_tokens = self._require(batch.history_action_tokens, "history_action_tokens")
-        history_time_gap = self._require(batch.history_time_gap, "history_time_gap")
-        history_group_ids = self._require(batch.history_group_ids, "history_group_ids")
+        sequence_by_key = self._require_sequence_features(batch).to_dict()
+        missing_keys = [name for name in SEQUENCE_FEATURE_KEYS if name not in sequence_by_key]
+        if missing_keys:
+            missing = ", ".join(missing_keys)
+            raise RuntimeError(f"Batch sequence_features is missing required keys: {missing}")
+
+        history_post_tokens, history_mask = self._dense_sequence_tokens(sequence_by_key, "history_post_tokens")
+        history_action_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_action_tokens")
+        history_time_gap, _ = self._dense_sequence_tokens(sequence_by_key, "history_time_gap")
+        history_group_ids, _ = self._dense_sequence_tokens(sequence_by_key, "history_group_ids")
         sparse_summaries = self._pooled_sparse_summaries(batch)
 
-        history_mask = self._slice_recent(batch.history_mask)
+        history_mask = self._slice_recent(history_mask)
         history_post_tokens = self._slice_recent(history_post_tokens)
         history_action_tokens = self._slice_recent(history_action_tokens)
         history_time_gap = self._slice_recent(history_time_gap)

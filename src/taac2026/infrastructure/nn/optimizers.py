@@ -5,7 +5,78 @@ from collections.abc import Iterator
 import torch
 from torch import nn
 from torch.optim import Optimizer
+import triton
+import triton.language as tl
 from torchrec.optim import RowWiseAdagrad
+
+
+@triton.jit
+def _muon_apply_update_kernel(
+    parameter_ptr,
+    buffer_ptr,
+    new_buffer_ptr,
+    update_ptr,
+    element_count,
+    lr,
+    weight_decay,
+    APPLY_WEIGHT_DECAY: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    block_index = tl.program_id(0)
+    offsets = block_index * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < element_count
+
+    parameter = tl.load(parameter_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    new_buffer = tl.load(new_buffer_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    update = tl.load(update_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+
+    if APPLY_WEIGHT_DECAY:
+        parameter = parameter * (1.0 - lr * weight_decay)
+    parameter = parameter - lr * update
+
+    tl.store(buffer_ptr + offsets, new_buffer, mask=mask)
+    tl.store(parameter_ptr + offsets, parameter, mask=mask)
+
+
+def _can_use_triton_muon_update(
+    parameter: torch.Tensor,
+    buffer: torch.Tensor,
+    new_buffer: torch.Tensor,
+    update: torch.Tensor,
+) -> bool:
+    if parameter.device.type != "cuda":
+        return False
+    if not parameter.is_contiguous() or not buffer.is_contiguous() or not new_buffer.is_contiguous() or not update.is_contiguous():
+        return False
+    return parameter.dtype in {torch.float16, torch.bfloat16, torch.float32}
+
+
+def _triton_muon_apply_update(
+    parameter: torch.Tensor,
+    buffer: torch.Tensor,
+    new_buffer: torch.Tensor,
+    update: torch.Tensor,
+    *,
+    lr: float,
+    weight_decay: float,
+) -> None:
+    flattened_parameter = parameter.view(-1)
+    flattened_buffer = buffer.view(-1)
+    flattened_new_buffer = new_buffer.view(-1)
+    flattened_update = update.view(-1)
+    block_size = min(1024, triton.next_power_of_2(max(1, min(flattened_parameter.numel(), 1024))))
+    _muon_apply_update_kernel[(triton.cdiv(flattened_parameter.numel(), block_size),)](
+        flattened_parameter,
+        flattened_buffer,
+        flattened_new_buffer,
+        flattened_update,
+        flattened_parameter.numel(),
+        lr,
+        weight_decay,
+        APPLY_WEIGHT_DECAY=weight_decay > 0.0,
+        BLOCK_SIZE=block_size,
+        num_warps=4 if block_size <= 256 else 8,
+    )
 
 
 class Muon(Optimizer):
@@ -54,17 +125,28 @@ class Muon(Optimizer):
                     continue
                 gradient = parameter.grad
                 state = self.state[parameter]
-                if weight_decay > 0:
-                    parameter.mul_(1.0 - lr * weight_decay)
                 if "momentum_buffer" not in state:
                     state["momentum_buffer"] = torch.zeros_like(gradient)
                 buffer = state["momentum_buffer"]
-                buffer.mul_(momentum).add_(gradient)
+                new_buffer = torch.add(buffer * momentum, gradient)
                 if parameter.ndim >= 2:
-                    update = self._newton_schulz(buffer.reshape(buffer.shape[0], -1), ns_steps).view_as(parameter)
+                    update = self._newton_schulz(new_buffer.reshape(new_buffer.shape[0], -1), ns_steps).view_as(parameter)
                 else:
-                    update = buffer
-                parameter.add_(update, alpha=-lr)
+                    update = new_buffer
+                if _can_use_triton_muon_update(parameter, buffer, new_buffer, update):
+                    _triton_muon_apply_update(
+                        parameter,
+                        buffer,
+                        new_buffer,
+                        update,
+                        lr=lr,
+                        weight_decay=weight_decay,
+                    )
+                else:
+                    if weight_decay > 0:
+                        parameter.mul_(1.0 - lr * weight_decay)
+                    buffer.copy_(new_buffer)
+                    parameter.add_(update, alpha=-lr)
         return loss
 
 

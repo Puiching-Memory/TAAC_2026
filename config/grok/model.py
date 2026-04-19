@@ -24,6 +24,15 @@ SPARSE_TABLE_NAMES = (
     "candidate_author_tokens",
 )
 
+SEQUENCE_FEATURE_KEYS = (
+    "history_tokens",
+    "history_post_tokens",
+    "history_author_tokens",
+    "history_action_tokens",
+    "history_time_gap",
+    "history_group_ids",
+)
+
 
 def make_grok_attention_mask(
     user_tokens: int,
@@ -233,8 +242,21 @@ class GrokBaselineModel(nn.Module):
             raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
         return batch.sparse_features
 
+    def _require_sequence_features(self, batch: BatchTensors):
+        if batch.sequence_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sequence_features")
+        return batch.sequence_features
+
     def _embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
         return self.token_projection(self.token_embedding(tokens))
+
+    def _dense_sequence_tokens(self, sequence_by_key, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        jagged = sequence_by_key[name]
+        tokens = jagged.to_padded_dense(desired_length=self.history_capacity, padding_value=0).to(dtype=torch.long)
+        lengths = jagged.lengths().to(device=tokens.device)
+        positions = torch.arange(self.history_capacity, device=tokens.device).unsqueeze(0)
+        mask = positions < lengths.unsqueeze(1)
+        return tokens, mask
 
     def _sparse_feature_bundle(self, batch: BatchTensors) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         sparse_features = self._require_sparse_features(batch)
@@ -259,11 +281,18 @@ class GrokBaselineModel(nn.Module):
         return self.readout_pool(candidate_query, memory_tokens, memory_mask)
 
     def forward(self, batch: BatchTensors) -> torch.Tensor:
-        history_post_tokens = self._require(batch.history_post_tokens, "history_post_tokens")
-        history_author_tokens = self._require(batch.history_author_tokens, "history_author_tokens")
-        history_action_tokens = self._require(batch.history_action_tokens, "history_action_tokens")
-        history_time_gap = self._require(batch.history_time_gap, "history_time_gap")
-        history_group_ids = self._require(batch.history_group_ids, "history_group_ids")
+        sequence_by_key = self._require_sequence_features(batch).to_dict()
+        missing_keys = [name for name in SEQUENCE_FEATURE_KEYS if name not in sequence_by_key]
+        if missing_keys:
+            missing = ", ".join(missing_keys)
+            raise RuntimeError(f"Batch sequence_features is missing required keys: {missing}")
+
+        history_tokens, history_mask = self._dense_sequence_tokens(sequence_by_key, "history_tokens")
+        history_post_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_post_tokens")
+        history_author_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_author_tokens")
+        history_action_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_action_tokens")
+        history_time_gap, _ = self._dense_sequence_tokens(sequence_by_key, "history_time_gap")
+        history_group_ids, _ = self._dense_sequence_tokens(sequence_by_key, "history_group_ids")
         sparse_summaries, sparse_valid = self._sparse_feature_bundle(batch)
 
         dense_summary = self.dense_projection(batch.dense_features)
@@ -298,13 +327,13 @@ class GrokBaselineModel(nn.Module):
                     self._embed_tokens(history_author_tokens),
                     self._embed_tokens(history_action_tokens),
                     self.time_gap_embedding(history_time_gap.clamp_max(TIME_GAP_BUCKET_COUNT)),
-                    self._embed_tokens(batch.history_tokens),
+                    self._embed_tokens(history_tokens),
                     self.history_group_embedding(history_group_ids.clamp_max(self.history_group_embedding.num_embeddings - 1)),
                 ],
                 dim=-1,
             )
         )
-        history_representation = history_representation * batch.history_mask.unsqueeze(-1).float()
+        history_representation = history_representation * history_mask.unsqueeze(-1).float()
 
         batch_size = batch.labels.shape[0]
         user_valid = sparse_valid["user_tokens"]
@@ -327,7 +356,7 @@ class GrokBaselineModel(nn.Module):
             ],
             dim=1,
         )
-        padding_mask = torch.cat([~user_valid, ~batch.history_mask, ~candidate_valid], dim=1)
+        padding_mask = torch.cat([~user_valid, ~history_mask, ~candidate_valid], dim=1)
         attention_mask = make_grok_attention_mask(
             user_tokens=1,
             history_tokens=history_representation.shape[1],
@@ -345,9 +374,9 @@ class GrokBaselineModel(nn.Module):
         target_context = self._target_aware_readout(
             candidate_output,
             torch.cat([user_output.unsqueeze(1), history_output], dim=1),
-            torch.cat([user_valid, batch.history_mask], dim=1),
+            torch.cat([user_valid, history_mask], dim=1),
         )
-        history_summary = masked_mean(history_output, batch.history_mask)
+        history_summary = masked_mean(history_output, history_mask)
         static_context = 0.5 * (sparse_summaries["context_tokens"] + dense_summary)
 
         fused = torch.cat(

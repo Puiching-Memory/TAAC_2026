@@ -19,6 +19,8 @@ Baseline 是本仓库维护的 starter/reference package，强调可扩展性、
 - FFN 倍率 2.0
 - 无分段建模、无 memory slots、无特征交叉层
 
+当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。Baseline 会从 TorchRec `KeyedJaggedTensor` 重建历史事件序列和多路 sequence grid，而不再依赖实验包私有的 legacy collate 序列张量。
+
 ## 默认配置
 
 | 参数              | 值   |

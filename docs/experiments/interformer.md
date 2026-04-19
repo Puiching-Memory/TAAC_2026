@@ -21,6 +21,8 @@ InterFormer 提出了行为感知交互块（Behavior-Aware Interaction Block）
 - **PersonalizedFFN**：从上下文摘要生成用户特定权重
 - **Memory Slots**：4 个可学习记忆槽
 
+当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。InterFormer 会从 TorchRec `KeyedJaggedTensor` 重建非序列与历史事件 token 网格，而不再依赖实验包私有的 legacy collate 张量。
+
 关键特性：自注意力 + 交叉注意力上下文的门控融合，2 个可学习 Query。
 
 ## 默认配置

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import torch
 from torch import nn
 
@@ -43,21 +41,7 @@ def _build_sparse_features():
 
 
 def _build_batch() -> BatchTensors:
-    batch_size = 2
-    candidate_tokens = torch.tensor([[10, 11, 0], [12, 0, 0]], dtype=torch.long)
-    candidate_mask = torch.tensor([[True, True, False], [True, False, False]], dtype=torch.bool)
-    context_tokens = torch.tensor([[13, 0, 0], [14, 15, 0]], dtype=torch.long)
-    context_mask = torch.tensor([[True, False, False], [True, True, False]], dtype=torch.bool)
-
     return BatchTensors(
-        candidate_tokens=candidate_tokens,
-        candidate_mask=candidate_mask,
-        context_tokens=context_tokens,
-        context_mask=context_mask,
-        history_tokens=torch.zeros(batch_size, 1, dtype=torch.long),
-        history_mask=torch.zeros(batch_size, 1, dtype=torch.bool),
-        sequence_tokens=torch.zeros(batch_size, 1, 1, dtype=torch.long),
-        sequence_mask=torch.zeros(batch_size, 1, 1, dtype=torch.bool),
         dense_features=torch.tensor([[0.1, 0.2], [0.3, 0.4]], dtype=torch.float32),
         labels=torch.tensor([1.0, 0.0], dtype=torch.float32),
         user_indices=torch.tensor([1, 2], dtype=torch.long),
@@ -84,20 +68,13 @@ class TinyEmbeddingCollectionModel(nn.Module):
 def test_embedding_collection_model_prefers_sparse_features() -> None:
     model = TinyEmbeddingCollectionModel().eval()
     batch = _build_batch()
-    erased_legacy_batch = replace(
-        batch,
-        candidate_tokens=torch.zeros_like(batch.candidate_tokens),
-        candidate_mask=torch.zeros_like(batch.candidate_mask),
-        context_tokens=torch.zeros_like(batch.context_tokens),
-        context_mask=torch.zeros_like(batch.context_mask),
-    )
 
     with torch.inference_mode():
-        expected = model(batch)
-        actual = model(erased_legacy_batch)
+        actual = model(batch)
 
-    assert expected.shape == batch.labels.shape
-    assert torch.allclose(actual, expected, atol=1.0e-6, rtol=0.0)
+    assert not hasattr(batch, "candidate_tokens")
+    assert not hasattr(batch, "context_tokens")
+    assert actual.shape == batch.labels.shape
 
 
 def test_quantized_embedding_collection_model_runs_with_batch_input() -> None:

@@ -127,7 +127,29 @@ def test_build_benchmark_acceptance_summary_compares_candidate_phase() -> None:
     )
 
     assert summary["candidate_phase"] == "optimized"
+    assert summary["candidate_phases"] == {"embedding": "optimized", "attention": "optimized"}
     assert summary["acceptance"]["embedding_throughput_vs_baseline"]["status"] == "pass"
+    assert summary["acceptance"]["attention_latency_vs_baseline"]["status"] == "pass"
+    assert summary["acceptance"]["int8_quantization_record_present"]["status"] == "pass"
+
+
+def test_build_benchmark_acceptance_summary_resolves_candidate_phase_per_component() -> None:
+    summary = build_benchmark_acceptance_summary(
+        [
+            {"name": "embedding_lookup", "component": "embedding", "phase": "baseline", "label": "phase-0", "median_ms": 1.5, "throughput": 4096.0},
+            {"name": "embedding_lookup_torchrec", "component": "embedding", "phase": "phase-2", "label": "phase-2", "median_ms": 0.6, "throughput": 10240.0},
+            {"name": "attention_forward", "component": "attention", "phase": "baseline", "label": "phase-0", "median_ms": 2.5},
+            {"name": "attention_forward_triton", "component": "attention", "phase": "phase-3", "label": "phase-3", "median_ms": 1.4},
+            {"name": "quantized_inference", "component": "quantization", "phase": "phase-6", "label": "phase-6", "model": "tiny/int8", "median_ms": 2.1, "memory_mb": 128.0},
+        ],
+        baseline_phase="baseline",
+    )
+
+    assert summary["candidate_phase"] is None
+    assert summary["candidate_phases"] == {"embedding": "phase-2", "attention": "phase-3"}
+    assert summary["acceptance"]["embedding_throughput_vs_baseline"]["candidate_phase"] == "phase-2"
+    assert summary["acceptance"]["embedding_throughput_vs_baseline"]["status"] == "pass"
+    assert summary["acceptance"]["attention_latency_vs_baseline"]["candidate_phase"] == "phase-3"
     assert summary["acceptance"]["attention_latency_vs_baseline"]["status"] == "pass"
     assert summary["acceptance"]["int8_quantization_record_present"]["status"] == "pass"
 

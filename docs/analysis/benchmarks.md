@@ -22,6 +22,8 @@ uv run taac-bench-report --input benchmark-result.json --summary-path docs/asset
 
 这个摘要会聚合 phase 基准数据，并给出 embedding 吞吐、attention 延迟和量化记录是否满足路线图验收条件。
 
+当命令行没有显式传入统一的 candidate phase 时，摘要会按组件自动解析最近可用的候选 phase：例如 embedding 默认读取 phase-2 记录，attention 默认读取 phase-3 记录，量化记录继续使用 phase-6。
+
 ## 组件延迟对比
 
 <div class="echarts" data-src="assets/figures/benchmarks/component_latency.echarts.json"></div>

@@ -28,6 +28,15 @@ SPARSE_TABLE_NAMES = (
     "candidate_author_tokens",
 )
 
+SEQUENCE_FEATURE_KEYS = (
+    "history_tokens",
+    "history_post_tokens",
+    "history_author_tokens",
+    "history_action_tokens",
+    "history_time_gap",
+    "history_group_ids",
+)
+
 
 class FeatureInteractionEncoder(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, dropout: float, expansion_factor: int = 4) -> None:
@@ -53,6 +62,7 @@ class OOModel(nn.Module):
         super().__init__()
         self.hidden_dim = model_config.hidden_dim
         self.sequence_count = len(data_config.sequence_names)
+        self.history_capacity = self.sequence_count * data_config.max_seq_len
         self.sparse_embedding = TorchRecEmbeddingBagAdapter(
             feature_schema=build_default_feature_schema(data_config, model_config),
             table_names=SPARSE_TABLE_NAMES,
@@ -111,6 +121,11 @@ class OOModel(nn.Module):
             raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
         return batch.sparse_features
 
+    def _require_sequence_features(self, batch: BatchTensors):
+        if batch.sequence_features is None:
+            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sequence_features")
+        return batch.sequence_features
+
     def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
         pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
         return {
@@ -118,23 +133,39 @@ class OOModel(nn.Module):
             for name in SPARSE_TABLE_NAMES
         }
 
+    def _dense_sequence_tokens(self, sequence_by_key, name: str) -> tuple[torch.Tensor, torch.Tensor]:
+        jagged = sequence_by_key[name]
+        tokens = jagged.to_padded_dense(desired_length=self.history_capacity, padding_value=0).to(dtype=torch.long)
+        lengths = jagged.lengths().to(device=tokens.device)
+        positions = torch.arange(self.history_capacity, device=tokens.device).unsqueeze(0)
+        mask = positions < lengths.unsqueeze(1)
+        return tokens, mask
+
     def build_sequence_inputs(self, batch: BatchTensors) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if batch.history_post_tokens is None or batch.history_author_tokens is None:
-            raise RuntimeError("Batch is missing history entity token fields")
-        if batch.history_action_tokens is None or batch.history_time_gap is None or batch.history_group_ids is None:
-            raise RuntimeError("Batch is missing history metadata fields")
+        sequence_by_key = self._require_sequence_features(batch).to_dict()
+        missing_keys = [name for name in SEQUENCE_FEATURE_KEYS if name not in sequence_by_key]
+        if missing_keys:
+            missing = ", ".join(missing_keys)
+            raise RuntimeError(f"Batch sequence_features is missing required keys: {missing}")
 
         sparse_summaries = self._pooled_sparse_summaries(batch)
         dense_summary = self.dense_projection(batch.dense_features)
 
-        history_hidden = self.embed_tokens(batch.history_tokens)
-        post_hidden = self.embed_tokens(batch.history_post_tokens)
-        author_hidden = self.embed_tokens(batch.history_author_tokens)
-        action_hidden = self.embed_tokens(batch.history_action_tokens)
-        group_hidden = self.sequence_group_embedding(batch.history_group_ids)
-        gap_hidden = self.time_gap_embedding(batch.history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
+        history_tokens, history_mask = self._dense_sequence_tokens(sequence_by_key, "history_tokens")
+        history_post_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_post_tokens")
+        history_author_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_author_tokens")
+        history_action_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_action_tokens")
+        history_time_gap, _ = self._dense_sequence_tokens(sequence_by_key, "history_time_gap")
+        history_group_ids, _ = self._dense_sequence_tokens(sequence_by_key, "history_group_ids")
 
-        seq_len = batch.history_tokens.shape[1]
+        history_hidden = self.embed_tokens(history_tokens)
+        post_hidden = self.embed_tokens(history_post_tokens)
+        author_hidden = self.embed_tokens(history_author_tokens)
+        action_hidden = self.embed_tokens(history_action_tokens)
+        group_hidden = self.sequence_group_embedding(history_group_ids)
+        gap_hidden = self.time_gap_embedding(history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
+
+        seq_len = history_tokens.shape[1]
         user_states = sparse_summaries["user_tokens"].unsqueeze(1).expand(-1, seq_len, -1)
         context_states = sparse_summaries["context_tokens"].unsqueeze(1).expand(-1, seq_len, -1)
         dense_states = dense_summary.unsqueeze(1).expand(-1, seq_len, -1)
@@ -152,14 +183,14 @@ class OOModel(nn.Module):
             ],
             dim=-1,
         )
-        sequence_states = self.sequence_encoder(sequence_inputs) * batch.history_mask.unsqueeze(-1).float()
+        sequence_states = self.sequence_encoder(sequence_inputs) * history_mask.unsqueeze(-1).float()
 
         sequence_positions = torch.arange(seq_len, device=sequence_states.device, dtype=torch.float32).unsqueeze(0)
         recency = (
-            float(TIME_GAP_BUCKET_COUNT + 1) - batch.history_time_gap.float().clamp(min=0.0, max=float(TIME_GAP_BUCKET_COUNT + 1))
+            float(TIME_GAP_BUCKET_COUNT + 1) - history_time_gap.float().clamp(min=0.0, max=float(TIME_GAP_BUCKET_COUNT + 1))
         ) / float(TIME_GAP_BUCKET_COUNT + 1)
-        pseudo_timestamps = (sequence_positions + recency) * batch.history_mask.float()
-        return sequence_states, batch.history_mask, pseudo_timestamps
+        pseudo_timestamps = (sequence_positions + recency) * history_mask.float()
+        return sequence_states, history_mask, pseudo_timestamps
 
     def encode_sequence(self, batch: BatchTensors) -> torch.Tensor:
         sequence_states, sequence_mask, pseudo_timestamps = self.build_sequence_inputs(batch)

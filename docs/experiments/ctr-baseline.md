@@ -17,6 +17,8 @@ icon: lucide/flask-conical
 - DIN 风格的目标-兴趣注意力
 - 无特征交叉层
 
+当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。CTR Baseline 会从 TorchRec `KeyedJaggedTensor` 重建历史事件三元组，而不再依赖实验包私有的 legacy collate 序列张量。
+
 ## 默认配置
 
 | 参数              | 值   |
