@@ -4,7 +4,7 @@
 
 测试套件位于 `tests/`，使用 [pytest](https://docs.pytest.org/) 运行。所有测试按文件名自动标记为 **unit**、**integration** 或 **gpu**——无需手写 `@pytest.mark`，由 `tests/conftest.py` 中的文件名集合统一管理。
 
-快速 CI（`.github/workflows/ci.yml`）负责 CPU unit 与 coverage 门槛；GPU 测试与性能测试则分别拆到手动触发的 `.github/workflows/gpu-tests.yml` 和 `.github/workflows/performance-benchmarks.yml`。这样做是因为仓库当前固定的是 CUDA 版 TorchRec 和 fbgemm-gpu，部分看似 CPU 断言的测试在导入阶段也会要求 `libcuda.so.1`，而文档部署不应被等待自托管 runner 的队列阻塞。
+快速 CI（`.github/workflows/ci.yml`）负责 CPU unit 与 CPU-safe coverage 门槛；GPU 测试与性能测试则分别拆到手动触发的 `.github/workflows/gpu-tests.yml` 和 `.github/workflows/performance-benchmarks.yml`。这样做是因为仓库当前固定的是 CUDA 版 TorchRec 和 fbgemm-gpu，部分看似 CPU 断言的测试在导入阶段也会要求 `libcuda.so.1`，而文档部署不应被等待自托管 runner 的队列阻塞。
 
 ## 快速开始
 
@@ -55,6 +55,8 @@ uv run --with coverage coverage report
 
 配置位于 `pyproject.toml` 的 `[tool.coverage.*]` 段。
 
+快速 CI 不会直接拿 unit-only 数据去校验这组全量范围，而是单独对 CPU-safe 子集执行门槛：`src/taac2026/domain/*`、`src/taac2026/application/training/__init__.py`、`src/taac2026/application/training/cli.py`、`src/taac2026/application/training/runtime_optimization.py`。如果你要看完整仓库覆盖率，仍然要合并上面的 unit 与 integration/gpu 数据再执行 `uv run --with coverage coverage report`。
+
 ## 模块改动速查
 
 改完代码后，按下表选择最小验证集，快速确认不回退：
@@ -85,21 +87,22 @@ uv run pytest tests/test_metrics.py tests/test_property_based.py -q
 
 ## CI 流程
 
-快速 CI 在 `ubuntu-latest` + Python 3.13 上运行 CPU 纯逻辑测试与 coverage 门槛。GPU 测试与 benchmark 改为独立的手动 workflow，在需要时再投递到自托管 GPU runner。文档部署只等待快速 CI 完成。
+快速 CI 在 `ubuntu-latest` + Python 3.13 上运行 CPU 纯逻辑测试，并只对 CPU-safe 子集执行 coverage 门槛。GPU 测试与 benchmark 改为独立的手动 workflow，在需要时再投递到自托管 GPU runner。文档部署只等待快速 CI 完成。
 
 快速 CI：
 
 1. `uv sync --locked` — 严格锁定环境
 2. `uv run python scripts/lint_torch.py` — torch 导入规范检查
 3. `coverage run --data-file=.coverage.cpu -m pytest -m unit` — CPU 单元测试 + 覆盖率采集
-4. `coverage report` — 门槛校验（< 70 % 失败）
-5. 上传 `coverage.xml` 为 artifact
+4. `coverage report --fail-under=70 --include="src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/runtime_optimization.py"` — CPU-safe 子集门槛校验（< 70 % 失败）
+5. `coverage xml --fail-under=0 --include="src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/runtime_optimization.py" -o coverage.xml` — 导出 CPU-only coverage artifact
 
 手动 GPU 测试：
 
 1. `uv sync --locked` — 在自托管 GPU runner 上同步环境
 2. `uv run python scripts/verify_gpu_env.py --json` — 记录 GPU compute capability、精度路由、TorchRec / fbgemm / Triton 以及可选 Transformer Engine 工具链证据
 3. `coverage run --data-file=.coverage.gpu -m pytest -m "integration or gpu"` — 执行 integration + gpu 标记测试
+4. 上传 `.coverage.gpu` artifact，供需要时与 `.coverage.cpu` 合并查看完整 coverage
 
 手动性能测试：
 

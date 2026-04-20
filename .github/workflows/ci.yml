@@ -81,6 +81,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - test
+    env:
+      CPU_COVERAGE_INCLUDE: src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/runtime_optimization.py
 
     steps:
       - name: Checkout repository
@@ -111,17 +113,18 @@ jobs:
           {
             echo "## Coverage scope"
             echo
-            echo "- enforced from the fast CPU CI workflow"
-            echo "- GPU integration checks are available in .github/workflows/gpu-tests.yml"
+            echo "- enforced from the fast CPU CI workflow using unit-routed, CPU-safe modules only"
+            echo "- includes: src/taac2026/domain/*, src/taac2026/application/training/__init__.py, src/taac2026/application/training/cli.py, src/taac2026/application/training/runtime_optimization.py"
+            echo "- integration and gpu coverage still lives in .github/workflows/gpu-tests.yml"
             echo "- performance benchmarks are available in .github/workflows/performance-benchmarks.yml"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Enforce coverage gate
-        run: uv run --with coverage coverage report
+      - name: Enforce CPU coverage gate
+        run: uv run --with coverage coverage report --fail-under=70 --include="$CPU_COVERAGE_INCLUDE"
 
-      - name: Export coverage XML
+      - name: Export CPU coverage XML
         if: always()
-        run: uv run --with coverage coverage xml -o coverage.xml
+        run: uv run --with coverage coverage xml --fail-under=0 --include="$CPU_COVERAGE_INCLUDE" -o coverage.xml
 
       - name: Upload coverage artifact
         if: always()

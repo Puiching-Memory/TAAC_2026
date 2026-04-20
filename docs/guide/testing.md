@@ -48,6 +48,8 @@ Coverage 统计范围与门槛由 `pyproject.toml` 控制：
 | 分支覆盖 | 开启                                                                                          |
 | 最低门槛 | 70%                                                                                           |
 
+本地完整 coverage 仍建议按上面的 unit + integration 方式采集。快速 CI 由于只跑 `-m unit`，会额外用 `--include` 把门槛收敛到 CPU-safe 子集：`src/taac2026/domain/*`、`src/taac2026/application/training/__init__.py`、`src/taac2026/application/training/cli.py`、`src/taac2026/application/training/runtime_optimization.py`。`integration` 与 `gpu` 覆盖率数据会单独产出在手动 `gpu-tests.yml` workflow 中。
+
 ## 模块改动后的最小复核
 
 | 改动范围                                          | 跑哪些测试                                                                                        |
