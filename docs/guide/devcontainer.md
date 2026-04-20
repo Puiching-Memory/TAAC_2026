@@ -59,6 +59,8 @@ bash .devcontainer/post-create.sh
 - `fbgemm_gpu` 导入
 - `triton` 导入
 - CUDA 可见性
+- GPU Compute Capability 与推荐精度路由
+- 可选 `transformer_engine` 安装状态与 recipe 可用性
 - 一个最小 TorchRec embedding probe
 
 ## 常用命令
@@ -77,6 +79,37 @@ uv run taac-train --experiment config/baseline
 uv run python scripts/verify_gpu_env.py --json
 ```
 
+## 启用 Transformer Engine 可选后端
+
+标准 `TaacTransformerBlock` / `TaacCrossAttentionBlock` 现在支持 `attention_backend="te"` 与 `ffn_backend="te"`。如果你要启用这个后端，先在当前 `uv` 环境里同步额外依赖，并按 TE 官方要求关闭该包的构建隔离：
+
+```bash
+uv sync --locked --extra te --no-build-isolation-package transformer-engine-torch
+uv run python scripts/verify_gpu_env.py --json
+```
+
+如果当前 Python / PyTorch / CUDA 组合没有命中 TE 的预编译 `transformer-engine-torch` wheel，`uv sync` 会回退到源码编译。当前 devcontainer 可先显式导出 CUDA / cuDNN 路径，再重试同步：
+
+```bash
+export CUDA_PATH=/usr/local/cuda
+export CUDA_HOME="$CUDA_PATH"
+export CUDNN_PATH="$(echo "$PWD"/.venv/lib/python*/site-packages/nvidia/cudnn)"
+export CUDNN_HOME="$CUDNN_PATH"
+export CPATH="$CUDA_PATH/targets/x86_64-linux/include:${CPATH:-}"
+export LD_LIBRARY_PATH="$CUDNN_PATH/lib:$CUDA_PATH/lib64:$CUDA_PATH/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+uv sync --locked --extra te --no-build-isolation-package transformer-engine-torch
+uv run python scripts/verify_gpu_env.py --json
+```
+
+当前仓库默认使用自动精度路由：`NVFP4 > MXFP8 > FP8 > BF16 > FP16`。如需覆盖自动选择，可在共享 block 构造时显式传入 `te_precision` 或 `te_recipe_mode`。
+
+启用 TE 时至少确认以下前置条件：
+
+- CUDA 12.1+（Ampere / Ada / Hopper）或 CUDA 12.8+（Blackwell）
+- cuDNN 9.3+
+- FP8 需要 Compute Capability 8.9+
+- MXFP8 / NVFP4 需要 Compute Capability 10.0+
+
 ## 常见问题
 
 ### 容器里看不到 GPU
@@ -90,6 +123,13 @@ uv run python scripts/verify_gpu_env.py --json
 - 不要额外传国内镜像参数。
 - 确认网络可以访问 PyPI 和 PyTorch CUDA 128 index。
 - 如果你改动了 `pyproject.toml`，记得同步更新 `uv.lock`。
+
+### 安装 Transformer Engine 失败
+
+- 优先使用 `uv sync --locked --extra te --no-build-isolation-package transformer-engine-torch`，不要改成普通 `pip install`。
+- 如果日志里出现 `cudnn.h` 或 `crt/host_defines.h` 缺失，先导出上面的 `CUDA_PATH`、`CUDNN_PATH`、`CUDNN_HOME`、`CPATH`、`LD_LIBRARY_PATH` 后再重试。
+- Blackwell 机器需要 CUDA 12.8+；Ampere / Ada / Hopper 至少需要 CUDA 12.1+。
+- 编译资源不足时，可先设置 `MAX_JOBS=1` 再重试同步。
 
 ### 只想看文档，不想装完整 CUDA 训练栈
 

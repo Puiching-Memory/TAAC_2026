@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import math
 from functools import lru_cache
 from typing import Literal
@@ -8,6 +9,13 @@ import torch
 from torch import nn
 
 from .norms import RMSNorm
+from .te_backend import (
+    TransformerEngineAttention,
+    TransformerEngineFeedForward,
+    TransformerEnginePrecision,
+    TransformerEngineRecipeMode,
+    build_transformer_engine_context,
+)
 from .triton_attention import AttentionBackend, TritonAttention, triton_attention
 from .triton_ffn import FeedForwardBackend, triton_ffn_activation
 
@@ -38,6 +46,24 @@ def _apply_token_mask(hidden_states: torch.Tensor, token_mask: torch.Tensor | No
     if token_mask is None:
         return hidden_states
     return hidden_states * token_mask.unsqueeze(-1).to(dtype=hidden_states.dtype)
+
+
+def _build_shared_te_context(
+    device: torch.device,
+    *,
+    use_shared_te_context: bool,
+    te_precision: TransformerEnginePrecision,
+    te_recipe_mode: TransformerEngineRecipeMode,
+    te_amax_history_len: int,
+):
+    if not use_shared_te_context:
+        return nullcontext()
+    return build_transformer_engine_context(
+        device,
+        requested_precision=te_precision,
+        requested_recipe_mode=te_recipe_mode,
+        amax_history_len=te_amax_history_len,
+    )
 
 
 def apply_token_specific_linear(
@@ -108,6 +134,9 @@ class TaacTransformerBlock(nn.Module):
         attention_type: AttentionType = "standard",
         attention_backend: AttentionBackend = "auto",
         ffn_backend: FeedForwardBackend = "auto",
+        te_precision: TransformerEnginePrecision = "auto",
+        te_recipe_mode: TransformerEngineRecipeMode = "auto",
+        te_amax_history_len: int = 16,
     ) -> None:
         super().__init__()
         resolved_attention_type = str(attention_type).strip().lower()
@@ -115,39 +144,90 @@ class TaacTransformerBlock(nn.Module):
             raise ValueError(f"Unsupported attention_type '{attention_type}'")
 
         self.attention_type = resolved_attention_type
+        self.uses_te_attention = str(attention_backend).strip().lower() == "te"
+        self.uses_te_ffn = str(ffn_backend).strip().lower() == "te"
+        self.te_precision = te_precision
+        self.te_recipe_mode = te_recipe_mode
+        self.te_amax_history_len = te_amax_history_len
         self.attention_norm = _build_norm(hidden_dim, norm_type)
-        self.self_attention = TritonAttention(
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=attention_dropout,
-            backend=attention_backend,
-        )
+        if self.uses_te_attention:
+            self.self_attention = TransformerEngineAttention(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=attention_dropout,
+                attention_type="self",
+                te_precision=te_precision,
+                te_recipe_mode=te_recipe_mode,
+                te_amax_history_len=te_amax_history_len,
+            )
+        else:
+            self.self_attention = TritonAttention(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=attention_dropout,
+                backend=attention_backend,
+            )
         resolved_ffn_dim = ffn_dim if ffn_dim is not None else int(hidden_dim * ffn_multiplier)
-        self.ffn_norm = _build_norm(hidden_dim, norm_type)
-        self.feed_forward = FeedForwardNetwork(
-            hidden_dim=hidden_dim,
-            ffn_dim=resolved_ffn_dim,
-            ffn_type=ffn_type,
-            dropout=dropout,
-            backend=ffn_backend,
-        )
+        if self.uses_te_ffn:
+            self.ffn_norm = nn.Identity()
+            self.feed_forward = TransformerEngineFeedForward(
+                hidden_dim=hidden_dim,
+                ffn_dim=resolved_ffn_dim,
+                norm_type=norm_type,
+                activation=ffn_type,
+                dropout=dropout,
+                te_precision=te_precision,
+                te_recipe_mode=te_recipe_mode,
+                te_amax_history_len=te_amax_history_len,
+            )
+        else:
+            self.ffn_norm = _build_norm(hidden_dim, norm_type)
+            self.feed_forward = FeedForwardNetwork(
+                hidden_dim=hidden_dim,
+                ffn_dim=resolved_ffn_dim,
+                ffn_type=ffn_type,
+                dropout=dropout,
+                backend=ffn_backend,
+            )
         self.residual_dropout = nn.Dropout(dropout)
 
     def forward(self, hidden_states: torch.Tensor, token_mask: torch.Tensor | None = None) -> torch.Tensor:
         normalized_states = self.attention_norm(hidden_states)
-        attention_output = self.self_attention(
-            normalized_states,
-            normalized_states,
-            normalized_states,
-            key_mask=token_mask,
-            query_mask=token_mask,
-            is_causal=self.attention_type == "causal",
-        )
-        hidden_states = hidden_states + self.residual_dropout(attention_output)
-        hidden_states = _apply_token_mask(hidden_states, token_mask)
+        use_shared_te_context = self.uses_te_attention and self.uses_te_ffn
+        with _build_shared_te_context(
+            normalized_states.device,
+            use_shared_te_context=use_shared_te_context,
+            te_precision=self.te_precision,
+            te_recipe_mode=self.te_recipe_mode,
+            te_amax_history_len=self.te_amax_history_len,
+        ):
+            if use_shared_te_context:
+                attention_output = self.self_attention(
+                    normalized_states,
+                    normalized_states,
+                    normalized_states,
+                    key_mask=token_mask,
+                    query_mask=token_mask,
+                    is_causal=self.attention_type == "causal",
+                    use_external_context=True,
+                )
+            else:
+                attention_output = self.self_attention(
+                    normalized_states,
+                    normalized_states,
+                    normalized_states,
+                    key_mask=token_mask,
+                    query_mask=token_mask,
+                    is_causal=self.attention_type == "causal",
+                )
+            hidden_states = hidden_states + self.residual_dropout(attention_output)
+            hidden_states = _apply_token_mask(hidden_states, token_mask)
 
-        ffn_output = self.feed_forward(self.ffn_norm(hidden_states))
-        hidden_states = hidden_states + self.residual_dropout(ffn_output)
+            if use_shared_te_context:
+                ffn_output = self.feed_forward(self.ffn_norm(hidden_states), use_external_context=True)
+            else:
+                ffn_output = self.feed_forward(self.ffn_norm(hidden_states))
+            hidden_states = hidden_states + self.residual_dropout(ffn_output)
         return _apply_token_mask(hidden_states, token_mask)
 
 
@@ -165,25 +245,57 @@ class TaacCrossAttentionBlock(nn.Module):
         ffn_type: FeedForwardType = "gelu",
         attention_backend: AttentionBackend = "auto",
         ffn_backend: FeedForwardBackend = "auto",
+        te_precision: TransformerEnginePrecision = "auto",
+        te_recipe_mode: TransformerEngineRecipeMode = "auto",
+        te_amax_history_len: int = 16,
     ) -> None:
         super().__init__()
         self.query_norm = _build_norm(hidden_dim, norm_type)
         self.context_norm = _build_norm(hidden_dim, norm_type)
-        self.cross_attention = TritonAttention(
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            dropout=attention_dropout,
-            backend=attention_backend,
-        )
+        self.uses_te_attention = str(attention_backend).strip().lower() == "te"
+        self.uses_te_ffn = str(ffn_backend).strip().lower() == "te"
+        self.te_precision = te_precision
+        self.te_recipe_mode = te_recipe_mode
+        self.te_amax_history_len = te_amax_history_len
+        if self.uses_te_attention:
+            self.cross_attention = TransformerEngineAttention(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=attention_dropout,
+                attention_type="cross",
+                te_precision=te_precision,
+                te_recipe_mode=te_recipe_mode,
+                te_amax_history_len=te_amax_history_len,
+            )
+        else:
+            self.cross_attention = TritonAttention(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=attention_dropout,
+                backend=attention_backend,
+            )
         resolved_ffn_dim = ffn_dim if ffn_dim is not None else int(hidden_dim * ffn_multiplier)
-        self.ffn_norm = _build_norm(hidden_dim, norm_type)
-        self.feed_forward = FeedForwardNetwork(
-            hidden_dim=hidden_dim,
-            ffn_dim=resolved_ffn_dim,
-            ffn_type=ffn_type,
-            dropout=dropout,
-            backend=ffn_backend,
-        )
+        if self.uses_te_ffn:
+            self.ffn_norm = nn.Identity()
+            self.feed_forward = TransformerEngineFeedForward(
+                hidden_dim=hidden_dim,
+                ffn_dim=resolved_ffn_dim,
+                norm_type=norm_type,
+                activation=ffn_type,
+                dropout=dropout,
+                te_precision=te_precision,
+                te_recipe_mode=te_recipe_mode,
+                te_amax_history_len=te_amax_history_len,
+            )
+        else:
+            self.ffn_norm = _build_norm(hidden_dim, norm_type)
+            self.feed_forward = FeedForwardNetwork(
+                hidden_dim=hidden_dim,
+                ffn_dim=resolved_ffn_dim,
+                ffn_type=ffn_type,
+                dropout=dropout,
+                backend=ffn_backend,
+            )
         self.residual_dropout = nn.Dropout(dropout)
 
     def forward(
@@ -196,18 +308,39 @@ class TaacCrossAttentionBlock(nn.Module):
     ) -> torch.Tensor:
         normalized_queries = self.query_norm(query_states)
         normalized_context = self.context_norm(context_states)
-        attention_output = self.cross_attention(
-            normalized_queries,
-            normalized_context,
-            normalized_context,
-            key_mask=context_mask,
-            query_mask=query_mask,
-        )
-        query_states = query_states + self.residual_dropout(attention_output)
-        query_states = _apply_token_mask(query_states, query_mask)
+        use_shared_te_context = self.uses_te_attention and self.uses_te_ffn
+        with _build_shared_te_context(
+            normalized_queries.device,
+            use_shared_te_context=use_shared_te_context,
+            te_precision=self.te_precision,
+            te_recipe_mode=self.te_recipe_mode,
+            te_amax_history_len=self.te_amax_history_len,
+        ):
+            if use_shared_te_context:
+                attention_output = self.cross_attention(
+                    normalized_queries,
+                    normalized_context,
+                    normalized_context,
+                    key_mask=context_mask,
+                    query_mask=query_mask,
+                    use_external_context=True,
+                )
+            else:
+                attention_output = self.cross_attention(
+                    normalized_queries,
+                    normalized_context,
+                    normalized_context,
+                    key_mask=context_mask,
+                    query_mask=query_mask,
+                )
+            query_states = query_states + self.residual_dropout(attention_output)
+            query_states = _apply_token_mask(query_states, query_mask)
 
-        ffn_output = self.feed_forward(self.ffn_norm(query_states))
-        query_states = query_states + self.residual_dropout(ffn_output)
+            if use_shared_te_context:
+                ffn_output = self.feed_forward(self.ffn_norm(query_states), use_external_context=True)
+            else:
+                ffn_output = self.feed_forward(self.ffn_norm(query_states))
+            query_states = query_states + self.residual_dropout(ffn_output)
         return _apply_token_mask(query_states, query_mask)
 
 
@@ -224,6 +357,8 @@ class TaacMixedCausalAttention(nn.Module):
         super().__init__()
         if hidden_dim % num_heads != 0:
             raise ValueError("hidden_dim must be divisible by num_heads")
+        if str(attention_backend).strip().lower() == "te":
+            raise ValueError("TaacMixedCausalAttention does not support attention_backend='te'")
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads
@@ -301,6 +436,8 @@ class TaacMixedCausalFeedForward(nn.Module):
         backend: FeedForwardBackend = "auto",
     ) -> None:
         super().__init__()
+        if str(backend).strip().lower() == "te":
+            raise ValueError("TaacMixedCausalFeedForward does not support backend='te'")
         self.backend = backend
         self.seq_up = nn.Linear(hidden_dim, ffn_dim)
         self.seq_down = nn.Linear(ffn_dim, hidden_dim)
@@ -397,6 +534,8 @@ __all__ = [
     "NormType",
     "TaacCrossAttentionBlock",
     "TaacTransformerBlock",
+    "TransformerEnginePrecision",
+    "TransformerEngineRecipeMode",
     "TokenSpecificLinear",
     "apply_token_specific_linear",
     "build_causal_attention_mask",

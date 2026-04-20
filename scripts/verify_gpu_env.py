@@ -17,7 +17,9 @@ import triton
 
 from taac2026.domain.features import FeatureSchema, FeatureTableSpec
 from taac2026.infrastructure.io.sparse_collate import keyed_jagged_from_masked_batches
+from taac2026.infrastructure.nn.gpu_capability import detect_precision_support
 from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
+from taac2026.infrastructure.nn.te_backend import detect_transformer_engine_availability
 
 
 def _run_embedding_probe(device: torch.device) -> dict[str, object]:
@@ -77,6 +79,8 @@ def build_report(allow_missing_gpu: bool) -> dict[str, object]:
         "cuda_available": cuda_available,
         "cuda_device_count": torch.cuda.device_count() if cuda_available else 0,
         "device": str(device),
+        "gpu_precision": detect_precision_support(device if cuda_available else None),
+        "transformer_engine": detect_transformer_engine_availability(device if cuda_available else None),
         "embedding_probe": probe,
     }
 
@@ -98,6 +102,8 @@ def main() -> int:
         print(f"triton        : {report['triton']}")
         print(f"cuda_available: {report['cuda_available']}")
         print(f"device        : {report['device']}")
+        print(f"gpu_precision : {report['gpu_precision']}")
+        print(f"transformer_engine: {report['transformer_engine']}")
         print(f"embedding     : {report['embedding_probe']}")
     return 0
 

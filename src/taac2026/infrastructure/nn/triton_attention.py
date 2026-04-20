@@ -11,7 +11,7 @@ import triton.language as tl
 
 
 AttentionMode = Literal["softmax", "silu"]
-AttentionBackend = Literal["auto", "torch", "triton"]
+AttentionBackend = Literal["auto", "torch", "triton", "te"]
 AttentionPrecision = Literal["native", "fp8-e4m3fn", "fp8-e5m2"]
 _FP8_DTYPE_MAP = {
     "fp8-e4m3fn": torch.float8_e4m3fn,
@@ -188,7 +188,7 @@ def _supports_triton_fp8(device: torch.device) -> bool:
     return capability_major >= 9
 
 
-def _resolve_attention_mask(
+def resolve_attention_mask(
     *,
     query_length: int,
     key_length: int,
@@ -247,7 +247,7 @@ def reference_attention(
     value = _apply_attention_precision(value, precision)
     batch_size, _, query_length, head_dim = query.shape
     key_length = key.shape[-2]
-    combined_mask = _resolve_attention_mask(
+    combined_mask = resolve_attention_mask(
         query_length=query_length,
         key_length=key_length,
         batch_size=batch_size,
@@ -286,7 +286,7 @@ def _can_use_triton_attention(
     precision: AttentionPrecision | str,
 ) -> bool:
     normalized_backend = str(backend).strip().lower()
-    if normalized_backend == "torch":
+    if normalized_backend in {"torch", "te"}:
         return False
     if query.device.type != "cuda":
         return False
@@ -348,7 +348,7 @@ def triton_attention(
 
     batch_size, num_heads, query_length, head_dim = query.shape
     key_length = key.shape[-2]
-    combined_mask = _resolve_attention_mask(
+    combined_mask = resolve_attention_mask(
         query_length=query_length,
         key_length=key_length,
         batch_size=batch_size,
@@ -520,5 +520,6 @@ __all__ = [
     "AttentionPrecision",
     "TritonAttention",
     "reference_attention",
+    "resolve_attention_mask",
     "triton_attention",
 ]

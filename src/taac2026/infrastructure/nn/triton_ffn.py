@@ -9,7 +9,7 @@ import triton
 import triton.language as tl
 
 
-FeedForwardBackend = Literal["auto", "torch", "triton"]
+FeedForwardBackend = Literal["auto", "torch", "triton", "te"]
 FeedForwardActivation = Literal["gelu", "silu", "swiglu"]
 FeedForwardPrecision = Literal["native", "fp8-e4m3fn", "fp8-e5m2"]
 _FP8_DTYPE_MAP = {
@@ -104,7 +104,7 @@ def _can_use_triton_activation(
     precision: FeedForwardPrecision | str,
 ) -> bool:
     normalized_backend = str(backend).strip().lower()
-    if normalized_backend == "torch":
+    if normalized_backend in {"torch", "te"}:
         return False
     if tensor.device.type != "cuda" or tensor.requires_grad:
         return False
