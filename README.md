@@ -218,9 +218,37 @@ print(df.columns)     # ['user_id', 'item_id', 'label_type', ...]
 4. [datawhalechina/torch-rechub](https://github.com/datawhalechina/torch-rechub) 轻量级 PyTorch 推荐框架，覆盖 matching、ranking、multi-task 与 generative 等多类模型，并提供统一训练流程、ONNX 导出与工程化示例，适合作为经典推荐建模与部署链路的对照参考。
 
 ## References
-1. InterFormer: Effective Heterogeneous Interaction Learning for Click-Through Rate Prediction. CIKM, 2025.  
-https://arxiv.org/abs/2411.09852  
-2. OneTrans: Unified Feature Interaction and Sequence Modeling with One Transformer in Industrial Recommender. arXiv preprint, 2025.  
-https://arxiv.org/abs/2510.26104  
-3. HyFormer: Revisiting the Roles of Sequence Modeling and Feature Interaction in CTR Prediction. arXiv preprint, 2026.  
-https://arxiv.org/abs/2601.12681
+```bibtex
+@misc{interformer2025,
+  author = {Zhichen Zeng and Xiaolong Liu and Mengyue Hang and Xiaoyi Liu and Qinghai Zhou and Chaofei Yang and Yiqun Liu and Yichen Ruan and Laming Chen and Yuxin Chen and Yujia Hao and Jiaqi Xu and Jade Nie and Xi Liu and Buyun Zhang and Wei Wen and Siyang Yuan and Hang Yin and Xin Zhang and Kai Wang and Wen-Yen Chen and Yiping Han and Huayu Li and Chunzhi Yang and Bo Long and Philip S. Yu and Hanghang Tong and Jiyan Yang},
+  title = {InterFormer: Effective Heterogeneous Interaction Learning for Click-Through Rate Prediction},
+  year = {2025},
+  eprint = {2411.09852},
+  archivePrefix = {arXiv},
+  note = {CIKM 2025},
+  doi = {10.48550/arXiv.2411.09852},
+  url = {https://arxiv.org/abs/2411.09852},
+}
+
+@misc{onetrans2025,
+  author = {Zhaoqi Zhang and Haolei Pei and Jun Guo and Tianyu Wang and Yufei Feng and Hui Sun and Shaowei Liu and Aixin Sun},
+  title = {OneTrans: Unified Feature Interaction and Sequence Modeling with One Transformer in Industrial Recommender},
+  year = {2025},
+  eprint = {2510.26104},
+  archivePrefix = {arXiv},
+  note = {Accepted at The Web Conference 2026 (WWW 2026)},
+  doi = {10.48550/arXiv.2510.26104},
+  url = {https://arxiv.org/abs/2510.26104},
+}
+
+@misc{hyformer2026,
+  author = {Yunwen Huang and Shiyong Hong and Xijun Xiao and Jinqiu Jin and Xuanyuan Luo and Zhe Wang and Zheng Chai and Shikang Wu and Yuchao Zheng and Jingjian Lin},
+  title = {HyFormer: Revisiting the Roles of Sequence Modeling and Feature Interaction in CTR Prediction},
+  year = {2026},
+  eprint = {2601.12681},
+  archivePrefix = {arXiv},
+  note = {arXiv preprint},
+  doi = {10.48550/arXiv.2601.12681},
+  url = {https://arxiv.org/abs/2601.12681},
+}
+```
