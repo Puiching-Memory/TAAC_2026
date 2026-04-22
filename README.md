@@ -79,6 +79,22 @@ uv run taac-search --experiment config/baseline --trials 20
 uv run taac-evaluate single --experiment config/baseline
 ```
 
+训练/评估默认会使用 HuggingFace 数据集名 `TAAC2026/data_sample_1000`。
+你可以随时覆盖为本地或自定义数据源：
+
+```bash
+# 覆盖为本地 parquet
+uv run taac-train --experiment config/baseline --dataset-path /path/to/train.parquet
+
+# 覆盖为本地目录（包含 parquet）
+uv run taac-train --experiment config/baseline --dataset-path /path/to/dataset_dir
+
+# 覆盖为自定义 Hub 数据集名
+uv run taac-train --experiment config/baseline --dataset-path some_owner/some_dataset
+```
+
+若目标 Hub 数据集尚未缓存，`datasets` 会自动下载并写入本地缓存。
+
 仓库在 `pyproject.toml` 里固定了 `uv` 的 canonical 默认索引，用来保证 `uv.lock` 在本机和 CI 间保持一致。
 如果你的机器全局把 `uv` 换到国内镜像，普通 `uv sync --locked` 仍会按项目配置工作；不要再额外传 `--default-index` 或 `--index-url` 指向镜像，否则 `uv` 会判定 `uv.lock` 需要更新。
 如果只是想加速下载，优先使用系统代理、透明代理或企业缓存代理；如果你确实临时用镜像做过一次重锁，提交前请执行 `uv lock --default-index https://pypi.org/simple --python 3.13` 把锁文件归一回仓库基线。

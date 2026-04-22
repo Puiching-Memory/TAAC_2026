@@ -41,14 +41,12 @@ from taac2026.domain.features import build_default_feature_schema
 
 from .model import build_model_component
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATASET = ROOT / "data" / "datasets--TAAC2026--data_sample_1000"
-DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "config" / "my_experiment"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "outputs" / "config" / "my_experiment"
 
 EXPERIMENT = ExperimentSpec(
     name="my_experiment",
     data=DataConfig(
-        dataset_path=str(DEFAULT_DATASET),
         max_seq_len=32,
         max_feature_tokens=16,
         max_event_features=4,
@@ -198,12 +196,13 @@ uv run taac-evaluate single --experiment config/my_experiment
 
 ## 数据与 schema 约定
 
-默认数据集路径仍指向 HuggingFace 缓存结构：
+默认数据集标识为 HuggingFace 数据集名：
 
 ```
-data/datasets--TAAC2026--data_sample_1000/
+TAAC2026/data_sample_1000
 ```
 
-框架会优先解析本地缓存并读取 `refs/main` 对应快照；如果本地缓存缺失，默认数据管道会按数据集名回退下载。
+你仍然可以在实验包里显式覆盖 `dataset_path`（本地 parquet、本地目录或自定义 Hub 数据集名）。
+默认值在缓存缺失时会自动触发下载并写入本地 HuggingFace 缓存。
 
 `feature_schema` 建议通过 `build_default_feature_schema()` 派生，再根据实验需求做局部调整，而不是从零复制整套表定义。

@@ -44,22 +44,6 @@ bash .devcontainer/post-create.sh
 
 该脚本会安装 Python 3.13、执行 `uv sync --locked`，并运行 GPU / TorchRec 自检脚本。
 
-## 下载样例数据
-
-实验包默认使用 HuggingFace 上的样例数据集 [`TAAC2026/data_sample_1000`](https://huggingface.co/datasets/TAAC2026/data_sample_1000)。框架会自动从本地 HuggingFace 缓存中解析数据路径。
-
-如果 `data/datasets--TAAC2026--data_sample_1000/` 还不存在，第一次运行训练/评估命令时也会自动回退到该 HF 数据集名，并把下载内容写入父目录 `data/` 作为缓存根。
-
-```bash
-# 下载数据到仓库根下的 data/ 目录（作为 HF 缓存根）
-uv run python -c "
-from datasets import load_dataset
-load_dataset('TAAC2026/data_sample_1000', cache_dir='data')
-"
-```
-
-下载完成后，实验包会自动在 `data/datasets--TAAC2026--data_sample_1000/` 下解析 parquet 文件，优先使用 `refs/main` 指向的快照，无需手动指定版本哈希。
-
 ## 训练第一个模型
 
 ```bash
@@ -89,6 +73,31 @@ uv run taac-package-train --experiment config/baseline
 ```
 
 默认产物会写到 `outputs/training_bundles/baseline-train-bundle.zip`。
+
+## 数据集选择
+
+实验包默认使用 HuggingFace 上的样例数据集 [`TAAC2026/data_sample_1000`](https://huggingface.co/datasets/TAAC2026/data_sample_1000)。
+
+默认行为如下：
+
+- 不传 `--dataset-path`：直接按数据集名 `TAAC2026/data_sample_1000` 加载
+- 传本地路径：支持 parquet 文件路径或包含 parquet 的目录路径
+- 传自定义 Hub 名称：按你给的 `<owner>/<repo>` 直接加载
+
+当目标 Hub 数据不在本地缓存时，`datasets` 会自动下载并写入缓存。
+
+你也可以显式指定数据路径覆盖默认值：
+
+```bash
+# 本地 parquet
+uv run taac-train --experiment config/baseline --dataset-path /path/to/train.parquet
+
+# 本地目录（包含 parquet）
+uv run taac-train --experiment config/baseline --dataset-path /path/to/dataset_dir
+
+# 自定义 Hub 数据集名
+uv run taac-train --experiment config/baseline --dataset-path some_owner/some_dataset
+```
 
 ## 评估
 
