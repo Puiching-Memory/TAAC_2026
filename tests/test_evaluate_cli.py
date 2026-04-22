@@ -5,12 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from torch import nn
 
 from config.baseline.data import DENSE_FEATURE_DIM, load_dataloaders
-from taac2026.application.evaluation.cli import parse_args
+from taac2026.application.evaluation.cli import _build_single_summary_rows, _format_quantization_summary, parse_args
+from taac2026.application.evaluation.inference import normalize_inference_export_mode
 from taac2026.application.evaluation.service import _sort_records, evaluate_checkpoint
 from taac2026.domain.config import ModelConfig
+from taac2026.domain.features import FeatureSchema, FeatureTableSpec
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
 from tests.support import TestWorkspace, TinyExperimentModel, create_test_workspace
 
 
@@ -141,7 +145,71 @@ def test_evaluate_checkpoint_supports_int8_quantized_inference(test_workspace: T
     assert payload["quantization"]["active"] is True
     assert payload["quantization"]["mode"] == "int8"
     assert payload["quantization"]["quantized_linear_layers"] > 0
+    assert payload["quantization"]["reason"] == "dynamic int8 inference quantized nn.Linear modules via torchao on cpu"
+    assert "requested_mode" not in payload["quantization"]
+    assert "quantizable_linear_layers" not in payload["quantization"]
+    assert "quantizable_embedding_collections" not in payload["quantization"]
+    assert "quantized_embedding_collections" not in payload["quantization"]
+    assert "blocked_embedding_collections" not in payload["quantization"]
+    assert "blockers" not in payload["quantization"]
     assert payload["quantization"]["runtime_overrides"]["forced_device"] == "cpu"
+
+
+def test_format_quantization_summary_reports_linear_counts() -> None:
+    actual = _format_quantization_summary(
+        {
+            "mode": "int8",
+            "quantized_linear_layers": 2,
+        }
+    )
+
+    assert actual == "int8 | linear=2"
+
+
+def test_format_quantization_summary_marks_inactive_int8() -> None:
+    actual = _format_quantization_summary(
+        {
+            "mode": "int8",
+            "active": False,
+            "quantized_linear_layers": 0,
+            "reason": "model has no nn.Linear modules eligible for dynamic int8 quantization",
+        }
+    )
+
+    assert actual == "int8 | inactive"
+
+
+def test_build_single_summary_rows_includes_quantization_reason_only() -> None:
+    report = {
+        "experiment": "baseline",
+        "experiment_path": "config/baseline",
+        "checkpoint_path": "outputs/best.pt",
+        "device": "cpu",
+        "quantization": {
+            "mode": "int8",
+            "quantized_linear_layers": 3,
+            "reason": "dynamic int8 inference quantized nn.Linear modules via torchao on cpu",
+        },
+        "export": {"mode": "none", "artifact_path": None},
+        "loss": 0.125,
+        "metrics": {"auc": 0.75, "pr_auc": 0.5},
+        "mean_latency_ms_per_sample": 0.25,
+        "p95_latency_ms_per_sample": 0.4,
+    }
+
+    rows = dict(_build_single_summary_rows(report))
+
+    assert rows["quantization"] == "int8 | linear=3"
+    assert rows["quantization_reason"] == report["quantization"]["reason"]
+    assert "quantization_blockers" not in rows
+
+
+def test_normalize_inference_export_mode_rejects_legacy_aliases() -> None:
+    assert normalize_inference_export_mode(None) == "none"
+    with pytest.raises(ValueError, match="Unsupported export mode"):
+        normalize_inference_export_mode("export")
+    with pytest.raises(ValueError, match="Unsupported export mode"):
+        normalize_inference_export_mode("pt2")
 
 
 def test_evaluate_checkpoint_can_export_model_for_inference(test_workspace: TestWorkspace) -> None:
@@ -196,6 +264,52 @@ def test_evaluate_checkpoint_rejects_quantized_export_combination(test_workspace
             output_path=test_workspace.root / "evaluation_export_int8.json",
             quantization_mode="int8",
             export_mode="torch-export",
+        )
+
+
+def test_evaluate_checkpoint_rejects_int8_for_torchrec_embedding_collection_model(
+    test_workspace: TestWorkspace,
+) -> None:
+    experiment_path = test_workspace.write_experiment_package()
+    experiment = load_experiment_package(experiment_path)
+
+    feature_schema = FeatureSchema(
+        tables=(
+            FeatureTableSpec(name="user_tokens", family="user", num_embeddings=64, embedding_dim=4),
+            FeatureTableSpec(name="context_tokens", family="context", num_embeddings=64, embedding_dim=4),
+            FeatureTableSpec(name="candidate_tokens", family="candidate", num_embeddings=64, embedding_dim=4),
+        ),
+        dense_dim=DENSE_FEATURE_DIM,
+    )
+
+    class _TorchRecEvaluationModel(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.embedding = TorchRecEmbeddingBagAdapter(
+                feature_schema,
+                table_names=("user_tokens", "context_tokens", "candidate_tokens"),
+            )
+            self.output = nn.Linear(self.embedding.output_dim + DENSE_FEATURE_DIM, 1)
+
+        def forward(self, batch) -> torch.Tensor:
+            if batch.sparse_features is None:
+                raise RuntimeError("Batch is missing sparse_features")
+            pooled = self.embedding(batch.sparse_features)
+            fused = torch.cat([pooled, batch.dense_features], dim=-1)
+            return self.output(fused).squeeze(-1)
+
+    experiment.build_model_component = lambda data_config, model_config, dense_dim: _TorchRecEvaluationModel()
+    model = experiment.build_model_component(experiment.data, experiment.model, DENSE_FEATURE_DIM)
+    checkpoint_path = test_workspace.root / "torchrec_ebc_int8.pt"
+    torch.save({"model_state_dict": model.state_dict()}, checkpoint_path)
+
+    with pytest.raises(ValueError, match="does not support TorchRec EmbeddingBagCollection modules"):
+        evaluate_checkpoint(
+            experiment_path=experiment_path,
+            checkpoint_path=checkpoint_path,
+            output_path=test_workspace.root / "evaluation_torchrec_ebc_int8.json",
+            experiment=experiment,
+            quantization_mode="int8",
         )
 
 

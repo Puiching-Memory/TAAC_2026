@@ -32,6 +32,43 @@ def _apply_runtime_optimization_args(experiment, args: argparse.Namespace) -> No
         experiment.train.amp_dtype = args.amp_dtype
 
 
+def _format_quantization_summary(summary: dict[str, Any]) -> str:
+    mode = str(summary.get("mode", "none"))
+    if mode == "none":
+        return mode
+
+    parts = [mode]
+    quantized_linear_layers = int(summary.get("quantized_linear_layers", 0) or 0)
+    active = summary.get("active")
+    resolved_active = bool(active) if active is not None else quantized_linear_layers > 0
+    if not resolved_active:
+        parts.append("inactive")
+        return " | ".join(parts)
+
+    if quantized_linear_layers > 0:
+        parts.append(f"linear={quantized_linear_layers}")
+    return " | ".join(parts)
+
+
+def _build_single_summary_rows(report: dict[str, Any]) -> list[tuple[str, Any]]:
+    quantization = report["quantization"]
+    return [
+        ("experiment", report["experiment"]),
+        ("experiment_path", report["experiment_path"]),
+        ("checkpoint_path", report["checkpoint_path"]),
+        ("device", report["device"]),
+        ("quantization", _format_quantization_summary(quantization)),
+        ("quantization_reason", quantization.get("reason") or "-"),
+        ("export", report["export"]["mode"]),
+        ("export_artifact", report["export"].get("artifact_path") or "-"),
+        ("loss", f"{float(report['loss']):.6f}"),
+        ("auc", f"{float(report['metrics'].get('auc', 0.0)):.6f}"),
+        ("pr_auc", f"{float(report['metrics'].get('pr_auc', 0.0)):.6f}"),
+        ("mean_latency_ms_per_sample", f"{float(report['mean_latency_ms_per_sample']):.4f}"),
+        ("p95_latency_ms_per_sample", f"{float(report['p95_latency_ms_per_sample']):.4f}"),
+    ]
+
+
 def _print_batch_table(records: list[dict[str, Any]]) -> None:
     table = Table(title="taac-evaluate batch", box=box.SIMPLE_HEAVY, header_style="bold cyan")
     table.add_column("Rank", justify="right", style="cyan", no_wrap=True)
@@ -44,7 +81,7 @@ def _print_batch_table(records: list[dict[str, Any]]) -> None:
         table.add_row(
             str(index),
             str(record.get("experiment_path") or record.get("experiment") or record.get("model_name")),
-            str(record.get("quantization", {}).get("mode", "none")),
+            _format_quantization_summary(record.get("quantization", {})),
             f"{float(record.get('metrics', {}).get('auc', record.get('auc', 0.0))):.6f}",
             f"{float(record.get('metrics', {}).get('pr_auc', record.get('pr_auc', 0.0))):.6f}",
             f"{float(record.get('mean_latency_ms_per_sample', 0.0)):.4f}",
@@ -105,20 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print_summary_table(
             "taac-evaluate single",
-            [
-                ("experiment", report["experiment"]),
-                ("experiment_path", report["experiment_path"]),
-                ("checkpoint_path", report["checkpoint_path"]),
-                ("device", report["device"]),
-                ("quantization", report["quantization"]["mode"]),
-                ("export", report["export"]["mode"]),
-                ("export_artifact", report["export"].get("artifact_path") or "-"),
-                ("loss", f"{float(report['loss']):.6f}"),
-                ("auc", f"{float(report['metrics'].get('auc', 0.0)):.6f}"),
-                ("pr_auc", f"{float(report['metrics'].get('pr_auc', 0.0)):.6f}"),
-                ("mean_latency_ms_per_sample", f"{float(report['mean_latency_ms_per_sample']):.4f}"),
-                ("p95_latency_ms_per_sample", f"{float(report['p95_latency_ms_per_sample']):.4f}"),
-            ],
+            _build_single_summary_rows(report),
         )
         return 0
 
@@ -152,4 +176,4 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["main", "parse_args"]
+__all__ = ["main", "parse_args", "_build_single_summary_rows", "_format_quantization_summary"]

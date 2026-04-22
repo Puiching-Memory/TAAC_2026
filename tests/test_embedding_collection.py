@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import torch
 from torch import nn
 
@@ -77,17 +78,8 @@ def test_embedding_collection_model_prefers_sparse_features() -> None:
     assert actual.shape == batch.labels.shape
 
 
-def test_quantized_embedding_collection_model_runs_with_batch_input() -> None:
+def test_quantized_embedding_collection_model_rejects_int8_quantization() -> None:
     model = TinyEmbeddingCollectionModel().eval()
-    batch = _build_batch()
 
-    quantized_model, summary = quantize_model_for_inference(model, "int8")
-
-    assert summary["active"] is True
-    assert summary["quantizable_linear_layers"] > 0
-    assert summary["quantized_embedding_collections"] > 0
-    with torch.inference_mode():
-        output = quantized_model(batch)
-
-    assert output.shape == batch.labels.shape
-    assert torch.isfinite(output).all().item()
+    with pytest.raises(ValueError, match="does not support TorchRec EmbeddingBagCollection modules"):
+        quantize_model_for_inference(model, "int8")

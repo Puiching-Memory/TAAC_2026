@@ -121,7 +121,7 @@ graph TD
 - `optimizers.py`：`Muon`、`CombinedOptimizer`、`build_hybrid_optimizer()`
 - `transformer.py`：`TaacTransformerBlock`、`TaacCrossAttentionBlock`
 - `hstu.py`：`HSTUBlock`、`TimeAwareHSTU`、`BranchTransducer`、`MixtureOfTransducers`、`BlockAttnRes`、时间偏置 / RoPE helper
-- `quantization.py`：评估侧动态 int8 量化入口（`nn.Linear` + `EmbeddingBagCollection`）
+- `quantization.py`：评估侧动态 int8 量化入口（torchao `nn.Linear` 主路径；TorchRec `EmbeddingBagCollection` 显式不支持 int8）
 - `triton_norm.py`：首个 Triton RMSNorm kernel 与测试支架
 
 这些组件已经覆盖了主干里的共享注意力、RMSNorm、HSTU 与混合优化器路径；当前未完成的重点收尾转为 fp8 kernel，以及基于 benchmark 的最终验收报告。

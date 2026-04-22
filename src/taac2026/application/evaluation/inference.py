@@ -12,20 +12,12 @@ from ..training.runtime_optimization import RuntimeExecution, prepare_runtime_ex
 
 
 SUPPORTED_INFERENCE_EXPORT_MODES = ("none", "torch-export")
-_EXPORT_MODE_ALIASES = {
-    "off": "none",
-    "false": "none",
-    "export": "torch-export",
-    "pt2": "torch-export",
-    "torch.export": "torch-export",
-}
 
 
 def normalize_inference_export_mode(mode: str | None) -> str:
     if mode is None:
         return "none"
     normalized = str(mode).strip().lower()
-    normalized = _EXPORT_MODE_ALIASES.get(normalized, normalized)
     if normalized not in SUPPORTED_INFERENCE_EXPORT_MODES:
         supported = ", ".join(SUPPORTED_INFERENCE_EXPORT_MODES)
         raise ValueError(f"Unsupported export mode '{mode}'. Expected one of: {supported}")
@@ -42,7 +34,6 @@ def export_model_for_inference(
     resolved_mode = normalize_inference_export_mode(mode)
     if resolved_mode == "none":
         return {
-            "requested_mode": resolved_mode,
             "mode": resolved_mode,
             "active": False,
             "reason": None,
@@ -60,7 +51,6 @@ def export_model_for_inference(
     exported_program = torch.export.export(model.eval(), (example_batch,))
     torch.export.save(exported_program, resolved_output_path)
     return {
-        "requested_mode": resolved_mode,
         "mode": resolved_mode,
         "active": True,
         "reason": "captured an example-shape evaluation graph with torch.export",

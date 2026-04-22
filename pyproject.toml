@@ -21,6 +21,7 @@ dependencies = [
 	"pytest-benchmark>=5.1",
 	"rich>=13.9",
 	"torch>=2.6; platform_system == 'Linux'",
+	"torchao>=0.17; platform_system == 'Linux'",
 	"triton>=3.2; platform_system == 'Linux'",
 	"torchrec>=1.0; platform_system == 'Linux'",
 ]
@@ -32,6 +33,9 @@ te = [
 
 [tool.uv.sources]
 torch = [
+	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'" },
+]
+torchao = [
 	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'" },
 ]
 "fbgemm-gpu" = [

@@ -108,7 +108,7 @@ uv run taac-evaluate single --experiment config/baseline --compile --amp --amp-d
 
 评估报告包含：AUC、PR-AUC、Brier Score、LogLoss、GAUC，以及推理延迟（ms/sample）。
 
-`--quantize int8` 当前会把推理切到 CPU，并对 `nn.Linear` 与 TorchRec `EmbeddingBagCollection` 应用动态 int8 量化；这条路径适合本地或 CI 的推理回归验证，不会修改训练 checkpoint 本身。
+`--quantize int8` 当前会把推理切到 CPU，并通过 torchao 对 `nn.Linear` 应用动态 int8 量化；如果模型包含 TorchRec `EmbeddingBagCollection`，评估会直接拒绝这条 int8 路径并要求回退到 `--quantize none`。这条路径适合本地或 CI 的推理回归验证，不会修改训练 checkpoint 本身。
 
 `--export-mode torch-export` 会基于当前评估 batch 生成 `.pt2` artifact，默认输出到评估输出目录，可用于后续 AOTI / runtime backend 集成验证。
 

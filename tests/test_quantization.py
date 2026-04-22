@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import pytest
 import torch
 from torch import nn
 
 from taac2026.domain.features import FeatureSchema, FeatureTableSpec
-from taac2026.infrastructure.io.sparse_collate import keyed_jagged_from_masked_batches
 from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
 from taac2026.infrastructure.nn.quantization import normalize_quantization_mode, quantize_model_for_inference
 from taac2026.infrastructure.nn.triton_attention import reference_attention, triton_attention
 from taac2026.infrastructure.nn.triton_ffn import reference_ffn_activation, triton_ffn_activation
 
 
-def test_normalize_quantization_mode_accepts_aliases() -> None:
+def test_normalize_quantization_mode_rejects_legacy_aliases() -> None:
     assert normalize_quantization_mode(None) == "none"
-    assert normalize_quantization_mode("off") == "none"
-    assert normalize_quantization_mode("linear-int8") == "int8"
+    with pytest.raises(ValueError, match="Unsupported quantization mode"):
+        normalize_quantization_mode("off")
+    with pytest.raises(ValueError, match="Unsupported quantization mode"):
+        normalize_quantization_mode("linear-int8")
 
 
 def test_quantize_model_for_inference_quantizes_linear_layers() -> None:
@@ -35,20 +37,27 @@ def test_quantize_model_for_inference_quantizes_linear_layers() -> None:
     assert output.shape == (2, 4)
 
 
-def test_quantize_model_for_inference_quantizes_torchrec_embedding_bag_collections() -> None:
+def test_quantize_model_for_inference_keeps_original_model_unmodified() -> None:
+    model = nn.Sequential(
+        nn.Linear(8, 16),
+        nn.SiLU(),
+        nn.Linear(16, 4),
+    )
+
+    quantized_model, summary = quantize_model_for_inference(model, "int8")
+
+    assert summary["active"] is True
+    assert quantized_model is not model
+    assert isinstance(model[0].weight, nn.Parameter)
+    assert type(quantized_model[0].weight).__name__ == "Int8Tensor"
+
+
+def test_quantize_model_for_inference_rejects_torchrec_embedding_bag_collections() -> None:
     feature_schema = FeatureSchema(
         tables=(
             FeatureTableSpec(name="user_tokens", family="user", num_embeddings=64, embedding_dim=4),
         ),
         dense_dim=0,
-    )
-    features = keyed_jagged_from_masked_batches(
-        {
-            "user_tokens": (
-                torch.tensor([[1, 2, 0], [3, 0, 0]], dtype=torch.long),
-                torch.tensor([[True, True, False], [True, False, False]], dtype=torch.bool),
-            ),
-        }
     )
 
     class TinyTorchRecModel(nn.Module):
@@ -63,12 +72,8 @@ def test_quantize_model_for_inference_quantizes_torchrec_embedding_bag_collectio
 
     model = TinyTorchRecModel()
 
-    quantized_model, summary = quantize_model_for_inference(model, "int8")
-
-    assert summary["active"] is True
-    assert summary["quantized_embedding_collections"] > 0
-    output = quantized_model(features)
-    assert output.shape == (2, 2)
+    with pytest.raises(ValueError, match="does not support TorchRec EmbeddingBagCollection modules"):
+        quantize_model_for_inference(model, "int8")
 
 
 def test_reference_attention_supports_fp8_precision_mode() -> None:

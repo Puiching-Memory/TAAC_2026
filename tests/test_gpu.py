@@ -364,6 +364,23 @@ class TestTorchCompileGpu:
         assert torch.isfinite(logits).all()
 
 
+class TestTorchaoGpuExtensions:
+    def test_torchao_native_extensions_match_cuda_toolchain(self):
+        import torchao
+
+        assert "+cu128" in getattr(torchao, "__version__", "")
+
+        extension_paths = sorted(Path(torchao.__file__).resolve().parent.glob("_C*.so"))
+        assert extension_paths, "torchao CUDA wheel did not expose native extensions"
+
+        loaded: list[str] = []
+        for extension_path in extension_paths:
+            torch.ops.load_library(str(extension_path))
+            loaded.append(extension_path.name)
+
+        assert loaded
+
+
 # ---------------------------------------------------------------------------
 # 6. GPU memory management
 # ---------------------------------------------------------------------------

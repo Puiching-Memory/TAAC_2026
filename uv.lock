@@ -1792,6 +1792,7 @@ dependencies = [
     { name = "pytest-benchmark" },
     { name = "rich" },
     { name = "torch", marker = "sys_platform == 'linux'" },
+    { name = "torchao", marker = "sys_platform == 'linux'" },
     { name = "torchrec", marker = "sys_platform == 'linux'" },
     { name = "triton", marker = "sys_platform == 'linux'" },
 ]
@@ -1815,6 +1816,7 @@ requires-dist = [
     { name = "pytest-benchmark", specifier = ">=5.1" },
     { name = "rich", specifier = ">=13.9" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cu128" },
+    { name = "torchao", marker = "sys_platform == 'linux'", specifier = ">=0.17", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchrec", marker = "sys_platform == 'linux'", specifier = ">=1.0" },
     { name = "transformer-engine", extras = ["pytorch"], marker = "sys_platform == 'linux' and extra == 'te'", specifier = ">=2.13" },
     { name = "triton", marker = "sys_platform == 'linux'", specifier = ">=3.2" },
@@ -1870,6 +1872,14 @@ wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313-manylinux_2_28_x86_64.whl" },
     { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313t-manylinux_2_28_aarch64.whl" },
     { url = "https://download-r2.pytorch.org/whl/cu128/torch-2.11.0%2Bcu128-cp313-cp313t-manylinux_2_28_x86_64.whl" },
+]
+
+[[package]]
+name = "torchao"
+version = "0.17.0+cu128"
+source = { registry = "https://download.pytorch.org/whl/cu128" }
+wheels = [
+    { url = "https://download.pytorch.org/whl/cu128/torchao-0.17.0%2Bcu128-cp310-abi3-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ceea15b9b14d1fc20029a89dddcc4dd2d9aeef9a749c8c9f8437ffb81aa443aa" },
 ]
 
 [[package]]
