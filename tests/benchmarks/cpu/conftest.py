@@ -16,7 +16,7 @@ def benchmark_device() -> torch.device:
 
 
 @pytest.fixture
-def benchmark_workspace(tmp_path_factory: pytest.TempPathFactory) -> "TestWorkspace":
+def benchmark_workspace(tmp_path_factory: pytest.TempPathFactory) -> TestWorkspace:
     # Keep TorchRec-backed workspace support out of the shared benchmark import path.
     from tests.support import create_test_workspace
 

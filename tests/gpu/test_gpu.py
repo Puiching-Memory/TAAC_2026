@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import importlib.util
+
 import numpy as np
 import pytest
 import torch
@@ -322,11 +324,7 @@ class TestCudaProfiling:
 
 def _triton_available() -> bool:
     """Check if triton is importable (required for torch.compile inductor backend)."""
-    try:
-        import triton
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("triton") is not None
 
 
 class TestTorchCompileGpu:
