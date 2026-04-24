@@ -499,7 +499,7 @@ def _batch_prediction_records(batch: BatchTensors, logits: torch.Tensor) -> list
                 "item_id": metadata.item_ids[index],
                 "timestamp": int(metadata.timestamps[index]),
                 "raw_label": int(metadata.raw_labels[index]),
-                "target": int(round(float(targets[index]))),
+                "target": round(float(targets[index])),
                 "score": float(score),
             }
         )
