@@ -12,11 +12,12 @@ from ...infrastructure.io.console import logger
 from ...infrastructure.io.files import write_json
 from ...infrastructure.nn.defaults import resolve_experiment_builders
 from ...infrastructure.nn.quantization import normalize_quantization_mode
+from ..training.artifacts import write_validation_predictions
 from ..training.external_profilers import (
     build_evaluation_external_profiler_plan,
     write_external_profiler_plan_artifacts,
 )
-from ..training.profiling import PROFILE_SCHEMA_VERSION, collect_loader_outputs, measure_latency, select_device
+from ..training.profiling import PROFILE_SCHEMA_VERSION, collect_loader_outputs_with_predictions, measure_latency, select_device
 from .inference import (
     export_model_for_inference,
     normalize_inference_export_mode,
@@ -42,6 +43,16 @@ def _sort_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             str(record.get("experiment_id", "")),
         ),
     )
+
+
+def _resolve_validation_predictions_path(
+    output_path: str | Path | None,
+    run_dir: str | Path,
+) -> Path:
+    if output_path is None:
+        return Path(run_dir) / "validation_predictions.jsonl"
+    report_path = Path(output_path)
+    return report_path.with_name(f"{report_path.stem}.validation_predictions.jsonl")
 
 
 def evaluate_checkpoint(
@@ -115,7 +126,7 @@ def evaluate_checkpoint(
         output_path=resolved_export_path,
     )
 
-    logits, labels, groups, loss = collect_loader_outputs(
+    logits, labels, groups, loss, prediction_records = collect_loader_outputs_with_predictions(
         execution_model,
         val_loader,
         device,
@@ -141,12 +152,15 @@ def evaluate_checkpoint(
         train_config=inference_train_config,
     )
     write_external_profiler_plan_artifacts(external_profilers)
+    validation_predictions_path = _resolve_validation_predictions_path(output_path, experiment.train.output_dir)
+    write_validation_predictions(validation_predictions_path, prediction_records)
     report = {
         "experiment": experiment.name,
         "experiment_path": str(experiment_path),
         "model_name": experiment.model.name,
         "device": str(device),
         "checkpoint_path": str(resolved_checkpoint),
+        "validation_predictions_path": str(validation_predictions_path),
         "loss": loss,
         "auc": float(metrics.get("auc", 0.0)),
         "pr_auc": float(metrics.get("pr_auc", 0.0)),

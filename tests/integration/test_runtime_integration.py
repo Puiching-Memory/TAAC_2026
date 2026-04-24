@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,10 @@ def test_experiment_package_runs_end_to_end_with_visualization_switch(test_works
     summary = run_training(experiment)
     evaluation_path = test_workspace.root / "evaluation.json"
     payload = evaluate_checkpoint(experiment_path=experiment_path, output_path=evaluation_path)
+    training_predictions_path = Path(experiment.train.output_dir) / "validation_predictions.jsonl"
+    evaluation_predictions_path = test_workspace.root / "evaluation.validation_predictions.jsonl"
+    training_predictions = [json.loads(line) for line in training_predictions_path.read_text(encoding="utf-8").splitlines()]
+    evaluation_predictions = [json.loads(line) for line in evaluation_predictions_path.read_text(encoding="utf-8").splitlines()]
 
     assert summary is not None
     assert "best_val_auc" in summary
@@ -109,8 +114,16 @@ def test_experiment_package_runs_end_to_end_with_visualization_switch(test_works
     assert (Path(experiment.train.output_dir) / "training_curves.json").exists()
     assert (Path(experiment.train.output_dir) / "training_curves.png").exists()
     assert (Path(experiment.train.output_dir) / "best.pt").exists()
+    assert training_predictions_path.exists()
     assert evaluation_path.exists()
+    assert evaluation_predictions_path.exists()
     assert payload["model_name"] == "temp_experiment"
+    assert summary["validation_predictions_path"] == str(training_predictions_path)
+    assert payload["validation_predictions_path"] == str(evaluation_predictions_path)
+    assert len(training_predictions) == summary["inference_profile"]["val_sample_count"]
+    assert len(evaluation_predictions) == summary["inference_profile"]["val_sample_count"]
+    assert set(training_predictions[0]) == {"item_id", "raw_label", "sample_index", "score", "target", "timestamp", "user_id"}
+    assert set(evaluation_predictions[0]) == {"item_id", "raw_label", "sample_index", "score", "target", "timestamp", "user_id"}
 
 
 def test_run_training_is_reproducible_for_same_seed(test_workspace: TestWorkspace) -> None:

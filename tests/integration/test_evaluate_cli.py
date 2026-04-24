@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,6 +45,8 @@ def test_evaluate_checkpoint_accepts_compatible_checkpoint(test_workspace: TestW
         checkpoint_path=checkpoint_path,
         output_path=output_path,
     )
+    predictions_path = test_workspace.root / "evaluation.validation_predictions.jsonl"
+    predictions = [json.loads(line) for line in predictions_path.read_text(encoding="utf-8").splitlines()]
 
     assert payload["model_name"] == "temp_experiment"
     assert "coverage" in payload["metrics"]["gauc"]
@@ -51,6 +54,10 @@ def test_evaluate_checkpoint_accepts_compatible_checkpoint(test_workspace: TestW
     assert payload["runtime_optimization"]["torch_compile"]["active"] is False
     assert "external_profilers" in payload["profiling"]
     assert output_path.exists()
+    assert predictions_path.exists()
+    assert payload["validation_predictions_path"] == str(predictions_path)
+    assert len(predictions) == 3
+    assert set(predictions[0]) == {"item_id", "raw_label", "sample_index", "score", "target", "timestamp", "user_id"}
     assert (test_workspace.root / "profiling" / "external_profilers.json").exists()
 
 
@@ -358,12 +365,13 @@ def test_evaluate_checkpoint_skips_export_example_batch_when_export_is_disabled(
         ),
     )
     monkeypatch.setattr(
-        "taac2026.application.evaluation.service.collect_loader_outputs",
+        "taac2026.application.evaluation.service.collect_loader_outputs_with_predictions",
         lambda *args, **kwargs: (
             torch.tensor([0.0]),
             torch.tensor([0.0]),
             torch.tensor([0]),
             0.0,
+            [],
         ),
     )
     monkeypatch.setattr(

@@ -9,7 +9,7 @@ from ...domain.metrics import compute_classification_metrics, safe_mean
 from ...infrastructure.io.console import create_progress_bar, logger
 from ...infrastructure.io.files import ensure_dir, replace_file, write_json
 from ...infrastructure.nn.defaults import resolve_experiment_builders
-from .artifacts import write_training_curve_artifacts
+from .artifacts import write_training_curve_artifacts, write_validation_predictions
 from .external_profilers import (
     build_training_external_profiler_plan,
     write_external_profiler_plan_artifacts,
@@ -19,7 +19,7 @@ from .profiling import (
     collect_compute_profile,
     collect_experiment_model_profile,
     collect_inference_profile,
-    collect_loader_outputs,
+    collect_loader_outputs_with_predictions,
     measure_latency,
     select_device,
     set_random_seed,
@@ -88,6 +88,7 @@ def run_training(
     best_auc = float("-inf")
     best_epoch = 0
     best_metrics: dict[str, Any] = {}
+    best_prediction_records: list[dict[str, Any]] = []
     progress_bar = None
     if show_progress:
         progress_bar = create_progress_bar(
@@ -116,7 +117,7 @@ def run_training(
                 batch_losses.append(float(loss.detach().cpu().item()))
 
             train_loss = safe_mean(batch_losses)
-            val_logits, val_labels, val_groups, val_loss = collect_loader_outputs(
+            val_logits, val_labels, val_groups, val_loss, val_prediction_records = collect_loader_outputs_with_predictions(
                 execution_model,
                 val_loader,
                 device,
@@ -135,6 +136,7 @@ def run_training(
                 best_auc = val_auc
                 best_epoch = epoch
                 best_metrics = dict(val_metrics)
+                best_prediction_records = list(val_prediction_records)
                 _write_best_checkpoint(
                     output_dir / "best.pt",
                     {
@@ -213,6 +215,8 @@ def run_training(
         compute_profile=compute_profile,
         external_profilers=external_profilers,
     )
+    validation_predictions_path = output_dir / "validation_predictions.jsonl"
+    write_validation_predictions(validation_predictions_path, best_prediction_records)
 
     summary = {
         "model_name": experiment.model.name,
@@ -224,6 +228,7 @@ def run_training(
         "model_profile": model_profile,
         "compute_profile": compute_profile,
         "inference_profile": inference_profile,
+        "validation_predictions_path": str(validation_predictions_path),
         **latency,
     }
 

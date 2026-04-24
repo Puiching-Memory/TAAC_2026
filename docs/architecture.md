@@ -94,6 +94,7 @@ graph TD
 - `sequence_features`：行为序列特征
 - `dense_features`：稠密数值特征
 - `labels`、`user_indices`、`item_indices`、`item_logq`
+- `metadata`：仅用于评估与产物导出的样本级标识信息（如 `sample_index` / `user_id` / `item_id` / `timestamp` / `raw_label`），不会进入模型 pytree
 
 其中稀疏与序列特征都可以直接映射到 TorchRec 的 `KeyedJaggedTensor` 路径。
 
@@ -141,7 +142,7 @@ graph TD
     E --> I
     F --> I
     G --> I
-    I --> J[best.pt / summary.json / training_curves.json / profiling]
+    I --> J[best.pt / summary.json / validation_predictions.jsonl / training_curves.json / profiling]
 ```
 
 训练服务会统一处理：
@@ -179,6 +180,7 @@ graph TD
 
 - `best.pt`
 - `summary.json`
+- `validation_predictions.jsonl`
 - `training_curves.json`
 - `profiling/`
 

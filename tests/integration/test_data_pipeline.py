@@ -137,6 +137,13 @@ def test_streaming_collate_batch_contract(test_workspace: TestWorkspace) -> None
     assert train_batch.user_indices.dtype == torch.long
     assert train_batch.item_logq.dtype == torch.float32
     assert torch.isfinite(train_batch.item_logq).all().item()
+    assert train_batch.metadata is not None
+    assert len(train_batch.metadata.sample_indices) == train_batch.batch_size
+    assert len(val_batch.metadata.sample_indices) == val_batch.batch_size
+    assert tuple(
+        1 if raw_label == test_workspace.data_config.label_action_type else 0
+        for raw_label in val_batch.metadata.raw_labels
+    ) == tuple(int(label) for label in val_batch.labels.tolist())
 
     assert set(train_batch.sparse_features.keys()) == {
         "user_tokens",
@@ -165,6 +172,7 @@ def test_streaming_collate_batch_contract(test_workspace: TestWorkspace) -> None
     moved_batch = train_batch.to("cpu")
     assert moved_batch.sparse_features is not None
     assert moved_batch.sequence_features is not None
+    assert moved_batch.metadata == train_batch.metadata
     assert moved_batch.sparse_features.values().device.type == "cpu"
     assert moved_batch.sequence_features.values().device.type == "cpu"
 

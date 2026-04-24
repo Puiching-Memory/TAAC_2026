@@ -52,9 +52,12 @@ uv run taac-train --experiment config/baseline
 outputs/config/baseline/
 ├── best.pt                 # 最佳 checkpoint（按 val AUC 选择）
 ├── summary.json            # 训练摘要（指标、超参数、耗时）
+├── validation_predictions.jsonl  # 最佳验证轮次的样本级预测
 ├── training_curves.json    # 逐 epoch 训练曲线
 └── profiling/              # 模型参数量、FLOPs、推理延迟
 ```
+
+`validation_predictions.jsonl` 每行包含：`sample_index`、`user_id`、`item_id`、`timestamp`、`raw_label`、`target`、`score`。
 
 如果你希望提前打开编译与 AMP，可以直接使用同一套 CLI：
 
@@ -109,9 +112,19 @@ uv run taac-evaluate single --experiment config/baseline --export-mode torch-exp
 
 # 显式复用运行时优化配置
 uv run taac-evaluate single --experiment config/baseline --compile --amp --amp-dtype bfloat16
+
+# 显式指定评估报告输出路径
+uv run taac-evaluate single --experiment config/baseline --output-path outputs/evaluation.json
 ```
 
 评估报告包含：AUC、PR-AUC、Brier Score、LogLoss、GAUC，以及推理延迟（ms/sample）。
+
+评估还会额外导出样本级验证集预测：
+
+- 不传 `--output-path`：写到运行目录下的 `validation_predictions.jsonl`
+- 传 `--output-path outputs/evaluation.json`：写到同目录下的 `outputs/evaluation.validation_predictions.jsonl`
+
+该 jsonl 与训练产物使用同一字段结构，适合做错误样本排查、切片分析和后续提交格式转换。
 
 `--quantize int8` 当前会把推理切到 CPU，并通过 torchao 对 `nn.Linear` 应用动态 int8 量化；如果模型包含 TorchRec `EmbeddingBagCollection`，评估会直接拒绝这条 int8 路径并要求回退到 `--quantize none`。这条路径适合本地或 CI 的推理回归验证，不会修改训练 checkpoint 本身。
 

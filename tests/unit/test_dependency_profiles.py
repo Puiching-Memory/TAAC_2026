@@ -89,16 +89,33 @@ def test_cuda_sources_are_scoped_to_matching_extras() -> None:
 def test_ci_workflow_checks_supported_python_versions() -> None:
     ci_workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_workflow_path.read_text(encoding="utf-8")
-    matrix_block = 'matrix:\n        python-version: ["3.10", "3.11", "3.12", "3.13"]'
+    matrix_pattern = re.compile(
+        r"matrix:\s*\n\s*python-version:\s*\[\s*\"3\.10\",\s*\"3\.11\",\s*\"3\.12\",\s*\"3\.13\"\s*\]"
+    )
 
-    assert ci_workflow.count(matrix_block) == 3
+    assert len(matrix_pattern.findall(ci_workflow)) == 2
     assert 'CI_CANONICAL_PYTHON_VERSION: "3.13"' in ci_workflow
-    assert "Style & Policy (Python ${{ matrix.python-version }})" in ci_workflow
-    assert "CPU Unit Tests (Python ${{ matrix.python-version }})" in ci_workflow
-    assert "CPU Benchmarks (Python ${{ matrix.python-version }})" in ci_workflow
-    assert "cpu-benchmark-results-py${{ matrix.python-version }}" in ci_workflow
-    assert ci_workflow.count("coverage-cpu-data-py${{ env.CI_CANONICAL_PYTHON_VERSION }}") == 2
-    assert "matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION" in ci_workflow
-    assert "python-version: ${{ env.CI_CANONICAL_PYTHON_VERSION }}" in ci_workflow
-    assert "compatibility checks run on Python 3.10, 3.11, 3.12, and 3.13" in ci_workflow
-    assert re.search(r"canonical Python \$\{CI_CANONICAL_PYTHON_VERSION\} unit lane", ci_workflow) is not None
+
+    for job_id in ("style", "test", "coverage"):
+        assert re.search(rf"^  {job_id}:$", ci_workflow, re.MULTILINE) is not None
+
+    for expected_snippet in (
+        "run: uv run --with ruff ruff check .",
+        "run: uv sync --locked --extra cpu",
+        "run: uv run pytest tests/unit/test_repo_policy.py -q",
+        "run: uv run --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v",
+        "if: always() && matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION",
+        "name: coverage-cpu-data-py${{ env.CI_CANONICAL_PYTHON_VERSION }}",
+        "python-version: ${{ env.CI_CANONICAL_PYTHON_VERSION }}",
+        'run: uv run --with coverage coverage report --fail-under=70 --include="$CPU_COVERAGE_INCLUDE"',
+        'run: uv run --with coverage coverage xml --fail-under=0 --include="$CPU_COVERAGE_INCLUDE" -o coverage.xml',
+        '>> "$GITHUB_STEP_SUMMARY"',
+    ):
+        assert expected_snippet in ci_workflow
+
+    for unexpected_snippet in (
+        "cpu-benchmark-results-py${{ matrix.python-version }}",
+        "tests/benchmarks/cpu",
+        "benchmark_cpu",
+    ):
+        assert unexpected_snippet not in ci_workflow

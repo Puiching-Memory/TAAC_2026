@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from ...domain.config import DataConfig
 from ...domain.features import FeatureSchema
-from ...domain.types import BatchTensors, DataStats
+from ...domain.types import BatchMetadata, BatchTensors, DataStats
 from .datasets import iter_dataset_rows
 from .files import stable_hash64
 from .sparse_collate import build_batch_torchrec_features, validate_default_feature_schema
@@ -37,6 +37,11 @@ SEQUENCE_ACTION_FEATURE_IDS: dict[str, tuple[int, ...]] = {}
 
 @dataclass(slots=True)
 class _EncodedSample:
+	sample_index: int
+	user_id: object | None
+	item_id: object | None
+	timestamp: int
+	raw_label: int
 	user_tokens: np.ndarray
 	user_mask: np.ndarray
 	candidate_tokens: np.ndarray
@@ -649,6 +654,11 @@ def _encode_row(
 	item_logq_lookup: dict[int, float],
 	default_item_logq: float,
 ) -> _EncodedSample:
+	sample_index = int(row["__sample_index__"]) if "__sample_index__" in row else -1
+	user_id = _normalize_metadata_value(row.get("user_id"))
+	item_id = _normalize_metadata_value(row.get("item_id"))
+	timestamp = int(row.get("timestamp", 0) or 0)
+	raw_label = int(row.get("label_type", 0) or 0)
 	user_tokens, user_mask = _user_tokens_from_row(row, pipeline_schema)
 	(
 		candidate_tokens,
@@ -674,12 +684,16 @@ def _encode_row(
 		pipeline_schema,
 	)
 	dense_features = _dense_features_from_row(row, config)
-	label_type = int(row.get("label_type", 0) or 0)
-	label = 1.0 if label_type == config.label_action_type else 0.0
+	label = 1.0 if raw_label == config.label_action_type else 0.0
 	user_index = stable_hash64(f"user|{row.get('user_id', '0')}")
 	item_index = stable_hash64(f"item|{row.get('item_id', 0)}")
 	item_logq = item_logq_lookup.get(item_index, default_item_logq)
 	return _EncodedSample(
+		sample_index=sample_index,
+		user_id=user_id,
+		item_id=item_id,
+		timestamp=timestamp,
+		raw_label=raw_label,
 		user_tokens=user_tokens,
 		user_mask=user_mask,
 		candidate_tokens=candidate_tokens,
@@ -705,6 +719,12 @@ def _encode_row(
 		item_index=item_index,
 		item_logq=item_logq,
 	)
+
+
+def _normalize_metadata_value(value: Any) -> Any:
+	if isinstance(value, np.generic):
+		return value.item()
+	return value
 
 
 def _build_item_logq_lookup(train_rows: list[dict[str, Any]]) -> tuple[dict[int, float], float]:
@@ -738,6 +758,13 @@ def _collate_batch(
 	user_indices = torch.as_tensor([sample.user_index for sample in samples], dtype=torch.long)
 	item_indices = torch.as_tensor([sample.item_index for sample in samples], dtype=torch.long)
 	item_logq = torch.as_tensor([sample.item_logq for sample in samples], dtype=torch.float32)
+	metadata = BatchMetadata(
+		sample_indices=tuple(int(sample.sample_index) for sample in samples),
+		user_ids=tuple(sample.user_id for sample in samples),
+		item_ids=tuple(sample.item_id for sample in samples),
+		timestamps=tuple(int(sample.timestamp) for sample in samples),
+		raw_labels=tuple(int(sample.raw_label) for sample in samples),
+	)
 	user_tokens = torch.as_tensor(np.stack([sample.user_tokens for sample in samples]), dtype=torch.long)
 	user_mask = torch.as_tensor(np.stack([sample.user_mask for sample in samples]), dtype=torch.bool)
 	candidate_post_tokens = torch.as_tensor(np.stack([sample.candidate_post_tokens for sample in samples]), dtype=torch.long)
@@ -780,6 +807,7 @@ def _collate_batch(
 		item_logq=item_logq,
 		sparse_features=sparse_features,
 		sequence_features=sequence_features,
+		metadata=metadata,
 	)
 
 
@@ -794,7 +822,10 @@ def load_dataloaders(
 ) -> tuple[DataLoader[BatchTensors], DataLoader[BatchTensors], DataStats]:
 	del seed
 	pipeline_schema = _resolve_pipeline_schema(config, vocab_size, feature_schema)
-	sorted_rows = _sort_rows_by_timestamp(iter_dataset_rows(config.dataset_path))
+	sorted_rows = [
+		dict(row, __sample_index__=index)
+		for index, row in enumerate(_sort_rows_by_timestamp(iter_dataset_rows(config.dataset_path)))
+	]
 	train_rows, val_rows = _time_split(sorted_rows, config.val_ratio)
 	item_logq_lookup, default_item_logq = _build_item_logq_lookup(train_rows)
 

@@ -51,6 +51,13 @@ def _write_training_curves_json(path: Path, curves: dict[str, object]) -> None:
         json.dump(curves, handle, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+def _write_validation_predictions_jsonl(path: Path, predictions: list[dict[str, object]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for prediction in predictions:
+            handle.write(json.dumps(prediction, ensure_ascii=False, sort_keys=True))
+            handle.write("\n")
+
+
 def write_training_curve_artifacts(
     output_dir: Path,
     train_losses: list[float],
@@ -87,4 +94,19 @@ def write_training_curve_artifacts(
         raise
 
 
-__all__ = ["render_training_curves_plot", "write_training_curve_artifacts"]
+def write_validation_predictions(path: Path, predictions: list[dict[str, object]]) -> None:
+    target = Path(path)
+    staged_target = create_temporary_path(target, suffix=".tmp.jsonl")
+    try:
+        _write_validation_predictions_jsonl(staged_target, predictions)
+        staged_target.replace(target)
+    except Exception:
+        staged_target.unlink(missing_ok=True)
+        raise
+
+
+__all__ = [
+    "render_training_curves_plot",
+    "write_training_curve_artifacts",
+    "write_validation_predictions",
+]

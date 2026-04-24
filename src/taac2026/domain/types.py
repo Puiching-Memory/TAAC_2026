@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -12,6 +12,15 @@ else:
     KeyedJaggedTensor = Any
 
 
+@dataclass(frozen=True, slots=True)
+class BatchMetadata:
+    sample_indices: tuple[int, ...]
+    user_ids: tuple[object | None, ...]
+    item_ids: tuple[object | None, ...]
+    timestamps: tuple[int, ...]
+    raw_labels: tuple[int, ...]
+
+
 @dataclass(slots=True)
 class BatchTensors:
     dense_features: torch.Tensor
@@ -21,6 +30,7 @@ class BatchTensors:
     item_logq: torch.Tensor
     sparse_features: KeyedJaggedTensor | None = None
     sequence_features: KeyedJaggedTensor | None = None
+    metadata: BatchMetadata | None = None
 
     @property
     def batch_size(self) -> int:
@@ -38,10 +48,19 @@ class BatchTensors:
             item_logq=self.item_logq.to(device),
             sparse_features=move_optional_feature(self.sparse_features),
             sequence_features=move_optional_feature(self.sequence_features),
+            metadata=self.metadata,
         )
 
 
-_BATCH_TENSOR_FIELD_NAMES = tuple(field.name for field in fields(BatchTensors))
+_BATCH_TENSOR_FIELD_NAMES = (
+    "dense_features",
+    "labels",
+    "user_indices",
+    "item_indices",
+    "item_logq",
+    "sparse_features",
+    "sequence_features",
+)
 
 
 def _flatten_batch_tensors(batch: BatchTensors) -> tuple[list[object], tuple[str, ...]]:
@@ -85,4 +104,4 @@ class DataStats:
     val_size: int
 
 
-__all__ = ["BatchTensors", "DataStats"]
+__all__ = ["BatchMetadata", "BatchTensors", "DataStats"]

@@ -476,17 +476,50 @@ def set_random_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def collect_loader_outputs(
+def _batch_prediction_records(batch: BatchTensors, logits: torch.Tensor) -> list[dict[str, Any]]:
+    metadata = batch.metadata
+    if metadata is None:
+        raise RuntimeError("Batch is missing required metadata for validation prediction export")
+
+    scores = logits.detach().float().cpu().reshape(-1).tolist()
+    targets = batch.labels.detach().cpu().reshape(-1).tolist()
+    batch_size = int(batch.batch_size)
+    expected_size = len(metadata.sample_indices)
+    if expected_size != batch_size:
+        raise RuntimeError(
+            f"Batch metadata length mismatch: expected {batch_size} records, got {expected_size}"
+        )
+
+    records: list[dict[str, Any]] = []
+    for index, score in enumerate(scores):
+        records.append(
+            {
+                "sample_index": int(metadata.sample_indices[index]),
+                "user_id": metadata.user_ids[index],
+                "item_id": metadata.item_ids[index],
+                "timestamp": int(metadata.timestamps[index]),
+                "raw_label": int(metadata.raw_labels[index]),
+                "target": int(round(float(targets[index]))),
+                "score": float(score),
+            }
+        )
+    return records
+
+
+def _collect_loader_outputs_impl(
     model,
     loader,
     device,
     loss_fn=None,
     runtime_execution: RuntimeExecution | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    *,
+    include_prediction_records: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, list[dict[str, Any]]]:
     logits_list: list[np.ndarray] = []
     labels_list: list[np.ndarray] = []
     group_list: list[np.ndarray] = []
     losses: list[float] = []
+    prediction_records: list[dict[str, Any]] = []
     model.eval()
     with torch.no_grad():
         for batch in loader:
@@ -499,14 +532,51 @@ def collect_loader_outputs(
             logits_list.append(logits.detach().float().cpu().numpy())
             labels_list.append(batch.labels.detach().cpu().numpy())
             group_list.append(batch.user_indices.detach().cpu().numpy())
+            if include_prediction_records:
+                prediction_records.extend(_batch_prediction_records(batch, logits))
     if not logits_list:
         empty = np.zeros(0, dtype=np.float32)
-        return empty, empty, empty, 0.0
+        return empty, empty, empty, 0.0, prediction_records
     return (
         np.concatenate(logits_list, axis=0),
         np.concatenate(labels_list, axis=0),
         np.concatenate(group_list, axis=0),
         safe_mean(losses),
+        prediction_records,
+    )
+
+
+def collect_loader_outputs(
+    model,
+    loader,
+    device,
+    loss_fn=None,
+    runtime_execution: RuntimeExecution | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    logits, labels, groups, loss, _ = _collect_loader_outputs_impl(
+        model,
+        loader,
+        device,
+        loss_fn,
+        runtime_execution,
+    )
+    return logits, labels, groups, loss
+
+
+def collect_loader_outputs_with_predictions(
+    model,
+    loader,
+    device,
+    loss_fn=None,
+    runtime_execution: RuntimeExecution | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, list[dict[str, Any]]]:
+    return _collect_loader_outputs_impl(
+        model,
+        loader,
+        device,
+        loss_fn,
+        runtime_execution,
+        include_prediction_records=True,
     )
 
 
