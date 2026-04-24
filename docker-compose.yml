@@ -1,0 +1,150 @@
+name: taac2026
+
+x-gpu-build: &gpu-build
+  context: .
+  dockerfile: Dockerfile
+  target: app
+  args:
+    BASE_IMAGE: ${BASE_IMAGE:-nvidia/cuda:12.8.0-devel-ubuntu24.04}
+    PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
+    UV_EXTRA: ${UV_EXTRA:-cuda128}
+    ENABLE_TE: ${ENABLE_TE:-0}
+
+x-gpu-common: &gpu-common
+  build: *gpu-build
+  ipc: host
+  init: true
+  gpus: all
+  working_dir: /workspace
+  environment:
+    UV_EXTRA: ${UV_EXTRA:-cuda128}
+    ENABLE_TE: ${ENABLE_TE:-0}
+    HF_HOME: /root/.cache/huggingface
+    TAAC_OUTPUT_DIR: /workspace/outputs
+  volumes:
+    - hf-cache:/root/.cache/huggingface
+    - uv-cache:/root/.cache/uv
+
+services:
+  dev:
+    <<: *gpu-common
+    profiles: [dev]
+    stdin_open: true
+    tty: true
+    environment:
+      UV_EXTRA: ${UV_EXTRA:-cuda128}
+      ENABLE_TE: ${ENABLE_TE:-0}
+      HF_HOME: /root/.cache/huggingface
+      TAAC_OUTPUT_DIR: /workspace/outputs
+      AUTO_SYNC: ${AUTO_SYNC:-1}
+    volumes:
+      - .:/workspace
+      - hf-cache:/root/.cache/huggingface
+      - uv-cache:/root/.cache/uv
+    command: ["/bin/bash"]
+
+  train:
+    <<: *gpu-common
+    profiles: [train]
+    volumes:
+      - train-outputs:/workspace/outputs
+      - hf-cache:/root/.cache/huggingface
+      - uv-cache:/root/.cache/uv
+    environment:
+      UV_EXTRA: ${UV_EXTRA:-cuda128}
+      ENABLE_TE: ${ENABLE_TE:-0}
+      HF_HOME: /root/.cache/huggingface
+      TAAC_OUTPUT_DIR: /workspace/outputs
+      TAAC_DATASET_PATH: ${TAAC_DATASET_PATH:-}
+      EXPERIMENT: ${EXPERIMENT:-baseline}
+      TRAIN_ARGS: ${TRAIN_ARGS:-}
+    command:
+      - /bin/bash
+      - -lc
+      - >-
+        uv run taac-train --experiment config/$$EXPERIMENT
+        $${TAAC_DATASET_PATH:+--dataset-path "$${TAAC_DATASET_PATH}"}
+        --run-dir "$${TAAC_OUTPUT_DIR}"
+        $${TRAIN_ARGS}
+
+  evaluate:
+    <<: *gpu-common
+    profiles: [evaluate]
+    volumes:
+      - train-outputs:/workspace/outputs
+      - hf-cache:/root/.cache/huggingface
+      - uv-cache:/root/.cache/uv
+    environment:
+      UV_EXTRA: ${UV_EXTRA:-cuda128}
+      ENABLE_TE: ${ENABLE_TE:-0}
+      HF_HOME: /root/.cache/huggingface
+      TAAC_OUTPUT_DIR: /workspace/outputs
+      TAAC_DATASET_PATH: ${TAAC_DATASET_PATH:-}
+      EXPERIMENT: ${EXPERIMENT:-baseline}
+      EVAL_ARGS: ${EVAL_ARGS:-}
+    command:
+      - /bin/bash
+      - -lc
+      - >-
+        uv run taac-evaluate single --experiment config/$$EXPERIMENT
+        $${TAAC_DATASET_PATH:+--dataset-path "$${TAAC_DATASET_PATH}"}
+        $${EVAL_ARGS}
+
+  search:
+    <<: *gpu-common
+    profiles: [search]
+    volumes:
+      - train-outputs:/workspace/outputs
+      - hf-cache:/root/.cache/huggingface
+      - uv-cache:/root/.cache/uv
+    environment:
+      UV_EXTRA: ${UV_EXTRA:-cuda128}
+      ENABLE_TE: ${ENABLE_TE:-0}
+      HF_HOME: /root/.cache/huggingface
+      TAAC_OUTPUT_DIR: /workspace/outputs
+      TAAC_DATASET_PATH: ${TAAC_DATASET_PATH:-}
+      EXPERIMENT: ${EXPERIMENT:-baseline}
+      TRIALS: ${TRIALS:-20}
+      SEARCH_ARGS: ${SEARCH_ARGS:-}
+    command:
+      - /bin/bash
+      - -lc
+      - >-
+        uv run taac-search --experiment config/$$EXPERIMENT
+        $${TAAC_DATASET_PATH:+--dataset-path "$${TAAC_DATASET_PATH}"}
+        --trials $${TRIALS}
+        $${SEARCH_ARGS}
+
+  ci:
+    profiles: [ci]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+      args:
+        BASE_IMAGE: ${CPU_BASE_IMAGE:-python:3.13-slim-bookworm}
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.13}
+        UV_EXTRA: cpu
+        ENABLE_TE: 0
+    init: true
+    working_dir: /workspace
+    environment:
+      UV_EXTRA: cpu
+      HF_HOME: /root/.cache/huggingface
+      AUTO_SYNC: 0
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - uv-cache:/root/.cache/uv
+    command:
+      - /bin/bash
+      - -lc
+      - >-
+        uv run --with ruff ruff check . &&
+        uv run pytest tests/unit/test_repo_policy.py -q &&
+        uv run --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v &&
+        uv run --with coverage coverage report --data-file=.coverage.cpu --fail-under=70
+
+volumes:
+  train-outputs:
+  hf-cache:
+  uv-cache:

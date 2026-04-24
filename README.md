@@ -106,6 +106,63 @@ uv run taac-train --experiment config/baseline --dataset-path some_owner/some_da
 
 若目标 Hub 数据集尚未缓存，`datasets` 会自动下载并写入本地缓存。
 
+## Docker Compose
+
+仓库现在提供一套基于 `uv.lock` 的可复现容器方案，覆盖本地开发、训练、评估、搜索和 CPU CI 复现。
+
+### 设计原则
+
+- 使用单个参数化 `Dockerfile`，通过 `UV_EXTRA=cpu|cuda126|cuda128|cuda130` 选择依赖栈。
+- 开发服务挂载源码目录，训练/评估/搜索服务使用命名卷持久化输出与 HuggingFace 缓存。
+- 默认数据集仍然使用 HuggingFace `TAAC2026/data_sample_1000`，首次运行会在容器内自动下载。
+- GPU 服务要求宿主机已安装 NVIDIA Container Toolkit。
+
+### 常用命令
+
+```bash
+# GPU 开发容器（默认 cuda128）
+docker compose --profile dev up -d --build
+docker compose --profile dev exec dev bash
+
+# 训练 baseline
+docker compose --profile train up --build
+
+# 训练其他实验包 / 切换 CUDA profile
+EXPERIMENT=interformer UV_EXTRA=cuda126 \
+BASE_IMAGE=nvidia/cuda:12.6.0-devel-ubuntu24.04 \
+docker compose --profile train up --build
+
+# 评估
+docker compose --profile evaluate up --build
+
+# 超参数搜索
+TRIALS=50 docker compose --profile search up --build
+
+# CPU-only CI 复现
+docker compose --profile ci up --build
+```
+
+### 关键环境变量
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `UV_EXTRA` | `cuda128` | 选择依赖 profile，可选 `cpu` / `cuda126` / `cuda128` / `cuda130` |
+| `BASE_IMAGE` | `nvidia/cuda:12.8.0-devel-ubuntu24.04` | GPU 镜像基础镜像 |
+| `CPU_BASE_IMAGE` | `python:3.13-slim-bookworm` | CI 服务基础镜像 |
+| `EXPERIMENT` | `baseline` | 训练、评估、搜索使用的实验包 |
+| `TAAC_DATASET_PATH` | 空 | 留空时使用默认 HuggingFace 数据集；设置后覆盖为本地 parquet / 目录 / Hub 名称 |
+| `TRAIN_ARGS` | 空 | 追加给 `taac-train` 的参数 |
+| `EVAL_ARGS` | 空 | 追加给 `taac-evaluate` 的参数 |
+| `SEARCH_ARGS` | 空 | 追加给 `taac-search` 的参数 |
+| `TRIALS` | `20` | Optuna trial 数 |
+| `ENABLE_TE` | `0` | 设为 `1` 时额外安装 Transformer Engine |
+
+### 持久化卷
+
+- `hf-cache`: HuggingFace 数据集缓存
+- `uv-cache`: uv 下载缓存
+- `train-outputs`: 训练、评估、搜索输出
+
 ```bash
 # 跑完整训练栈回归
 uv run pytest tests -q
