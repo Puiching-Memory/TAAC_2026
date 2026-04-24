@@ -27,6 +27,23 @@
 
   function clone(o) { return JSON.parse(JSON.stringify(o)) }
 
+  function resolveChartUrl(src) {
+    if (!src) return ""
+    if (/^https?:\/\//.test(src)) return src
+    if (src.charAt(0) === "/") {
+      return new URL(src, window.location.origin).href
+    }
+
+    // Zensical may rewrite raw HTML asset paths to ../assets/... for nested pages.
+    // Treat docs asset references as site-rooted so repo subpaths remain intact.
+    if (/^(?:\.\.\/)*assets\//.test(src)) {
+      var siteRelative = src.replace(/^(?:\.\.\/)+(?=assets\/)/, "")
+      return new URL(siteRelative, getBase() + "/").href
+    }
+
+    return new URL(src, window.location.href).href
+  }
+
   /* Only the document dark/light mode is handled here.
      Visual colors should come from the chart option or ECharts theme itself. */
   var TT = {
@@ -355,7 +372,7 @@
   function processDiv(el) {
     var src = el.getAttribute("data-src")
     if (src) {
-      var url = src.startsWith("http") ? src : getBase() + "/" + src
+      var url = resolveChartUrl(src)
       el.textContent = "Loading chart…"
       fetch(url)
         .then(function (r) {
