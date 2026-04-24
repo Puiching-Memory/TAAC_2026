@@ -89,7 +89,6 @@ def test_cuda_sources_are_scoped_to_matching_extras() -> None:
 def test_ci_workflow_checks_supported_python_versions() -> None:
     ci_workflow_path = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
     ci_workflow = ci_workflow_path.read_text(encoding="utf-8")
-    supported_version_matrix = '["3.10", "3.11", "3.12", "3.13"]'
     matrix_block = 'matrix:\n        python-version: ["3.10", "3.11", "3.12", "3.13"]'
 
     assert ci_workflow.count(matrix_block) == 3
