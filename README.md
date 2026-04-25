@@ -23,6 +23,10 @@
   <a href="https://puiching-memory.github.io/TAAC_2026/">Online Docs</a>
 </p>
 
+<p align="center">
+  <img src="figures/taac2026_promo_hero.png" alt="TAAC 2026 宣传首图">
+</p>
+
 > [!NOTE]
 > 这是 TAAC 2026 其中一个参赛队伍的代码仓库，不代表官方文档。  
 > 我们的目标是提供一个开箱即用、便于扩展和回归验证的实验工作区，
