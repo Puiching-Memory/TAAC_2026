@@ -54,14 +54,14 @@ bash run.sh train --experiment config/baseline \
     --dataset-path /path/to/parquet_or_dir \
     --schema-path /path/to/schema.json
 
-bash run.sh test tests/unit -q
+uv run pytest tests/unit -q
 bash run.sh package --experiment config/interformer --output-dir /tmp/interformer-online --force
 ```
 
 Local defaults:
 
 - All local commands use CUDA profile `cuda126`; setting `TAAC_CUDA_PROFILE` or `--cuda-profile` to any other value is treated as an error.
-- `test` and `package` both reuse the same `cuda126` environment; pytest, hypothesis, and benchmark tooling are part of the default dependencies.
+- Training, evaluation, inference, and packaging commands all reuse the same `cuda126` environment; pytest, hypothesis, and benchmark tooling are part of the default dependencies and should be run with `uv run pytest`.
 - `TAAC_SKIP_UV_SYNC=1` skips automatic `uv sync` when the environment is already prepared.
 - `TAAC_INSTALL_UV=0` prevents `run.sh` from trying to install `uv` if it is missing.
 
@@ -172,7 +172,7 @@ Use this lifecycle for competition work:
 
 1. Develop locally with `uv sync --locked --extra cuda126`.
 2. Add or modify an experiment package under `config/<name>`.
-3. Run focused unit tests locally with `bash run.sh test tests/unit -q`.
+3. Run focused unit tests locally with `uv run pytest tests/unit -q`.
 4. For training experiments, keep the same `cuda126` environment and train through `bash run.sh train --experiment config/<name>`.
 5. Build the online bundle with `bash run.sh package --experiment config/<name> --force`.
 6. Inspect `code_package.zip` when changing packaging logic; confirm it contains the selected experiment package and required assets such as `ns_groups.json`.
@@ -185,7 +185,7 @@ Use this lifecycle for competition work:
 Local validation:
 
 ```bash
-bash run.sh test tests/unit -q
+uv run pytest tests/unit -q
 uv run --with ruff ruff check src/taac2026 tests/unit
 ```
 

@@ -173,9 +173,9 @@ bash run.sh --num_epochs 1 --batch_size 8 --device cpu
 当前可执行回归集中在 `tests/unit/`：
 
 ```bash
-bash run.sh test tests/unit -q
-bash run.sh test tests/unit/test_experiment_packages.py -q
-bash run.sh test tests/unit/test_package_training.py -q
+uv run pytest tests/unit -q
+uv run pytest tests/unit/test_experiment_packages.py -q
+uv run pytest tests/unit/test_package_training.py -q
 ```
 
 → 详细说明见 [测试](guide/testing.md)
@@ -195,7 +195,7 @@ uv run --no-project --isolated --with zensical zensical build --clean
 | `bash run.sh train`         | 训练实验包                                  |
 | `bash run.sh val`           | 评估单个实验/单个 checkpoint                |
 | `bash run.sh infer`         | 生成推理结果                                |
-| `bash run.sh test`          | 运行 pytest                                 |
+| `uv run pytest`            | 运行 pytest                                 |
 | `bash run.sh package`       | 生成 `run.sh` + `code_package.zip` 上传目录 |
 | `uv run taac-search`        | 记录搜索请求 JSON                           |
 | `uv run taac-package-train` | 直接调用训练打包 CLI                        |

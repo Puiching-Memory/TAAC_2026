@@ -30,17 +30,18 @@ TAAC_2026/
 
 `run.sh` 是用户和线上平台都应调用的入口：
 
-| 命令 | 实际动作 |
-| --- | --- |
-| `train` | 调用 `taac2026.application.training.cli` |
+| 命令           | 实际动作                                          |
+| -------------- | ------------------------------------------------- |
+| `train`        | 调用 `taac2026.application.training.cli`          |
 | `val` / `eval` | 调用 `taac2026.application.evaluation.cli single` |
-| `infer` | 调用 `taac2026.application.evaluation.cli infer` |
-| `test` | 运行 pytest |
-| `package` | 调用 `taac-package-train` 生成线上双文件 bundle |
+| `infer`        | 调用 `taac2026.application.evaluation.cli infer`  |
+| `package`      | 调用 `taac-package-train` 生成线上双文件 bundle   |
+
+测试统一直接通过 `uv run pytest ...` 执行，不再通过 `run.sh` 入口转发。
 
 同一个脚本有两种模式：
 
-- 仓库本地模式：`run.sh` 同级没有 `code_package.zip`，默认通过 `uv` 运行，并按命令同步 `cpu` 或 `cuda126` profile。
+- 仓库本地模式：`run.sh` 同级没有 `code_package.zip`，默认通过 `uv` 运行，并按命令同步 `cuda126` profile。
 - Bundle 模式：`run.sh` 同级存在 `code_package.zip`，默认用平台 `python`，解压代码包并设置 `PYTHONPATH`。
 
 ## 实验包契约

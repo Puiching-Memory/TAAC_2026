@@ -66,7 +66,7 @@ bash run.sh val --experiment config/baseline \
     --device cpu
 
 bash run.sh package --experiment config/baseline --force
-bash run.sh test tests/unit -q
+uv run pytest tests/unit -q
 ```
 
 → 详细步骤见 [快速开始](getting-started.md)

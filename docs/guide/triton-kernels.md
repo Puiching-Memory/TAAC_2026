@@ -18,7 +18,7 @@ icon: lucide/cpu
 当前可验证入口是单元测试：
 
 ```bash
-bash run.sh test tests/unit -q
+uv run pytest tests/unit -q
 ```
 
 ## 恢复 GPU Kernel 工作时的要求

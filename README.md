@@ -86,7 +86,7 @@ bash run.sh val --experiment config/baseline \
 bash run.sh package --experiment config/baseline
 
 # 跑完整训练栈回归
-bash run.sh test tests -q
+uv run pytest tests -q
 ```
 
 ## 当前支持实验包

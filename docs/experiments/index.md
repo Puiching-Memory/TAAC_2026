@@ -66,6 +66,6 @@ bash run.sh package --experiment config/<name> \
 
 ```bash
 python -m json.tool config/<name>/ns_groups.json >/dev/null
-bash run.sh test tests/unit/test_experiment_packages.py -q
-bash run.sh test tests/unit/test_package_training.py -q
+uv run pytest tests/unit/test_experiment_packages.py -q
+uv run pytest tests/unit/test_package_training.py -q
 ```

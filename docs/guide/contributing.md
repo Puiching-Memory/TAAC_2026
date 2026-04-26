@@ -174,7 +174,7 @@ python -m json.tool config/my_experiment/ns_groups.json >/dev/null
 再跑实验包契约测试：
 
 ```bash
-bash run.sh test tests/unit/test_experiment_packages.py -q
+uv run pytest tests/unit/test_experiment_packages.py -q
 ```
 
 训练 smoke：
@@ -201,7 +201,7 @@ python -m zipfile -l outputs/training_bundles/my_experiment_training_bundle/code
 最后跑当前单元回归：
 
 ```bash
-bash run.sh test tests/unit -q
+uv run pytest tests/unit -q
 ```
 
 ## 修改现有包的检查清单
