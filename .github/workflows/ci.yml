@@ -78,9 +78,6 @@ jobs:
       - name: 同步项目环境
         run: uv sync --locked --extra cuda126 --no-install-package torchrec --no-install-package fbgemm-gpu
 
-      - name: 运行仓库策略检查
-        run: uv run pytest tests/unit/test_repo_policy.py -q
-
       - name: 运行带有覆盖率的单元测试
         run: uv run --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v
 
