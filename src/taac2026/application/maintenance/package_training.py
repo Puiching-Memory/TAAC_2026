@@ -22,6 +22,40 @@ class BundleResult:
     manifest: dict[str, object]
 
 
+def _bundle_payload(result: BundleResult) -> dict[str, object]:
+    return {
+        "output_dir": str(result.output_dir),
+        "run_script_path": str(result.run_script_path),
+        "code_package_path": str(result.code_package_path),
+        "manifest": result.manifest,
+    }
+
+
+def _format_bundle_summary(result: BundleResult) -> str:
+    manifest = result.manifest
+    runtime_env = manifest.get("runtime_env", {})
+    lines = [
+        "Built TAAC online training bundle",
+        f"Experiment: {manifest.get('bundled_experiment_path', '<unknown>')}",
+        f"Output dir: {result.output_dir}",
+        f"run.sh: {result.run_script_path}",
+        f"code_package.zip: {result.code_package_path}",
+        f"Bundle format: {manifest.get('bundle_format', '<unknown>')}",
+    ]
+    if isinstance(runtime_env, dict):
+        lines.extend(
+            [
+                "Runtime env:",
+                f"  dataset: {runtime_env.get('dataset_path', '<unknown>')}",
+                f"  schema: {runtime_env.get('schema_path', '<unknown>')}",
+                f"  output: {runtime_env.get('checkpoint_path', '<unknown>')}",
+                f"  cuda profile: {runtime_env.get('cuda_profile', '<unknown>')}",
+            ]
+        )
+    lines.append("Upload the two files above: run.sh and code_package.zip")
+    return "\n".join(lines)
+
+
 def _iter_python_tree(root: Path) -> Iterable[Path]:
     for path in sorted(root.rglob("*")):
         if path.is_dir():
@@ -149,7 +183,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build a TAAC online training bundle")
     parser.add_argument("--experiment", default="config/baseline")
     parser.add_argument("--output-dir", "--output", dest="output_dir", default=None)
-    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--force", dest="force", action="store_true", default=True)
+    parser.add_argument("--no-force", dest="force", action="store_false")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = build_training_bundle(
@@ -157,13 +192,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_dir=Path(args.output_dir) if args.output_dir else None,
         force=args.force,
     )
-    payload = {
-        "output_dir": str(result.output_dir),
-        "run_script_path": str(result.run_script_path),
-        "code_package_path": str(result.code_package_path),
-        "manifest": result.manifest,
-    }
-    print(json.dumps(payload, ensure_ascii=False, indent=2 if args.json else None))
+    if args.json:
+        print(json.dumps(_bundle_payload(result), ensure_ascii=False, indent=2))
+    else:
+        print(_format_bundle_summary(result))
     return 0
 
 
