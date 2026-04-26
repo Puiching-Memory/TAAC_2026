@@ -1,80 +1,26 @@
-"""CLI entry point for the technology-timeline generator.
-
-Usage::
-
-    uv run taac-tech-timeline
-    uv run taac-tech-timeline --expand 1 --min-citations 200
-    uv run taac-tech-timeline --api-key YOUR_KEY
-"""
+"""Technology timeline command placeholder."""
 
 from __future__ import annotations
 
 import argparse
-import os
-import sys
+import json
+from collections.abc import Sequence
 from pathlib import Path
 
-from taac2026.reporting.tech_timeline import (
-    build_graph,
-    to_echarts,
-    write_echarts_json,
-)
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_OUTPUT = REPO_ROOT / "docs/assets/figures/papers/tech-timeline.echarts.json"
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description=(
-            "Fetch recommendation-system papers from Semantic Scholar "
-            "and generate an ECharts timeline graph."
-        ),
-    )
-    p.add_argument(
-        "--output",
-        default=str(DEFAULT_OUTPUT),
-        help="Output path for ECharts JSON (default: %(default)s)",
-    )
-    p.add_argument(
-        "--expand",
-        type=int,
-        default=0,
-        choices=[0, 1],
-        help="Citation expansion depth: 0 = seeds only, 1 = one hop (default: 0)",
-    )
-    p.add_argument(
-        "--min-citations",
-        type=int,
-        default=100,
-        help="Minimum citation count for expanded papers (default: %(default)s)",
-    )
-    p.add_argument(
-        "--api-key",
-        default=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"),
-        help=(
-            "Semantic Scholar API key (optional, increases rate limit; "
-            "defaults to $SEMANTIC_SCHOLAR_API_KEY when set)"
-        ),
-    )
-    return p.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Write a minimal technology timeline placeholder")
+    parser.add_argument("--output", default="outputs/reports/tech_timeline.json")
+    args = parser.parse_args(argv)
     output = Path(args.output)
-
-    def _log(msg: str) -> None:
-        print(msg, file=sys.stderr)
-
-    graph = build_graph(
-        expand_depth=args.expand,
-        min_citations=args.min_citations,
-        api_key=args.api_key,
-        progress_callback=_log,
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps({"report": "tech_timeline", "status": "placeholder"}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
-
-    option = to_echarts(graph)
-    write_echarts_json(option, output)
-    _log(f"Written → {output}")
+    print(output)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

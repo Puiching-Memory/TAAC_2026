@@ -1,190 +1,31 @@
-"""CLI for dataset exploratory analysis.
-
-Usage:
-    uv run taac-dataset-eda                         # sample dataset
-    uv run taac-dataset-eda --dataset path/to/data  # custom path
-    uv run taac-dataset-eda --max-rows 5000         # limit rows scanned
-"""
+"""Dataset EDA command placeholder."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_FIGURES_DIR = ROOT / "docs" / "assets" / "figures" / "eda"
 
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run dataset EDA and generate ECharts JSON")
-    p.add_argument("--dataset", default="TAAC2026/data_sample_1000", help="HF Hub name or local path")
-    p.add_argument("--max-rows", type=int, default=10000, help="Max rows to scan (0 = all)")
-    p.add_argument("--figures-dir", default=str(DEFAULT_FIGURES_DIR), help="Output directory for ECharts JSON")
-    p.add_argument("--json-path", default="", help="Optional JSON stats output path")
-    return p.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    figures_dir = Path(args.figures_dir)
-    figures_dir.mkdir(parents=True, exist_ok=True)
-
-    from taac2026.infrastructure.io.console import configure_logging, logger, stderr_console
-    from taac2026.infrastructure.io.datasets import iter_dataset_rows
-
-    configure_logging()
-    from taac2026.reporting.dataset_eda import (
-        scan_dataset,
-        serialize_echarts,
-        compute_cardinality_ranking,
-        compute_cardinality_bins,
-        echarts_cardinality,
-        echarts_cardinality_bins,
-        echarts_co_missing,
-        echarts_column_layout,
-        echarts_coverage_heatmap,
-        echarts_cross_domain_overlap,
-        echarts_cross_edition,
-        echarts_dense_distributions,
-        echarts_edition_comparison,
-        echarts_feature_auc,
-        echarts_label_distribution,
-        echarts_ndcg_decay,
-        echarts_null_rate_by_label,
-        echarts_null_rates,
-        echarts_seq_length_summary,
-        echarts_seq_repeat_rate,
-        echarts_sequence_lengths,
-        echarts_user_activity,
-    )
-
-    # ---- Load & analyse in a single streaming pass -------------------------
-    logger.info("Loading dataset: {}", args.dataset)
-    rows_iter = iter_dataset_rows(args.dataset)
-
-    result = scan_dataset(rows_iter, max_rows=args.max_rows)
-    if result is None:
-        logger.error("No rows found in dataset")
-        return 1
-
-    groups = result.groups
-    col_stats = result.col_stats
-    label_dist = result.label_dist
-    seq_stats = result.seq_stats
-    row_count = result.row_count
-
-    logger.info("Scanned {} rows (streaming)", row_count)
-
-    stderr_console.print(
-        f"[bold]Schema:[/] {groups.total} columns — "
-        f"scalar={len(groups.scalar)}, user_int={len(groups.user_int)}, "
-        f"user_dense={len(groups.user_dense)}, item_int={len(groups.item_int)}, "
-        f"domain_seq={sum(len(v) for v in groups.domain_seq.values())}"
-    )
-
-    for r in label_dist.as_table():
-        stderr_console.print(f"  label_type={r['label_type']} ({r['name']}): {r['count']:,}  ({r['ratio']:.2%})")
-
-    for domain, st in seq_stats.items():
-        s = st.summary()
-        if s["count"]:
-            stderr_console.print(f"  {domain}: mean={s['mean']:.1f}, median={s['median']:.0f}, p95={s['p95']:.0f}")
-
-    cardinality = compute_cardinality_ranking(col_stats, groups)
-    logger.info("Top-5 cardinality: {}", [(r["column"], r["n_unique"]) for r in cardinality[:5]])
-
-    # Print new analysis summaries
-    if result.user_stats is not None:
-        udist = result.user_stats.activity_distribution()
-        stderr_console.print(
-            f"  [bold]Users:[/] {udist.get('total_users', 0):,} unique, "
-            f"mean={udist.get('mean_behaviors', 0):.1f}, median={udist.get('median_behaviors', 0):.0f} behaviors/user"
-        )
-        overlap = result.user_stats.cross_domain_overlap()
-        domain_dist = overlap.get("user_domain_count_dist", {})
-        if domain_dist:
-            stderr_console.print(f"  [bold]Cross-domain:[/] {domain_dist}")
-
-    if result.label_cond_stats is not None and result.label_cond_stats.feature_auc:
-        top_auc = sorted(result.label_cond_stats.feature_auc.items(), key=lambda x: x[1], reverse=True)[:5]
-        stderr_console.print(f"  [bold]Top-5 feature AUC:[/] {[(c, v) for c, v in top_auc]}")
-
-    # ---- Generate ECharts JSON ---------------------------------------------
-    logger.info("Generating ECharts JSON → {}", figures_dir)
-
-    def _write_ec(name: str, opt: dict) -> None:
-        (figures_dir / f"{name}.echarts.json").write_text(
-            serialize_echarts(opt), encoding="utf-8",
-        )
-
-    # Build current label distribution for cross-edition chart
-    _label_pcts: dict[str, float] = {}
-    for r in label_dist.as_table():
-        _label_pcts[r["name"]] = round(r["ratio"] * 100, 2)
-
-    _write_ec("label_distribution", echarts_label_distribution(label_dist))
-    _write_ec("null_rates", echarts_null_rates(col_stats))
-    _write_ec("cardinality", echarts_cardinality(cardinality))
-    _write_ec("sequence_lengths", echarts_sequence_lengths(seq_stats))
-    _write_ec("coverage_heatmap", echarts_coverage_heatmap(col_stats, groups))
-    _write_ec("column_layout", echarts_column_layout(groups))
-    _write_ec("ndcg_decay", echarts_ndcg_decay())
-    _write_ec("label_cross_edition", echarts_cross_edition(_label_pcts))
-    _write_ec("edition_comparison", echarts_edition_comparison(groups, seq_stats))
-    _write_ec("seq_length_summary", echarts_seq_length_summary(seq_stats))
-    logger.info("  ✓ 10 base ECharts JSON files")
-
-    # ---- New deep-analysis charts -----------------------------------------
-    chart_count = 10
-    if result.user_stats is not None:
-        _write_ec("user_activity", echarts_user_activity(result.user_stats))
-        _write_ec("cross_domain_overlap", echarts_cross_domain_overlap(result.user_stats))
-        chart_count += 2
-
-    if result.label_cond_stats is not None:
-        _write_ec("feature_auc", echarts_feature_auc(result.label_cond_stats))
-        _write_ec("null_rate_by_label", echarts_null_rate_by_label(result.label_cond_stats))
-        chart_count += 2
-
-    if result.dense_stats is not None:
-        _write_ec("dense_distributions", echarts_dense_distributions(result.dense_stats))
-        chart_count += 1
-
-    cardinality_bins = compute_cardinality_bins(cardinality)
-    _write_ec("cardinality_bins", echarts_cardinality_bins(cardinality_bins))
-    chart_count += 1
-
-    if result.seq_patterns is not None:
-        _write_ec("seq_repeat_rate", echarts_seq_repeat_rate(result.seq_patterns))
-        chart_count += 1
-
-    if result.missing_patterns is not None:
-        _write_ec("co_missing", echarts_co_missing(result.missing_patterns))
-        chart_count += 1
-
-    logger.info("  ✓ {} total ECharts JSON files", chart_count)
-
-    # ---- Optional JSON stats ----------------------------------------------
-    if args.json_path:
-        json_path = Path(args.json_path)
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        stats_dict = {
-            "rows": row_count,
-            "columns": groups.total,
-            "groups": {
-                "scalar": len(groups.scalar),
-                "user_int": len(groups.user_int),
-                "user_dense": len(groups.user_dense),
-                "item_int": len(groups.item_int),
-                "domain_seq": {d: len(c) for d, c in groups.domain_seq.items()},
-            },
-            "label_distribution": label_dist.as_table(),
-            "sequence_lengths": {d: st.summary() for d, st in seq_stats.items()},
-            "cardinality_top20": cardinality[:20],
-        }
-        json_path.write_text(json.dumps(stats_dict, indent=2, ensure_ascii=False), encoding="utf-8")
-        logger.info("JSON stats → {}", json_path)
-
-    logger.info("Done ✓")
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Write a minimal dataset EDA report placeholder")
+    parser.add_argument("--dataset-path", default=None)
+    parser.add_argument("--schema-path", default=None)
+    parser.add_argument("--output", default="outputs/reports/dataset_eda.json")
+    args = parser.parse_args(argv)
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "report": "dataset_eda",
+        "dataset_path": args.dataset_path,
+        "schema_path": args.schema_path,
+        "status": "placeholder",
+    }
+    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(output)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

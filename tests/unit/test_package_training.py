@@ -1,112 +1,100 @@
 from __future__ import annotations
 
-from io import BytesIO
 import json
-from pathlib import Path
-import tarfile
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from taac2026.application.maintenance.package_training import build_training_bundle
 
 
-def _read_payload_names(bundle_path: Path) -> set[str]:
-    with zipfile.ZipFile(bundle_path) as bundle_archive:
-        payload_bytes = bundle_archive.read("runtime_payload.tar.gz")
-    with tarfile.open(fileobj=BytesIO(payload_bytes), mode="r:gz") as payload_archive:
-        return {member.name for member in payload_archive.getmembers()}
+def _code_package_names(code_package_path: Path) -> set[str]:
+    with zipfile.ZipFile(code_package_path) as code_archive:
+        return set(code_archive.namelist())
 
 
-def test_build_training_bundle_writes_single_zip_with_expected_layout(tmp_path: Path) -> None:
-    output_path = tmp_path / "baseline_bundle.zip"
+def _code_package_manifest(code_package_path: Path) -> dict[str, object]:
+    with zipfile.ZipFile(code_package_path) as code_archive:
+        payload = code_archive.read("project/.taac_training_manifest.json")
+    return json.loads(payload.decode("utf-8"))
 
-    result = build_training_bundle("config/baseline", output_path=output_path)
 
-    assert result.output_path == output_path.resolve()
-    assert output_path.exists()
+def test_build_training_bundle_contains_runtime_sources(tmp_path: Path) -> None:
+    output_dir = tmp_path / "baseline_bundle"
 
-    with zipfile.ZipFile(output_path) as bundle_archive:
-        names = set(bundle_archive.namelist())
-        assert {"README.md", "bundle_manifest.json", "run.sh", "runtime_payload.tar.gz"} <= names
-        run_sh = bundle_archive.read("run.sh").decode("utf-8")
-        manifest = json.loads(bundle_archive.read("bundle_manifest.json").decode("utf-8"))
+    result = build_training_bundle("config/baseline", output_dir=output_dir)
 
-    assert "TAAC_DATASET_PATH" in run_sh
-    assert 'CUDA_PROFILE="${TAAC_CUDA_PROFILE:-cuda128}"' in run_sh
-    assert 'uv sync --locked --extra "$CUDA_PROFILE" "${UV_SYNC_EXTRA_ARGS[@]}"' in run_sh
-    assert "Unsupported CUDA profile" in run_sh
-    assert 'uv run taac-train --experiment "./config/baseline"' in run_sh
+    assert result.output_dir == output_dir.resolve()
+    assert result.run_script_path == output_dir.resolve() / "run.sh"
+    assert result.code_package_path == output_dir.resolve() / "code_package.zip"
+    assert sorted(path.name for path in output_dir.iterdir()) == ["code_package.zip", "run.sh"]
+    assert result.run_script_path.exists()
+    assert result.code_package_path.exists()
+    run_script = result.run_script_path.read_text(encoding="utf-8")
+    assert "RUNNER_MODE=\"python\"" in run_script
+    assert "python -m taac2026.application.training.cli" not in run_script
+    assert "run_console_script taac-train taac2026.application.training.cli" in run_script
+
+    manifest = _code_package_manifest(result.code_package_path)
+    assert manifest["bundle_format"] == "taac2026-training-v2"
     assert manifest["bundled_experiment_path"] == "config/baseline"
-    assert manifest["lockfile"] == "uv.lock"
-    assert manifest["runtime_env"]["cuda_profile"] == "TAAC_CUDA_PROFILE"
+    assert manifest["entrypoint"] == "run.sh"
+    assert manifest["code_package"] == "code_package.zip"
+
+    names = _code_package_names(result.code_package_path)
+    assert "project/.taac_training_manifest.json" in names
+    assert "project/pyproject.toml" in names
+    assert "project/uv.lock" in names
+    assert "project/src/taac2026/application/training/cli.py" in names
+    assert "project/src/taac2026/infrastructure/pcvr/training.py" in names
+    assert "project/src/taac2026/infrastructure/pcvr/trainer.py" in names
+    assert "project/config/baseline/model.py" in names
+    assert "project/config/baseline/ns_groups.json" in names
+    assert "project/run.sh" not in names
+    assert "project/config/baseline/train.py" not in names
+    assert "project/config/baseline/trainer.py" not in names
+    assert "project/config/baseline/run.sh" not in names
+    assert "project/tests/unit/test_package_training.py" not in names
 
 
-def test_build_training_bundle_payload_is_trimmed_to_training_runtime(tmp_path: Path) -> None:
-    output_path = tmp_path / "baseline_bundle.zip"
-    build_training_bundle("config.baseline", output_path=output_path)
+@pytest.mark.parametrize(
+    "experiment",
+    [
+        "config/symbiosis",
+        "config/ctr_baseline",
+        "config/deepcontextnet",
+        "config/interformer",
+        "config/onetrans",
+        "config/hyformer",
+        "config/unirec",
+        "config/uniscaleformer",
+    ],
+)
+def test_build_training_bundle_contains_experiment_ns_groups(tmp_path: Path, experiment: str) -> None:
+    output_dir = tmp_path / f"{Path(experiment).name}_bundle"
 
-    payload_names = _read_payload_names(output_path)
+    result = build_training_bundle(experiment, output_dir=output_dir)
 
-    assert "project/config/baseline/__init__.py" in payload_names
-    assert "project/src/taac2026/application/training/cli.py" in payload_names
-    assert "project/src/taac2026/infrastructure/io/files.py" in payload_names
-    assert "project/uv.lock" in payload_names
-    assert "project/src/taac2026/application/search/cli.py" not in payload_names
-    assert "project/tests/unit/test_package_training.py" not in payload_names
-    assert "project/docs/getting-started.md" not in payload_names
-
-
-def test_build_training_bundle_copies_root_pyproject_and_readme(tmp_path: Path) -> None:
-    output_path = tmp_path / "baseline_bundle.zip"
-    build_training_bundle("config/baseline", output_path=output_path)
-
-    with zipfile.ZipFile(output_path) as bundle_archive:
-        payload_bytes = bundle_archive.read("runtime_payload.tar.gz")
-    with tarfile.open(fileobj=BytesIO(payload_bytes), mode="r:gz") as payload_archive:
-        pyproject_member = payload_archive.extractfile("project/pyproject.toml")
-        assert pyproject_member is not None
-        pyproject_text = pyproject_member.read().decode("utf-8")
-
-        lockfile_member = payload_archive.extractfile("project/uv.lock")
-        assert lockfile_member is not None
-        payload_lockfile_text = lockfile_member.read().decode("utf-8")
-
-        readme_member = payload_archive.extractfile("project/README.md")
-        assert readme_member is not None
-        payload_readme_text = readme_member.read().decode("utf-8")
-
-    source_pyproject_text = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(encoding="utf-8")
-    source_lockfile_text = (Path(__file__).resolve().parents[2] / "uv.lock").read_text(encoding="utf-8")
-    source_readme_text = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
-
-    assert pyproject_text == source_pyproject_text
-    assert payload_lockfile_text == source_lockfile_text
-    assert payload_readme_text == source_readme_text
+    names = _code_package_names(result.code_package_path)
+    assert f"project/{experiment}/model.py" in names
+    assert f"project/{experiment}/ns_groups.json" in names
 
 
-def test_build_training_bundle_refuses_to_overwrite_existing_output_without_force(tmp_path: Path) -> None:
-    output_path = tmp_path / "baseline_bundle.zip"
-    build_training_bundle("config/baseline", output_path=output_path)
+def test_build_training_bundle_refuses_overwrite_without_force(tmp_path: Path) -> None:
+    output_dir = tmp_path / "baseline_bundle"
+    build_training_bundle("config/baseline", output_dir=output_dir)
 
-    with pytest.raises(FileExistsError, match="output zip already exists"):
-        build_training_bundle("config/baseline", output_path=output_path)
-
-
-def test_build_training_bundle_force_replaces_existing_output_file(tmp_path: Path) -> None:
-    output_path = tmp_path / "baseline_bundle.zip"
-    output_path.write_text("stale", encoding="utf-8")
-
-    result = build_training_bundle("config/baseline", output_path=output_path, force=True)
-
-    assert result.output_path == output_path.resolve()
-    with zipfile.ZipFile(output_path) as bundle_archive:
-        assert "run.sh" in bundle_archive.namelist()
+    with pytest.raises(FileExistsError):
+        build_training_bundle("config/baseline", output_dir=output_dir)
 
 
-def test_build_training_bundle_rejects_directory_output_path(tmp_path: Path) -> None:
-    output_dir = tmp_path / "bundle_dir"
-    output_dir.mkdir()
+def test_build_training_bundle_force_replaces_two_file_output(tmp_path: Path) -> None:
+    output_dir = tmp_path / "baseline_bundle"
+    build_training_bundle("config/baseline", output_dir=output_dir)
+    (output_dir / "run.sh").write_text("stale\n", encoding="utf-8")
 
-    with pytest.raises(IsADirectoryError, match="output path is a directory"):
-        build_training_bundle("config/baseline", output_path=output_dir, force=True)
+    result = build_training_bundle("config/baseline", output_dir=output_dir, force=True)
+
+    assert result.run_script_path.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash")
+    assert result.code_package_path.exists()

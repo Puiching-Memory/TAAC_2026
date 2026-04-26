@@ -187,7 +187,7 @@ icon: lucide/server
 | CUDA Runtime  | 12.6       |
 | `nvcc`        | 12.6.77    |
 
-这与仓库现有 cuda126 profile 是对齐的；如果线上环境坚持使用 CPU profile，则需要由入口脚本或平台参数显式切换。
+这与仓库现有唯一的 cuda126 profile 是对齐的；如果平台仍传入历史 `cpu` profile 参数，当前入口应直接拒绝并要求切回 `cuda126`。
 
 ## 运行时行为观察
 
@@ -209,7 +209,7 @@ icon: lucide/server
 - 线上 bundle 应尽量做到自包含：要么把 uv 和依赖预打包进去，要么切到平台内网镜像源，而不是依赖公网 PyPI、Astral 或 PyTorch 索引。
 - 若实验或依赖链需要 cmake、ninja、pkg-config 或更复杂的原生构建流程，应在线下完成构建并把产物随 bundle 一起带上，而不是把源码安装留到线上。
 - 文档和脚本里不应默认线上一定拿到完整 GPU，而应按小显存切片场景设计保守默认值。
-- 若线上平台默认传 cpu profile，但任务实际希望走 CUDA 依赖，应显式设置 TAAC_CUDA_PROFILE=cuda126 或由平台侧配置覆盖；同时 CUDA 依赖的准备应在线下完成。
+- 若线上平台仍保留历史 `cpu` profile 参数，应改为显式传 `TAAC_CUDA_PROFILE=cuda126`，或直接移除该旧参数；当前仓库不再接受其他 profile。
 - 日志采集脚本继续打印 CPU、内存、磁盘、GPU、nvcc、代理环境、站点矩阵和 pip 下载探测是有价值的，因为这些信息足以快速判断线上失败是环境错配、代理隧道失败，还是公网 DNS 不可用。
 
 ## 原始日志中的关键片段

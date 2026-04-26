@@ -4,182 +4,171 @@ icon: lucide/package
 
 # 线上训练打包
 
-当线上平台要求你手动上传代码和启动脚本时，推荐先用 `taac-package-train` 生成单个 zip。
-这个命令会把指定实验包和训练所需的最小运行时裁剪出来，避免把 tests、文档、搜索 CLI、其他实验包一并上传。
+当线上平台只识别顶层 `run.sh` 时，使用 `bash run.sh package` 生成一个只包含运行脚本和代码包的上传目录。当前平台契约是双文件，不是单个 zip。
 
-## 适用场景
+```text
+<training_bundle>/
+├── run.sh
+└── code_package.zip
+```
 
-- 线上训练环境只接受单个压缩包上传
-- 你希望每次只发布一个实验包，而不是整个仓库
-- 平台提供统一的数据挂载路径和 bash 入口
-
-## 生成 zip
+## 生成上传目录
 
 ```bash
-# 使用默认命名
-uv run taac-package-train --experiment config/baseline
+bash run.sh package --experiment config/baseline --force
 
-# 自定义 zip 文件名
-uv run taac-package-train --experiment config/interformer --bundle-name interformer-round1
-
-# 覆盖已有产物
-uv run taac-package-train --experiment config/interformer --output /tmp/interformer-online.zip --force
+bash run.sh package --experiment config/interformer \
+    --output-dir outputs/training_bundles/interformer_training_bundle \
+    --force
 ```
 
-默认输出目录：
+默认输出目录为：
 
 ```text
-outputs/training_bundles/
+outputs/training_bundles/<experiment>_training_bundle/
 ```
 
-例如 baseline 会生成：
+上传时保持 `run.sh` 和 `code_package.zip` 位于同一目录。平台执行 `run.sh` 后，脚本会解压旁边的 `code_package.zip`，设置 `PYTHONPATH`，再启动训练 CLI。
 
-```text
-outputs/training_bundles/baseline-train-bundle.zip
-```
+## code_package.zip 内容
 
-## 压缩包结构
-
-生成的 zip 顶层包含：
-
-```text
-baseline-train-bundle.zip
-├── README.md
-├── bundle_manifest.json
-├── run.sh
-└── runtime_payload.tar.gz
-```
-
-其中：
-
-- `run.sh` 负责解压 payload、安装依赖并执行训练
-- `runtime_payload.tar.gz` 里包含最小训练源码和目标实验包
-- `bundle_manifest.json` 记录实验路径、环境变量名和 payload 统计信息
-
-其中 `runtime_payload.tar.gz` 解压后还会包含 `pyproject.toml` 与 `uv.lock`，用于保持与仓库一致的锁定依赖解析。
-
-payload 内部大致结构如下：
+代码包解压后是一个 `project/` 目录，通常包含：
 
 ```text
 project/
-├── config/
-│   └── baseline/
+├── .taac_training_manifest.json
 ├── pyproject.toml
 ├── uv.lock
-└── src/
-    └── taac2026/
+├── README.md
+├── tools/
+│   └── log_host_device_info.sh
+├── src/
+│   └── taac2026/
+└── config/
+    ├── __init__.py
+    └── <selected_experiment>/
         ├── __init__.py
-        ├── application/
-        │   ├── __init__.py
-        │   └── training/
-        ├── domain/
-        └── infrastructure/
+        ├── model.py
+        └── ns_groups.json
 ```
 
-这里不会包含：
+代码包不包含 `docs/`、`site/`、`tests/` 或其他未选择的实验包。`uv.lock` 会随包保存用于追溯和本地复现，但线上 bundle 默认不会执行 `uv sync`。
 
-- `tests/`
-- `docs/`
-- `site/`
-- 其他 `config/<name>/`
-- 搜索和评估 CLI
+## 本地模式与 Bundle 模式
 
-## 线上运行方式
+同一个 `run.sh` 支持两种模式：
 
-解压 zip 后，至少设置数据路径再执行 `run.sh`：
+| 模式         | 触发条件                             | 默认 runner | 说明                                      |
+| ------------ | ------------------------------------ | ----------- | ----------------------------------------- |
+| 本地仓库模式 | `run.sh` 同级没有 `code_package.zip` | `uv`        | 自动按命令同步 `cpu` 或 `cuda126` profile |
+| Bundle 模式  | `run.sh` 同级存在 `code_package.zip` | `python`    | 解压代码包并复用平台 Python/Conda 环境    |
+
+可用 `TAAC_RUNNER=python|uv` 显式覆盖 runner。线上平台通常没有 `uv`，因此推荐保持 `TAAC_RUNNER=python`。
+
+## 线上运行
+
+至少提供训练数据路径：
 
 ```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet
+export TAAC_DATASET_PATH=/path/to/train.parquet_or_dataset_dir
+export TAAC_SCHEMA_PATH=/path/to/schema.json
+export TAAC_OUTPUT_DIR=/path/to/output
+export TAAC_RUNNER=python
+
 bash run.sh
 ```
 
-如果你要显式打开运行时优化开关：
+如果要做一次短 smoke：
 
 ```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet
-export TAAC_OUTPUT_DIR=/path/to/output
-bash run.sh --compile --amp --amp-dtype bfloat16
+bash run.sh --num_epochs 1 --batch_size 8 --device cpu
 ```
 
-`run.sh` 内部执行的是：
+GPU 训练通常只需要切换 device：
 
 ```bash
-uv sync --locked --extra "${TAAC_CUDA_PROFILE:-cuda128}"
-uv run taac-train --experiment ./config/baseline --dataset-path "$TAAC_DATASET_PATH" --run-dir "$TAAC_OUTPUT_DIR"
+bash run.sh --device cuda
 ```
 
-也就是说，bundle 本质上仍然复用了仓库里的训练 CLI，只是把输入裁成了最小可上传运行时。
+`run.sh` 会把环境变量映射为训练 CLI 参数：
+
+```bash
+python -m taac2026.application.training.cli \
+    --experiment <manifest experiment> \
+    --dataset-path "$TAAC_DATASET_PATH" \
+    --schema-path "$TAAC_SCHEMA_PATH" \
+    --run-dir "$TAAC_OUTPUT_DIR" \
+    "$@"
+```
+
+不要把历史训练栈里的 runtime optimization 参数复制到当前 PCVR 训练命令中；当前共享 PCVR parser 不支持这些参数。
 
 ## 环境变量
 
-| 变量 | 是否必填 | 作用 |
-| ---- | -------- | ---- |
-| `TAAC_DATASET_PATH` | 是 | 线上数据路径，支持 parquet 文件或数据缓存目录 |
-| `TAAC_OUTPUT_DIR` | 否 | 覆盖训练产物输出目录，默认写到 zip 同级 `outputs/` |
-| `TAAC_BUNDLE_WORKDIR` | 否 | 控制 payload 的解压目录 |
-| `TAAC_CUDA_PROFILE` | 否 | 选择 `cpu` / `cuda126` / `cuda128` / `cuda130`，默认 `cuda128` |
-| `TAAC_ENABLE_TE` | 否 | 设为 `1` 时安装 `transformer-engine` 额外依赖 |
-| `TAAC_FORCE_EXTRACT` | 否 | 设为 `1` 时强制重新解压 `runtime_payload.tar.gz` |
+| 变量                                     | 是否常用 | 作用                                                 |
+| ---------------------------------------- | -------- | ---------------------------------------------------- |
+| `TAAC_DATASET_PATH` / `TRAIN_DATA_PATH`  | 是       | parquet 文件或包含 parquet 的目录                    |
+| `TAAC_SCHEMA_PATH` / `TRAIN_SCHEMA_PATH` | 常用     | schema 不在数据同目录时显式指定                      |
+| `TAAC_OUTPUT_DIR` / `TRAIN_CKPT_PATH`    | 常用     | 训练输出目录                                         |
+| `TAAC_EXPERIMENT`                        | 偶尔     | 覆盖 manifest 中的实验包路径                         |
+| `TAAC_BUNDLE_WORKDIR`                    | 偶尔     | 控制 `code_package.zip` 解压目录                     |
+| `TAAC_CODE_PACKAGE`                      | 偶尔     | 指向非默认位置的 `code_package.zip`                  |
+| `TAAC_FORCE_EXTRACT`                     | 偶尔     | 设为 `1` 时强制重新解压                              |
+| `TAAC_RUNNER`                            | 常用     | `python` 或 `uv`；bundle 默认 `python`               |
+| `TAAC_PYTHON`                            | 偶尔     | 指定 Python 解释器，例如平台 Conda 环境中的 `python` |
+| `TAAC_CUDA_PROFILE`                      | 本地     | 本地 uv 模式固定使用 `cuda126`；传其他值会直接失败   |
+| `TAAC_SKIP_UV_SYNC`                      | 本地     | 本地 uv 模式跳过依赖同步                             |
+| `TAAC_INSTALL_UV`                        | 本地     | 本地 uv 不存在时是否尝试安装                         |
 
-## 与直接训练的区别
-
-直接在仓库里训练时，实验包通常使用仓库内默认的数据缓存路径：
-
-```bash
-uv run taac-train --experiment config/baseline
-```
-
-而 bundle 需要显式告诉运行时数据在哪，所以训练 CLI 新增了 `--dataset-path` 覆盖项：
+## 检查 Bundle
 
 ```bash
-uv run taac-train --experiment config/baseline --dataset-path /path/to/train.parquet
+python -m zipfile -l outputs/training_bundles/baseline_training_bundle/code_package.zip | head -80
 ```
 
-这使得：
+重点确认：
 
-- 本地仓库训练仍可继续用默认数据路径
-- 线上训练 bundle 可以在外部挂载数据目录上直接运行
+- 有 `project/.taac_training_manifest.json`。
+- 有 `project/src/taac2026/...`。
+- 有目标实验包的 `model.py` 和 `ns_groups.json`。
+- 没有 `project/tests/`、`project/docs/` 和其他实验包。
 
 ## 常见问题
 
-### `TAAC_DATASET_PATH` 未设置
+### 线上提示找不到模块
 
-`run.sh` 会直接退出并返回非零状态。先设置环境变量再运行：
+确认 `run.sh` 与 `code_package.zip` 在同一目录，并查看日志中是否完成了解压。bundle 模式会设置 `PYTHONPATH=<workdir>/project/src:<workdir>/project`。
+
+### 线上缺少 Python 包
+
+优先使用平台或自定义镜像预装 CUDA、PyTorch、FBGEMM、TorchRec 等核心栈。若平台允许预运行依赖步骤，只在当前 Conda Python 内补装缺失的纯 Python 包：
 
 ```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet
-bash run.sh
+python -m pip install numpy pyarrow scikit-learn rich tensorboard tqdm optuna tomli
 ```
 
-### 已有旧 payload，但想重新展开
+不要在任务启动时依赖公网下载核心 GPU 栈，也不要把 bundle runner 切回 `uv`。
+
+### 想重新解压代码包
 
 ```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet
 export TAAC_FORCE_EXTRACT=1
-bash run.sh
+bash run.sh --num_epochs 1 --batch_size 8 --device cpu
 ```
 
-### 线上环境需要额外的 Transformer Engine
+### 线上跑错实验包
 
-```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet
-export TAAC_ENABLE_TE=1
-bash run.sh
-```
-
-### 想检查 bundle 实际包含了什么
-
-可以直接查看 `bundle_manifest.json`，或者本地解压 `runtime_payload.tar.gz` 验证结构。
+检查 `code_package.zip` 内的 `project/.taac_training_manifest.json`，并确认没有设置 `TAAC_EXPERIMENT` 覆盖 manifest。
 
 ## 相关命令
 
 ```bash
-# 本地训练
-uv run taac-train --experiment config/baseline
+bash run.sh train --experiment config/baseline \
+    --dataset-path /path/to/train.parquet \
+    --schema-path /path/to/schema.json
 
-# 线上训练打包
-uv run taac-package-train --experiment config/baseline
+bash run.sh package --experiment config/baseline --force
 
-# 直接覆盖数据路径
-uv run taac-train --experiment config/baseline --dataset-path /path/to/train.parquet
+TAAC_RUNNER=python TAAC_DATASET_PATH=/path/to/train.parquet \
+    bash outputs/training_bundles/baseline_training_bundle/run.sh --num_epochs 1 --batch_size 8 --device cpu
 ```

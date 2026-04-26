@@ -2,207 +2,213 @@
 icon: lucide/git-branch-plus
 ---
 
-# 开发指南：新增实验包
+# 新增实验包
 
-## 当前约定
+新增 PCVR 实验包时，默认只写包内模型和配置，训练、评估、推理、checkpoint 和线上打包都复用共享 runtime。
 
-新增实验包时，默认优先复用框架层的共享实现。只有当默认 builder 不满足需求时，才额外创建 `data.py` 或 `utils.py`。
+## 最小目录
 
-### 推荐目录结构
-
-最小接入通常只需要两个文件：
-
-```
-config/my_experiment/
-├── __init__.py    # 导出 EXPERIMENT
-└── model.py       # build_model_component（模型架构）
-```
-
-当你需要覆盖默认行为时，再按需增加：
-
-```
+```text
 config/my_experiment/
 ├── __init__.py
 ├── model.py
-├── data.py        # 仅在默认数据管道不够用时新增
-└── utils.py       # 仅在默认 loss / optimizer 不够用时新增
+└── ns_groups.json
 ```
 
-## 第 1 步：创建 `__init__.py`
+不要在实验包里新增 `run.sh`、`train.py`、`trainer.py` 或复制共享 dataloader。除非确实要改变 runtime 行为，否则实验包只负责模型本身。
+
+## __init__.py
+
+`__init__.py` 导出 `EXPERIMENT = PCVRExperiment(...)`：
 
 ```python
 from __future__ import annotations
 
 from pathlib import Path
 
-from taac2026.domain.config import DataConfig, ModelConfig, TrainConfig
-from taac2026.domain.experiment import ExperimentSpec
-from taac2026.domain.features import build_default_feature_schema
+from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
 
-from .model import build_model_component
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "outputs" / "config" / "my_experiment"
-
-EXPERIMENT = ExperimentSpec(
-    name="my_experiment",
-    data=DataConfig(
-        max_seq_len=32,
-        max_feature_tokens=16,
-        max_event_features=4,
-        stream_batch_rows=256,
-        val_ratio=0.2,
-        label_action_type=2,
-        dense_feature_dim=16,
+EXPERIMENT = PCVRExperiment(
+    name="pcvr_my_experiment",
+    package_dir=Path(__file__).resolve().parent,
+    model_class_name="PCVRMyExperiment",
+    default_train_args=(
+        "--ns_groups_json",
+        "ns_groups.json",
+        "--num_blocks",
+        "2",
+        "--num_heads",
+        "4",
     ),
-    model=ModelConfig(
-        name="my_experiment",
-        vocab_size=131072,
-        embedding_dim=128,
-        hidden_dim=128,
-        dropout=0.1,
-        num_layers=4,
-        num_heads=4,
-        recent_seq_len=32,
-        memory_slots=2,
-        ffn_multiplier=4.0,
-        feature_cross_layers=1,
-        sequence_layers=1,
-        static_layers=1,
-        query_decoder_layers=0,
-        fusion_layers=1,
-        num_queries=0,
-        head_hidden_dim=128,
-        segment_count=4,
-    ),
-    train=TrainConfig(
-        seed=7,
-        epochs=10,
-        batch_size=64,
-        eval_batch_size=64,
-        num_workers=0,
-        output_dir=str(DEFAULT_OUTPUT_DIR),
-        learning_rate=1.0e-3,
-        weight_decay=1.0e-4,
-    ),
-    build_data_pipeline=None,
-    build_model_component=build_model_component,
-    build_loss_stack=None,
-    build_optimizer_component=None,
-    switches={"logging": True, "visualization": True},
 )
 
-EXPERIMENT.feature_schema = build_default_feature_schema(EXPERIMENT.data, EXPERIMENT.model)
+__all__ = ["EXPERIMENT"]
 ```
 
-这里的关键点是：
+关键点：
 
-- `build_model_component` 始终由实验包自己提供
-- `build_data_pipeline=None` 会走框架默认 KJT / sparse pipeline
-- `build_loss_stack=None` 会走默认 ranking loss
-- `build_optimizer_component=None` 会走默认 optimizer builder
+- `model_class_name` 必须与 `model.py` 中导出的类名一致。
+- 非 baseline 实验使用自己的类名，例如 `PCVRInterFormer`、`PCVROneTrans` 或 `PCVRMyExperiment`。
+- `default_train_args` 里显式启用包内 `ns_groups.json`。
+- 新参数优先使用共享 PCVR parser 已支持的名字，例如 `--num_blocks`、`--d_model`、`--batch_size`。
 
-## 第 2 步：实现 `model.py`
+## model.py
+
+`model.py` 必须暴露 `ModelInput` 和 `model_class_name` 指定的模型类。模型构造函数由 `build_pcvr_model` 调用，签名应接受共享 runtime 传入的 schema 和配置参数：
 
 ```python
 from __future__ import annotations
 
 import torch
-from torch import nn
+import torch.nn as nn
 
-from taac2026.domain.features import build_default_feature_schema
-from taac2026.domain.types import BatchTensors
-from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
-from taac2026.infrastructure.nn.heads import ClassificationHead
-from taac2026.infrastructure.nn.pooling import masked_mean
+from taac2026.infrastructure.pcvr.modeling import (
+    DenseTokenProjector,
+    EmbeddingParameterMixin,
+    ModelInput,
+    NonSequentialTokenizer,
+    SequenceTokenizer,
+    masked_mean,
+)
 
 
-class MyExperimentModel(nn.Module):
-    def __init__(self, data_config, model_config, dense_dim: int, feature_schema) -> None:
+class PCVRMyExperiment(EmbeddingParameterMixin, nn.Module):
+    def __init__(
+        self,
+        user_int_feature_specs: list[tuple[int, int, int]],
+        item_int_feature_specs: list[tuple[int, int, int]],
+        user_dense_dim: int,
+        item_dense_dim: int,
+        seq_vocab_sizes: dict[str, list[int]],
+        user_ns_groups: list[list[int]],
+        item_ns_groups: list[list[int]],
+        d_model: int = 64,
+        emb_dim: int = 64,
+        num_blocks: int = 2,
+        num_heads: int = 4,
+        hidden_mult: int = 4,
+        dropout_rate: float = 0.01,
+        **kwargs: object,
+    ) -> None:
         super().__init__()
-        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
-            feature_schema,
-            table_names=("user_tokens", "candidate_tokens", "context_tokens"),
+        del num_heads, hidden_mult, dropout_rate, kwargs
+        self.user_tokenizer = NonSequentialTokenizer(
+            user_int_feature_specs,
+            user_ns_groups,
+            emb_dim,
+            d_model,
+            user_ns_tokens=0,
+            emb_skip_threshold=0,
         )
-        self.encoder = nn.Linear(self.sparse_embedding.output_dim + dense_dim, model_config.hidden_dim)
-        self.output = ClassificationHead(model_config.hidden_dim)
+        self.item_tokenizer = NonSequentialTokenizer(
+            item_int_feature_specs,
+            item_ns_groups,
+            emb_dim,
+            d_model,
+            item_ns_tokens=0,
+            emb_skip_threshold=0,
+        )
+        self.user_dense = DenseTokenProjector(user_dense_dim, d_model)
+        self.item_dense = DenseTokenProjector(item_dense_dim, d_model)
+        self.sequence_tokenizers = nn.ModuleDict(
+            {domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model) for domain, vocab_sizes in seq_vocab_sizes.items()}
+        )
+        self.num_ns = self.user_tokenizer.num_tokens + self.item_tokenizer.num_tokens
+        self.head = nn.Linear(d_model, 1)
 
-    def forward(self, batch: BatchTensors) -> torch.Tensor:
-        sparse = self.sparse_embedding(batch.sparse_features)
-        fused = torch.cat([sparse, batch.dense_features], dim=-1)
-        hidden = torch.relu(self.encoder(fused))
-        return self.output(hidden)
+    def _embed(self, inputs: ModelInput) -> torch.Tensor:
+        tokens = [self.user_tokenizer(inputs.user_int_feats), self.item_tokenizer(inputs.item_int_feats)]
+        user_dense = self.user_dense(inputs.user_dense_feats)
+        item_dense = self.item_dense(inputs.item_dense_feats)
+        if user_dense is not None:
+            tokens.append(user_dense)
+        if item_dense is not None:
+            tokens.append(item_dense)
+        return masked_mean(torch.cat(tokens, dim=1))
+
+    def forward(self, inputs: ModelInput) -> torch.Tensor:
+        return self.head(self._embed(inputs)).squeeze(-1)
+
+    def predict(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor]:
+        embeddings = self._embed(inputs)
+        return self.head(embeddings).squeeze(-1), embeddings
 
 
-def build_model_component(data_config, model_config, dense_dim):
-    feature_schema = build_default_feature_schema(data_config, model_config)
-    return MyExperimentModel(data_config, model_config, dense_dim, feature_schema=feature_schema)
+__all__ = ["ModelInput", "PCVRMyExperiment"]
 ```
 
-实际模型通常会：
+实际模型可以更复杂，但仍应满足：
 
-- 消费 `batch.sparse_features`
-- 按需读取 `batch.sequence_features`
-- 使用共享的 `ClassificationHead`、`TargetAwarePool`、`RMSNorm` 等组件
+- `forward(inputs)` 返回 logits。
+- `predict(inputs)` 返回 `(logits, embeddings)`。
+- `num_ns` 是可读属性。
+- 优先复用 `taac2026.infrastructure.pcvr.modeling` 的 tokenizer、mask、pooling 和 normalization helper。
 
-如果你需要从 schema 选择特定表，优先从 `EXPERIMENT.feature_schema` 派生，而不是重新手写一套 token 约定。
+## ns_groups.json
 
-## 何时创建 `data.py`
+每个包都要带自己的 NS 分组文件：
 
-只有在以下情况才建议覆盖默认数据管道：
-
-- 需要与默认 `FeatureSchema` 不兼容的输入表示
-- 需要额外的自定义样本级变换
-- 需要特殊的 collate / sampler 行为
-
-覆盖时，函数签名仍然必须返回：
-
-```python
-def build_data_pipeline(data_config, model_config, train_config):
-    return train_loader, val_loader, data_stats
+```json
+{
+  "_purpose": "PCVR non-sequential feature grouping for this experiment.",
+  "user_ns_groups": {
+    "U1": [1, 15]
+  },
+  "item_ns_groups": {
+    "I1": [11, 13]
+  }
+}
 ```
 
-## 何时创建 `utils.py`
+JSON 中的数字是官方列名里的 fid，例如 `user_int_feats_15` 对应 `15`。runtime 会根据当前 schema 映射到实际特征索引。显式传入的文件不存在时会失败，不会静默回退。
 
-以下情况适合保留自定义 `utils.py`：
+## 本地验证
 
-- 需要自定义 auxiliary loss
-- 需要特殊优化器分组或非默认优化器
-- 需要对特定参数应用不同更新规则
-
-当前仓库里的真实例子：
-
-- DeepContextNet：保留自定义 optimizer builder
-- UniRec：保留自定义 optimizer builder
-- UniScaleFormer：保留自定义 loss builder
-
-!!! important "不要跨实验包复用 utils"
-    如果实验包需要自定义 builder，应当在自己的 `utils.py` 中显式定义或重新导出。测试会校验 builder 的模块归属，避免不同实验包之间出现隐式耦合。
-
-## 验证流程
+先校验 JSON：
 
 ```bash
-# 1. 检查 ExperimentSpec / 默认 builder / 前向契约
-uv run pytest tests/integration/test_experiment_packages.py -q
-
-# 2. 跑一次最小训练
-uv run taac-train --experiment config/my_experiment
-
-# 3. 跑一次评估
-uv run taac-evaluate single --experiment config/my_experiment
+python -m json.tool config/my_experiment/ns_groups.json >/dev/null
 ```
 
-如果你新增了测试文件，把它放进 `tests/unit/`、`tests/integration/`、`tests/gpu/`，或 benchmark 对应的 `tests/benchmarks/cpu/`、`tests/benchmarks/gpu/` 目录；未分类测试如果留在 `tests/` 根目录，pytest 收集会直接失败。
+再跑实验包契约测试：
 
-## 数据与 schema 约定
-
-默认数据集标识为 HuggingFace 数据集名：
-
-```
-TAAC2026/data_sample_1000
+```bash
+bash run.sh test tests/unit/test_experiment_packages.py -q
 ```
 
-你仍然可以在实验包里显式覆盖 `dataset_path`（本地 parquet、本地目录或自定义 Hub 数据集名）。
-默认值在缓存缺失时会自动触发下载并写入本地 HuggingFace 缓存。
+训练 smoke：
 
-`feature_schema` 建议通过 `build_default_feature_schema()` 派生，再根据实验需求做局部调整，而不是从零复制整套表定义。
+```bash
+bash run.sh train --experiment config/my_experiment \
+    --dataset-path /path/to/parquet_or_dataset_dir \
+    --schema-path /path/to/schema.json \
+    --num_epochs 1 \
+    --batch_size 8 \
+    --device cpu
+```
+
+打包 smoke：
+
+```bash
+bash run.sh package --experiment config/my_experiment \
+    --output-dir outputs/training_bundles/my_experiment_training_bundle \
+    --force
+
+python -m zipfile -l outputs/training_bundles/my_experiment_training_bundle/code_package.zip | head -80
+```
+
+最后跑当前单元回归：
+
+```bash
+bash run.sh test tests/unit -q
+```
+
+## 修改现有包的检查清单
+
+- `model_class_name` 与 `model.py` 导出的类一致。
+- 非 baseline 包没有暴露 `PCVRHyFormer`。
+- `ns_groups.json` 存在，并在默认训练参数中启用。
+- 模型能完成 forward、backward 和 predict。
+- Bundle 包含目标实验包的 `model.py` 和 `ns_groups.json`。
+- 文档中的命令都显式给出数据路径，且只使用当前 CLI 支持的参数。

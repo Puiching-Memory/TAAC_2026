@@ -84,7 +84,7 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: 安装项目依赖 (轻量级)
-        run: uv sync --locked --extra cpu --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu
+          run: uv sync --locked --extra cuda126 --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu
 
       - name: 构建 Zensical 站点
         run: uv run --no-project --isolated --with zensical zensical build --clean

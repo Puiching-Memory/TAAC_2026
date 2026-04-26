@@ -1,68 +1,42 @@
+"""Unified training CLI used by the repository-level run.sh."""
+
 from __future__ import annotations
 
 import argparse
-import sys
+import json
+from pathlib import Path
+from collections.abc import Sequence
 
-from ...infrastructure.experiments.loader import load_experiment_package
-from ...infrastructure.io.console import configure_logging, print_summary_table
-
-
-def parse_train_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a TAAC 2026 experiment")
-    parser.add_argument("--experiment", required=True, help="Experiment package path or module path")
-    parser.add_argument("--dataset-path", help="Override dataset path")
-    parser.add_argument("--run-dir", help="Override output directory")
-    parser.add_argument("--compile", action="store_true", help="Enable torch.compile for model execution")
-    parser.add_argument("--compile-backend", help="Override torch.compile backend")
-    parser.add_argument("--compile-mode", help="Override torch.compile mode")
-    parser.add_argument("--amp", action="store_true", help="Enable AMP autocast during model execution")
-    parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16", help="Autocast dtype when AMP is enabled")
-    return parser.parse_args(argv)
+from taac2026.domain.config import TrainRequest, default_run_dir
+from taac2026.infrastructure.experiments.loader import load_experiment_package
 
 
-def main(argv: list[str] | None = None) -> int:
-    from .service import run_training
+def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, tuple[str, ...]]:
+    parser = argparse.ArgumentParser(description="Train a TAAC 2026 experiment package")
+    parser.add_argument("--experiment", default="config/baseline", help="experiment package path or module")
+    parser.add_argument("--dataset-path", required=True, help="PCVR parquet file or parquet directory")
+    parser.add_argument("--schema-path", default=None, help="schema.json path; defaults to the dataset directory")
+    parser.add_argument("--run-dir", default=None, help="checkpoint/output directory")
+    parser.add_argument("--json", action="store_true", help="print the training summary as JSON")
+    return parser.parse_known_args(argv)
 
-    configure_logging()
-    args = parse_train_args(argv)
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args, extra_args = parse_train_args(argv)
     experiment = load_experiment_package(args.experiment)
-    if args.dataset_path:
-        experiment.data.dataset_path = args.dataset_path
-    if args.run_dir:
-        experiment.train.output_dir = args.run_dir
-    if args.compile:
-        experiment.train.enable_torch_compile = True
-    if args.compile_backend is not None:
-        experiment.train.enable_torch_compile = True
-        experiment.train.torch_compile_backend = args.compile_backend
-    if args.compile_mode is not None:
-        experiment.train.enable_torch_compile = True
-        experiment.train.torch_compile_mode = args.compile_mode
-    if args.amp:
-        experiment.train.enable_amp = True
-        experiment.train.amp_dtype = args.amp_dtype
-    summary = run_training(
-        experiment,
-        experiment_path=args.experiment,
-        show_progress=bool(sys.stderr.isatty()),
+    run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.experiment)
+    request = TrainRequest(
+        experiment=args.experiment,
+        dataset_path=Path(args.dataset_path),
+        schema_path=Path(args.schema_path) if args.schema_path else None,
+        run_dir=run_dir,
+        extra_args=tuple(extra_args),
     )
-    print_summary_table(
-        "taac-train",
-        [
-            ("experiment", experiment.name),
-            ("output_dir", experiment.train.output_dir),
-            ("best_epoch", summary["best_epoch"]),
-            ("best_val_auc", f"{float(summary['best_val_auc']):.6f}"),
-            ("auc", f"{float(summary['metrics'].get('auc', 0.0)):.6f}"),
-            ("pr_auc", f"{float(summary['metrics'].get('pr_auc', 0.0)):.6f}"),
-            ("mean_latency_ms_per_sample", f"{float(summary['mean_latency_ms_per_sample']):.4f}"),
-            ("parameter_size_mb", f"{float(summary['model_profile']['parameter_size_mb']):.2f}"),
-            ("train_step_tflops", f"{float(summary['compute_profile']['train_step_tflops']):.4f}"),
-            ("ncu_available", str(summary["profiling"]["external_profilers"]["tools"]["ncu"]["available"])),
-            ("nsys_available", str(summary["profiling"]["external_profilers"]["tools"]["nsys"]["available"])),
-        ],
-    )
+    summary = experiment.train(request) or {"run_dir": str(run_dir)}
+    if args.json:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 
-__all__ = ["main", "parse_train_args"]
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -76,7 +76,7 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
       - name: 同步项目环境
-        run: uv sync --locked --extra cpu
+        run: uv sync --locked --extra cuda126 --no-install-package torchrec --no-install-package fbgemm-gpu
 
       - name: 运行仓库策略检查
         run: uv run pytest tests/unit/test_repo_policy.py -q

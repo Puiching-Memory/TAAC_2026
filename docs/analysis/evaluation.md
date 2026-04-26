@@ -78,42 +78,41 @@ AUC 优化的核心是让正样本得分高于负样本：
 
 ---
 
-## 5. 框架已实现的评估指标
+## 5. 当前代码中的评估指标
 
-本框架在 `taac2026.domain.metrics` 中提供了一组互补的离线指标，覆盖排序质量、概率校准和分群诊断三个维度：
+当前 PCVR 评估入口由 `PCVRExperiment.evaluate()` 驱动，写入 `evaluation.json` 的指标是：
 
-| 指标 | 函数 | 诊断用途 |
+| 指标 | 来源 | 诊断用途 |
 |------|------|----------|
 | **AUC** | `binary_auc()` | 整体排序质量（竞赛主指标） |
-| **PR-AUC** | `binary_pr_auc()` | 正样本稀疏时比 AUC 更敏感，适合检测转化预测的精确率-召回率权衡 |
-| **Brier Score** | `binary_brier()` | 概率校准误差，值越低校准越好 |
-| **LogLoss** | `binary_logloss()` | 二元交叉熵，同时反映排序和校准质量 |
-| **GAUC** | `group_auc()` | 按用户分组的 AUC，同时返回 coverage（有效分组占比），可发现整体 AUC 掩盖的用户群体退化 |
+| **LogLoss** | `binary_logloss()` | 二元交叉熵，用于观察概率输出是否稳定 |
+| **sample_count** | 评估样本计数 | 校验评估覆盖样本量 |
 
-训练循环在验证阶段自动通过 `compute_classification_metrics()` 计算上述全部指标。
+`taac2026.domain.metrics` 里还保留了 `compute_classification_metrics()`、`group_auc()` 和 Brier helper，可用于离线分析或后续扩展；但它们不是当前 PCVR evaluate CLI 默认写出的字段。
 
 ### 5.1 指标用法
 
 ```python
-from taac2026.domain.metrics import compute_classification_metrics
+from taac2026.domain.metrics import binary_auc, binary_logloss
 
-results = compute_classification_metrics(labels, logits, group_ids)
+auc = binary_auc(labels, probabilities)
+logloss = binary_logloss(labels, probabilities)
+
+# PCVR evaluate 当前写出的核心 payload 形态：
 # results = {
 #     "auc": 0.72,
-#     "pr_auc": 0.38,
-#     "brier": 0.19,
 #     "logloss": 0.54,
-#     "gauc": {"value": 0.68, "coverage": 0.85},
+#     "sample_count": 1000,
 # }
 ```
 
 ### 5.2 为什么需要多个指标
 
-只看 overall AUC 会掩盖以下问题：
+只看 overall AUC 可能会掩盖以下问题，这些适合作为后续离线诊断维度扩展：
 
-- **用户群覆盖不足**：整体 AUC 高但 GAUC coverage 低，说明大量用户分组无法有效排序
-- **校准错位**：AUC 高但 Brier/LogLoss 差，预测概率不可信，影响下游出价
-- **正样本检出不足**：AUC 尚可但 PR-AUC 低，说明转化样本的 recall 不够
+- **用户群覆盖不足**：整体 AUC 高但分群覆盖低，说明大量用户分组无法有效排序
+- **校准错位**：AUC 高但 LogLoss 或校准误差差，预测概率不可信，影响下游出价
+- **正样本检出不足**：AUC 尚可但转化样本 recall 不够
 
 ### 5.3 评估最佳实践
 
@@ -136,7 +135,7 @@ results = compute_classification_metrics(labels, logits, group_ids)
 
 ### 6.2 分群切片评估（P1 优先级）
 
-- [ ] **用户活跃度分桶 AUC**：按 `user_stats.activity_distribution()` 的分桶，输出各桶 AUC/PR-AUC/GAUC
+- [ ] **用户活跃度分桶 AUC**：按 `user_stats.activity_distribution()` 的分桶，输出各桶 AUC 和覆盖率
 - [ ] **物品热度分桶 AUC**：高热/中热/低热/冷启动物品各自的 AUC
 - [ ] **序列长度分桶 AUC**：短序列 vs 长序列用户的 AUC 差异 → 指导 max_seq_len 设置
 - [ ] **缺失率分桶 AUC**：高缺失率用户 vs 低缺失率用户的 AUC → 验证 missing token 策略效果
@@ -151,5 +150,5 @@ results = compute_classification_metrics(labels, logits, group_ids)
 ### 6.4 校准与排序诊断
 
 - [ ] **预测分数分布**：正负样本的分数直方图重叠度 → 判断模型区分能力
-- [ ] **Brier vs AUC scatter**：跨实验对比排序能力与校准能力的 tradeoff
-- [ ] **GAUC coverage 趋势**：随训练进行 coverage 是否在下降（过拟合高活跃用户）
+- [ ] **校准 vs AUC scatter**：跨实验对比排序能力与校准能力的 tradeoff
+- [ ] **分群覆盖趋势**：随训练进行 coverage 是否在下降（过拟合高活跃用户）

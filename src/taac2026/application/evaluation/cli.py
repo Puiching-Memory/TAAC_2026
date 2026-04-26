@@ -1,179 +1,89 @@
+"""Unified local validation and platform inference CLI."""
+
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
-import sys
-from typing import Any
+from collections.abc import Sequence
 
-from rich import box
-from rich.table import Table
+import torch
 
-from ...infrastructure.experiments.loader import load_experiment_package
-from ...infrastructure.io.console import (
-    configure_logging,
-    create_progress_bar,
-    print_summary_table,
-    stdout_console,
-)
-from .service import _sort_records, evaluate_checkpoint
+from taac2026.domain.config import EvalRequest, InferRequest, default_run_dir
+from taac2026.infrastructure.experiments.loader import load_experiment_package
 
 
-def _apply_runtime_optimization_args(experiment, args: argparse.Namespace) -> None:
-    if getattr(args, "compile", False):
-        experiment.train.enable_torch_compile = True
-    if getattr(args, "compile_backend", None) is not None:
-        experiment.train.enable_torch_compile = True
-        experiment.train.torch_compile_backend = args.compile_backend
-    if getattr(args, "compile_mode", None) is not None:
-        experiment.train.enable_torch_compile = True
-        experiment.train.torch_compile_mode = args.compile_mode
-    if getattr(args, "amp", False):
-        experiment.train.enable_amp = True
-        experiment.train.amp_dtype = args.amp_dtype
+def _default_device() -> str:
+    return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def _format_quantization_summary(summary: dict[str, Any]) -> str:
-    mode = str(summary.get("mode", "none"))
-    if mode == "none":
-        return mode
-
-    parts = [mode]
-    quantized_linear_layers = int(summary.get("quantized_linear_layers", 0) or 0)
-    active = summary.get("active")
-    resolved_active = bool(active) if active is not None else quantized_linear_layers > 0
-    if not resolved_active:
-        parts.append("inactive")
-        return " | ".join(parts)
-
-    if quantized_linear_layers > 0:
-        parts.append(f"linear={quantized_linear_layers}")
-    return " | ".join(parts)
-
-
-def _build_single_summary_rows(report: dict[str, Any]) -> list[tuple[str, Any]]:
-    quantization = report["quantization"]
-    return [
-        ("experiment", report["experiment"]),
-        ("experiment_path", report["experiment_path"]),
-        ("checkpoint_path", report["checkpoint_path"]),
-        ("device", report["device"]),
-        ("quantization", _format_quantization_summary(quantization)),
-        ("quantization_reason", quantization.get("reason") or "-"),
-        ("export", report["export"]["mode"]),
-        ("export_artifact", report["export"].get("artifact_path") or "-"),
-        ("loss", f"{float(report['loss']):.6f}"),
-        ("auc", f"{float(report['metrics'].get('auc', 0.0)):.6f}"),
-        ("pr_auc", f"{float(report['metrics'].get('pr_auc', 0.0)):.6f}"),
-        ("mean_latency_ms_per_sample", f"{float(report['mean_latency_ms_per_sample']):.4f}"),
-        ("p95_latency_ms_per_sample", f"{float(report['p95_latency_ms_per_sample']):.4f}"),
-    ]
-
-
-def _print_batch_table(records: list[dict[str, Any]]) -> None:
-    table = Table(title="taac-evaluate batch", box=box.SIMPLE_HEAVY, header_style="bold cyan")
-    table.add_column("Rank", justify="right", style="cyan", no_wrap=True)
-    table.add_column("Experiment", style="white")
-    table.add_column("Quantization", justify="center")
-    table.add_column("AUC", justify="right")
-    table.add_column("PR AUC", justify="right")
-    table.add_column("Latency ms/sample", justify="right")
-    for index, record in enumerate(records, start=1):
-        table.add_row(
-            str(index),
-            str(record.get("experiment_path") or record.get("experiment") or record.get("model_name")),
-            _format_quantization_summary(record.get("quantization", {})),
-            f"{float(record.get('metrics', {}).get('auc', record.get('auc', 0.0))):.6f}",
-            f"{float(record.get('metrics', {}).get('pr_auc', record.get('pr_auc', 0.0))):.6f}",
-            f"{float(record.get('mean_latency_ms_per_sample', 0.0)):.4f}",
-        )
-    stdout_console.print(table)
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate TAAC 2026 experiments")
+def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate or run inference for a TAAC 2026 experiment")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    single_parser = subparsers.add_parser("single")
-    single_parser.add_argument("--experiment", required=True)
-    single_parser.add_argument("--checkpoint")
-    single_parser.add_argument("--output-path")
-    single_parser.add_argument("--run-dir")
-    single_parser.add_argument("--compile", action="store_true")
-    single_parser.add_argument("--compile-backend")
-    single_parser.add_argument("--compile-mode")
-    single_parser.add_argument("--amp", action="store_true")
-    single_parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16")
-    single_parser.add_argument("--quantize", choices=("none", "int8"), default="none")
-    single_parser.add_argument("--export-mode", choices=("none", "torch-export"), default="none")
-    single_parser.add_argument("--export-path")
+    single = subparsers.add_parser("single", help="evaluate one checkpoint on a labeled parquet dataset")
+    single.add_argument("--experiment", default="config/baseline")
+    single.add_argument("--dataset-path", required=True)
+    single.add_argument("--schema-path", default=None)
+    single.add_argument("--run-dir", default=None)
+    single.add_argument("--checkpoint", default=None)
+    single.add_argument("--output", default=None)
+    single.add_argument("--predictions-path", default=None)
+    single.add_argument("--batch-size", type=int, default=256)
+    single.add_argument("--num-workers", type=int, default=0)
+    single.add_argument("--device", default=_default_device())
+    single.add_argument("--json", action="store_true")
 
-    batch_parser = subparsers.add_parser("batch")
-    batch_parser.add_argument("--experiment-paths", nargs="+", required=True)
-    batch_parser.add_argument("--compile", action="store_true")
-    batch_parser.add_argument("--compile-backend")
-    batch_parser.add_argument("--compile-mode")
-    batch_parser.add_argument("--amp", action="store_true")
-    batch_parser.add_argument("--amp-dtype", choices=("float16", "bfloat16"), default="float16")
-    batch_parser.add_argument("--quantize", choices=("none", "int8"), default="none")
-    batch_parser.add_argument("--export-mode", choices=("none", "torch-export"), default="none")
-
+    infer = subparsers.add_parser("infer", help="write platform predictions.json")
+    infer.add_argument("--experiment", default="config/baseline")
+    infer.add_argument("--dataset-path", required=True)
+    infer.add_argument("--schema-path", default=None)
+    infer.add_argument("--checkpoint", default=None)
+    infer.add_argument("--result-dir", required=True)
+    infer.add_argument("--batch-size", type=int, default=256)
+    infer.add_argument("--num-workers", type=int, default=0)
+    infer.add_argument("--device", default=_default_device())
+    infer.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    configure_logging()
-    args = parse_args(argv)
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_eval_args(argv)
+    experiment = load_experiment_package(args.experiment)
     if args.command == "single":
-        experiment = load_experiment_package(args.experiment)
-        if args.run_dir:
-            experiment.train.output_dir = args.run_dir
-        _apply_runtime_optimization_args(experiment, args)
-        checkpoint = args.checkpoint
-        if checkpoint is None and args.run_dir:
-            checkpoint = str(Path(args.run_dir) / "best.pt")
-        report = evaluate_checkpoint(
-            experiment_path=args.experiment,
-            checkpoint_path=checkpoint,
-            output_path=args.output_path,
-            experiment=experiment,
-            quantization_mode=args.quantize,
-            export_mode=args.export_mode,
-            export_path=args.export_path,
+        run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.experiment)
+        request = EvalRequest(
+            experiment=args.experiment,
+            dataset_path=Path(args.dataset_path),
+            schema_path=Path(args.schema_path) if args.schema_path else None,
+            run_dir=run_dir,
+            checkpoint_path=Path(args.checkpoint) if args.checkpoint else None,
+            output_path=Path(args.output) if args.output else None,
+            predictions_path=Path(args.predictions_path) if args.predictions_path else None,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=args.device,
         )
-        print_summary_table(
-            "taac-evaluate single",
-            _build_single_summary_rows(report),
+        payload = experiment.evaluate(request)
+    else:
+        request = InferRequest(
+            experiment=args.experiment,
+            dataset_path=Path(args.dataset_path),
+            schema_path=Path(args.schema_path) if args.schema_path else None,
+            checkpoint_path=Path(args.checkpoint) if args.checkpoint else None,
+            result_dir=Path(args.result_dir),
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            device=args.device,
         )
-        return 0
+        payload = experiment.infer(request)
 
-    progress_bar = None
-    if sys.stderr.isatty():
-        progress_bar = create_progress_bar(
-            total=len(args.experiment_paths),
-            description="taac-evaluate[batch]",
-        )
-    reports: list[dict[str, Any]] = []
-    try:
-        for experiment_path in args.experiment_paths:
-            experiment = load_experiment_package(experiment_path)
-            _apply_runtime_optimization_args(experiment, args)
-            reports.append(
-                evaluate_checkpoint(
-                    experiment_path=experiment_path,
-                    experiment=experiment,
-                    quantization_mode=args.quantize,
-                    export_mode=args.export_mode,
-                )
-            )
-            if progress_bar is not None:
-                progress_bar.update()
-                progress_bar.set_postfix({"last": experiment_path}, refresh=False)
-    finally:
-        if progress_bar is not None:
-            progress_bar.close()
-    ranked = _sort_records(reports)
-    _print_batch_table(ranked)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
     return 0
 
 
-__all__ = ["_build_single_summary_rows", "_format_quantization_summary", "main", "parse_args"]
+if __name__ == "__main__":
+    raise SystemExit(main())

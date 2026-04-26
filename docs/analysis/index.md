@@ -6,13 +6,19 @@ icon: lucide/chart-column
 
 本分区提供 TAAC 2026 数据集的自动化探索性分析，以及从上届竞赛论文中提炼的数据层面经验。
 
-所有统计数据和图表均由 `taac-dataset-eda` CLI 工具自动生成；如需刷新文档站展示，请在本地重跑后把 `docs/assets/figures/eda/` 下的 JSON 一并提交：
+EDA 统计数据和图表面向当前官方 flat-column sample 格式维护。若你在本地重跑相关流程，建议显式传入 `demo_1000.parquet` 与同目录 `schema.json`，并把 `docs/assets/figures/eda/` 下刷新后的 JSON 一并提交：
 
 ```bash
-uv run taac-dataset-eda                            # 默认 sample 数据集
-uv run taac-dataset-eda --dataset path/to/data     # 自定义数据路径
-uv run taac-dataset-eda --json-path figures/eda/stats.json  # 同时输出 JSON
-uv run taac-bench-report                           # 生成性能基准图表 JSON
+uv run taac-dataset-eda \
+    --dataset-path data/sample_1000_raw/demo_1000.parquet \
+    --schema-path data/sample_1000_raw/schema.json
+
+uv run taac-dataset-eda \
+    --dataset-path path/to/demo_1000.parquet \
+    --schema-path path/to/schema.json \
+    --output outputs/reports/dataset_eda.json
+
+uv run taac-bench-report --output outputs/reports/benchmark_report.json  # 写出占位 benchmark 报告
 ```
 
 ## 文档索引
@@ -20,33 +26,13 @@ uv run taac-bench-report                           # 生成性能基准图表 JS
 | 文档                                 | 说明                                           |
 | ------------------------------------ | ---------------------------------------------- |
 | [数据集 EDA 报告](dataset-eda.md)    | 本届数据集的自动化分析报告（含图表）           |
-| [性能基准](benchmarks.md)            | benchmark JSON 到 ECharts 图表的自动化汇总页   |
+| [性能基准](benchmarks.md)            | 当前 benchmark 占位报告入口说明                 |
 | [评估指标分析](evaluation.md)        | 评估协议解读与指标优化方向                     |
 | [TAAC 2025 论文洞察](taac2025-insights.md) | TAAC 2025 论文关键经验提炼 |
 
-## 编程接口
+## 当前状态
 
-分析功能也可作为 Python API 直接调用：
-
-```python
-from taac2026.infrastructure.io.datasets import iter_dataset_rows
-from taac2026.reporting.dataset_eda import (
-    classify_columns,
-    compute_column_stats,
-    compute_label_distribution,
-    compute_sequence_lengths,
-    echarts_label_distribution,
-)
-
-rows = list(iter_dataset_rows("TAAC2026/data_sample_1000"))
-groups = classify_columns(list(rows[0].keys()))
-label_dist = compute_label_distribution(iter(rows))
-
-# 生成 ECharts JSON 配置（可直接写入 .echarts.json 文件）
-import json
-chart_opt = echarts_label_distribution(label_dist)
-print(json.dumps(chart_opt, ensure_ascii=False, indent=2))
-```
+当前仓库保留的数据分析入口以文档资产和 CLI 调用约定为主，不再维护稳定的 Python 级 EDA API 示例。若后续恢复 Python API，应统一以官方 `demo_1000.parquet` + `schema.json` 这套 flat-column 输入约定为准。
 
 ## 快速背景
 

@@ -4,69 +4,46 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taac2026"
-version = "0.1.0"
+version = "1.0.0"
 description = "TAAC 2026 experiment workspace"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
+classifiers = [
+	"Operating System :: POSIX :: Linux",
+]
 dependencies = [
-	"datasets>=3.0",
-	"hypothesis>=6.142",
-	"loguru>=0.7",
-	"matplotlib>=3.10",
-	"numpy>=2.1",
-	"optuna>=4.4",
-	"pyarrow>=18.0",
-	"pytest>=8.3",
-	"pytest-benchmark>=5.1",
-	"rich>=13.9",
-	"tomli>=2.0",
-	"triton>=3.2; platform_system == 'Linux'",
+	"datasets==2.14.7",
+	"hypothesis==6.151.12",
+	"matplotlib==3.10.8",
+	"numpy==2.2.6",
+	"optuna==4.8.0",
+	"pyarrow==23.0.1",
+	"pytest==9.0.3",
+	"pytest-benchmark==5.2.3",
+	"rich==14.3.3",
+	"scikit-learn==1.7.2",
+	"tensorboard==2.20.0",
+	"tomli==2.4.0",
+	"tqdm==4.67.1",
+	"triton==3.3.1",
 ]
 
 [project.optional-dependencies]
-cpu = [
-	"torch>=2.6; platform_system == 'Linux'",
-	"torchao>=0.17; platform_system == 'Linux'",
-]
 cuda126 = [
-	"torch>=2.6; platform_system == 'Linux'",
-	"torchao>=0.17; platform_system == 'Linux'",
-	"fbgemm-gpu>=1.2; platform_system == 'Linux'",
-	"torchrec>=1.0; platform_system == 'Linux'",
-]
-cuda128 = [
-	"torch>=2.6; platform_system == 'Linux'",
-	"torchao>=0.17; platform_system == 'Linux'",
-	"fbgemm-gpu>=1.2; platform_system == 'Linux'",
-	"torchrec>=1.0; platform_system == 'Linux'",
-]
-cuda130 = [
-	"torch>=2.6; platform_system == 'Linux'",
-	"torchao>=0.17; platform_system == 'Linux'",
-	"fbgemm-gpu>=1.2; platform_system == 'Linux'",
-	"torchrec>=1.0; platform_system == 'Linux'",
-]
-te = [
-	"transformer-engine[pytorch]>=2.13; platform_system == 'Linux'",
+	"torch==2.7.1+cu126",
+	"fbgemm-gpu==1.2.0+cu126",
+	"torchrec==1.2.0+cu126",
 ]
 
 [tool.uv.sources]
 torch = [
-	{ index = "pytorch-cpu", marker = "platform_system == 'Linux'", extra = "cpu" },
-	{ index = "pytorch-cu126", marker = "platform_system == 'Linux'", extra = "cuda126" },
-	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'", extra = "cuda128" },
-	{ index = "pytorch-cu130", marker = "platform_system == 'Linux'", extra = "cuda130" },
-]
-torchao = [
-	{ index = "pytorch-cpu", marker = "platform_system == 'Linux'", extra = "cpu" },
-	{ index = "pytorch-cu126", marker = "platform_system == 'Linux'", extra = "cuda126" },
-	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'", extra = "cuda128" },
-	{ index = "pytorch-cu130", marker = "platform_system == 'Linux'", extra = "cuda130" },
+	{ index = "pytorch-cu126", extra = "cuda126" },
 ]
 "fbgemm-gpu" = [
-	{ index = "pytorch-cu126", marker = "platform_system == 'Linux'", extra = "cuda126" },
-	{ index = "pytorch-cu128", marker = "platform_system == 'Linux'", extra = "cuda128" },
-	{ index = "pytorch-cu130", marker = "platform_system == 'Linux'", extra = "cuda130" },
+	{ index = "pytorch-cu126", extra = "cuda126" },
+]
+torchrec = [
+	{ index = "pytorch-cu126", extra = "cuda126" },
 ]
 
 [[tool.uv.index]]
@@ -75,53 +52,12 @@ url = "https://pypi.org/simple"
 default = true
 
 [[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
-
 [tool.uv]
 environments = ["sys_platform == 'linux'"]
-conflicts = [
-	[
-		{ extra = "cpu" },
-		{ extra = "cuda126" },
-	],
-	[
-		{ extra = "cpu" },
-		{ extra = "cuda128" },
-	],
-	[
-		{ extra = "cpu" },
-		{ extra = "cuda130" },
-	],
-	[
-		{ extra = "cuda126" },
-		{ extra = "cuda128" },
-	],
-	[
-		{ extra = "cuda126" },
-		{ extra = "cuda130" },
-	],
-	[
-		{ extra = "cuda128" },
-		{ extra = "cuda130" },
-	],
-]
 
 [project.scripts]
 taac-train = "taac2026.application.training.cli:main"
@@ -140,9 +76,6 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-"taac2026.application.maintenance.templates" = ["*.tmpl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

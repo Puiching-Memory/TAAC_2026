@@ -1,4 +1,0 @@
-interface:
-  display_name: "TAAC Docs Workflow"
-  short_description: "Regenerate EDA charts and rebuild site after docs/reporting changes"
-  default_prompt: "Use $taac-docs-workflow to ensure generated chart assets exist and the site is rebuilt after editing reporting code or docs."

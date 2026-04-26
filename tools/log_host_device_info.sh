@@ -11,15 +11,21 @@ UV_INSTALL_URL="${TAAC_UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
 PYPI_INDEX_URL="${TAAC_PYPI_INDEX_URL:-https://pypi.org/simple}"
 PYTORCH_CPU_INDEX_URL="${TAAC_PYTORCH_CPU_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
 PYTORCH_CUDA126_INDEX_URL="${TAAC_PYTORCH_CUDA126_INDEX_URL:-https://download.pytorch.org/whl/cu126}"
-PYTORCH_CUDA128_INDEX_URL="${TAAC_PYTORCH_CUDA128_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
-PYTORCH_CUDA130_INDEX_URL="${TAAC_PYTORCH_CUDA130_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
+CONDA_SUBDIR="${TAAC_CONDA_SUBDIR:-linux-64}"
+CONDA_MAIN_CHANNEL_BASE_URL="${TAAC_CONDA_MAIN_CHANNEL_BASE_URL:-https://repo.anaconda.com/pkgs/main}"
+CONDA_FORGE_CHANNEL_BASE_URL="${TAAC_CONDA_FORGE_CHANNEL_BASE_URL:-https://conda.anaconda.org/conda-forge}"
+CONDA_MAIN_CHANNEL_URL="${TAAC_CONDA_MAIN_CHANNEL_URL:-$CONDA_MAIN_CHANNEL_BASE_URL/$CONDA_SUBDIR/repodata.json}"
+CONDA_FORGE_CHANNEL_URL="${TAAC_CONDA_FORGE_CHANNEL_URL:-$CONDA_FORGE_CHANNEL_BASE_URL/$CONDA_SUBDIR/repodata.json}"
 PROBE_TIMEOUT_SECONDS="${TAAC_NETWORK_PROBE_TIMEOUT:-10}"
 PROBE_DETAIL_LIMIT="${TAAC_NETWORK_PROBE_DETAIL_LIMIT:-240}"
-SITE_PROBE_TARGETS="${TAAC_SITE_PROBE_TARGETS:-example=https://example.com github=https://github.com python=https://www.python.org pypi=https://pypi.org/simple astral=https://astral.sh/uv/install.sh pytorch_cpu=https://download.pytorch.org/whl/cpu}"
+SITE_PROBE_TARGETS="${TAAC_SITE_PROBE_TARGETS:-example=https://example.com github=https://github.com python=https://www.python.org pypi=https://pypi.org/simple astral=https://astral.sh/uv/install.sh pytorch_cpu=https://download.pytorch.org/whl/cpu conda_main=https://repo.anaconda.com/pkgs/main/linux-64/repodata.json conda_forge=https://conda.anaconda.org/conda-forge/linux-64/repodata.json}"
 ENABLE_PROXY_MATRIX="${TAAC_ENABLE_PROXY_MATRIX:-1}"
 ENABLE_PIP_DOWNLOAD_PROBE="${TAAC_ENABLE_PIP_DOWNLOAD_PROBE:-1}"
 PIP_DOWNLOAD_PACKAGE="${TAAC_PIP_DOWNLOAD_PACKAGE:-sampleproject==4.0.0}"
 PIP_DOWNLOAD_INDEX_URL="${TAAC_PIP_DOWNLOAD_INDEX_URL:-$PYPI_INDEX_URL}"
+ENABLE_CONDA_SEARCH_PROBE="${TAAC_ENABLE_CONDA_SEARCH_PROBE:-1}"
+CONDA_SEARCH_CHANNEL_URL="${TAAC_CONDA_SEARCH_CHANNEL_URL:-$CONDA_FORGE_CHANNEL_BASE_URL}"
+CONDA_PROBE_SPEC="${TAAC_CONDA_PROBE_SPEC:-python=3.10}"
 OUTPUT_PATH=""
 
 usage() {
@@ -480,7 +486,9 @@ log_dual_mode_url_probe() {
 }
 
 log_connectivity_matrix() {
-    [[ "$ENABLE_PROXY_MATRIX" == "1" ]] || return
+    if [[ "$ENABLE_PROXY_MATRIX" != "1" ]]; then
+        return 0
+    fi
 
     log_line "---- connectivity matrix ----"
 
@@ -577,11 +585,94 @@ log_pip_download_probe_with_mode() {
 }
 
 log_pip_download_probes() {
-    [[ "$ENABLE_PIP_DOWNLOAD_PROBE" == "1" ]] || return
+    if [[ "$ENABLE_PIP_DOWNLOAD_PROBE" != "1" ]]; then
+        return 0
+    fi
 
     log_line "---- pip download probes ----"
     log_pip_download_probe_with_mode "pip_download_inherited" inherited
     log_pip_download_probe_with_mode "pip_download_no_proxy" no_proxy
+}
+
+classify_conda_search_failure() {
+    local exit_code="$1"
+    local probe_detail="$2"
+
+    if printf '%s\n' "$probe_detail" | grep -Eiq 'proxy tunneling failed|tunnel connection failed|received http code [0-9]+ from proxy|proxyerror|proxy error|service unavailable'; then
+        printf 'proxy_tunnel_failure'
+        return
+    fi
+    if printf '%s\n' "$probe_detail" | grep -Eiq 'temporary failure in name resolution|name or service not known|no address associated'; then
+        printf 'dns_failure'
+        return
+    fi
+    if printf '%s\n' "$probe_detail" | grep -Eiq 'certificate verify failed|ssl|tls'; then
+        printf 'tls_failure'
+        return
+    fi
+    if printf '%s\n' "$probe_detail" | grep -Eiq 'timed out|read timed out|connect timeout'; then
+        printf 'timeout'
+        return
+    fi
+    if printf '%s\n' "$probe_detail" | grep -Eiq 'packagesnotfounderror|resolvepackagenotfound|not found for channel'; then
+        printf 'package_resolution_failure'
+        return
+    fi
+    if printf '%s\n' "$probe_detail" | grep -Eiq 'condahttperror|connection error|failed to establish a new connection|could not connect to'; then
+        printf 'connect_failure'
+        return
+    fi
+    case "$exit_code" in
+        0)
+            printf 'success'
+            ;;
+        *)
+            printf 'unknown_failure'
+            ;;
+    esac
+}
+
+log_conda_search_probe_with_mode() {
+    local label="$1"
+    local proxy_mode="$2"
+    local conda_executable=""
+    local probe_status=0
+    local probe_output=""
+
+    if command -v conda >/dev/null 2>&1; then
+        conda_executable="conda"
+    else
+        log_line "${label}_probe=unavailable"
+        log_line "${label}_probe_detail=conda executable not found"
+        return
+    fi
+
+    log_line "${label}_spec=$CONDA_PROBE_SPEC"
+    log_line "${label}_channel_url=$CONDA_SEARCH_CHANNEL_URL"
+    log_line "${label}_tool=$conda_executable"
+    log_line "${label}_proxy_mode=$proxy_mode"
+
+    probe_output="$(run_with_proxy_mode "$proxy_mode" env CONDA_NO_PLUGINS=true "$conda_executable" search --json --override-channels --channel "$CONDA_SEARCH_CHANNEL_URL" "$CONDA_PROBE_SPEC" 2>&1)" || probe_status=$?
+
+    if [[ $probe_status -eq 0 ]]; then
+        log_line "${label}_probe=reachable"
+        return
+    fi
+
+    log_line "${label}_probe=failed"
+    log_line "${label}_probe_exit_code=$probe_status"
+    log_line "${label}_failure_class=$(classify_conda_search_failure "$probe_status" "$probe_output")"
+    log_line "${label}_probe_detail=$(compact_probe_detail "$probe_output")"
+}
+
+log_conda_search_probes() {
+    if [[ "$ENABLE_CONDA_SEARCH_PROBE" != "1" ]]; then
+        return 0
+    fi
+
+    log_line "---- conda search probes ----"
+    log_conda_search_probe_with_mode "conda_search_inherited" inherited
+    log_conda_search_probe_with_mode "conda_search_no_proxy" no_proxy
 }
 
 pytorch_index_url_for_profile() {
@@ -591,12 +682,6 @@ pytorch_index_url_for_profile() {
             ;;
         cuda126)
             printf '%s' "$PYTORCH_CUDA126_INDEX_URL"
-            ;;
-        cuda128)
-            printf '%s' "$PYTORCH_CUDA128_INDEX_URL"
-            ;;
-        cuda130)
-            printf '%s' "$PYTORCH_CUDA130_INDEX_URL"
             ;;
         *)
             return 1
@@ -620,6 +705,8 @@ log_uv_bootstrap_status() {
 log_dependency_index_status() {
     log_line "---- dependency indexes ----"
     log_url_probe "pypi_index" "$PYPI_INDEX_URL"
+    log_url_probe "conda_main_channel" "$CONDA_MAIN_CHANNEL_URL"
+    log_url_probe "conda_forge_channel" "$CONDA_FORGE_CHANNEL_URL"
 
     if [[ -n "$REQUESTED_PROFILE" ]]; then
         local requested_url
@@ -636,7 +723,7 @@ log_dependency_index_status() {
     log_line "pytorch_probe_profile=all"
     local profile
     local profile_url
-    for profile in cpu cuda126 cuda128 cuda130; do
+    for profile in cpu cuda126; do
         profile_url="$(pytorch_index_url_for_profile "$profile")"
         log_url_probe "pytorch_index_${profile}" "$profile_url"
     done
@@ -690,6 +777,7 @@ main() {
     log_dependency_index_status
     log_connectivity_matrix
     log_pip_download_probes
+    log_conda_search_probes
     log_build_tools
     log_python_info
     log_python_packages

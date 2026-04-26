@@ -1,11 +1,5 @@
-from .domain import BatchTensors, DataConfig, DataStats, ExperimentSpec, ModelConfig, SearchConfig, TrainConfig
+"""TAAC 2026 experiment workspace runtime."""
 
-__all__ = [
-    "BatchTensors",
-    "DataConfig",
-    "DataStats",
-    "ExperimentSpec",
-    "ModelConfig",
-    "SearchConfig",
-    "TrainConfig",
-]
+from __future__ import annotations
+
+__version__ = "0.1.0"

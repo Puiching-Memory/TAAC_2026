@@ -4,53 +4,62 @@ icon: lucide/flask-conical
 
 # DeepContextNet
 
-**上下文感知深度建模**
-
 ## 概述
 
-DeepContextNet 当前在仓库里的实现是标准 Transformer 风格的上下文序列建模实验包，不是框架级 HSTU 实现。它复用了默认数据管道、默认 ranking loss、TorchRec sparse embedding 路径，以及框架默认的混合优化器路由。
+`config/deepcontextnet` 是一个 PCVR 实验包，使用 `PCVRExperiment` 接入共享 runtime。包内 `model.py` 暴露 `PCVRDeepContextNet`，核心思路是用非序列 token 得到上下文表示，再让上下文向各域序列做注意力读取。
 
-## 模型架构
+## 包结构
 
-- 4 层 Transformer，**8 头**注意力
-- Embedding 维度 128
-- Recent sequence length 32（最长）
-- Batch size 32（最小，匹配更大模型的显存需求）
-- 默认走框架 `FeatureSchema` + `TorchRecEmbeddingBagAdapter`
-- 默认数据管道与默认 loss builder 已交给框架层处理
+```text
+config/deepcontextnet/
+├── __init__.py
+├── model.py
+└── ns_groups.json
+```
 
-当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。DeepContextNet 会从 TorchRec `KeyedJaggedTensor` 重建最近行为上下文，而不再依赖实验包私有的 legacy collate 序列张量。
+`__init__.py` 中的实验定义：
 
-## 默认配置
+| 字段 | 值 |
+| --- | --- |
+| `name` | `pcvr_deepcontextnet` |
+| `model_class_name` | `PCVRDeepContextNet` |
+| `--ns_tokenizer_type` | `group` |
+| `--ns_groups_json` | `ns_groups.json` |
+| `--num_blocks` | `3` |
+| `--num_heads` | `4` |
+| `--hidden_mult` | `4` |
+| `--dropout_rate` | `0.02` |
 
-| 参数              | 值   |
-| ----------------- | ---- |
-| `embedding_dim`   | 128  |
-| `num_layers`      | 4    |
-| `num_heads`       | 8    |
-| `epochs`          | 10   |
-| `batch_size`      | 32   |
-| `learning_rate`   | 2e-4 |
-| `pairwise_weight` | 0.0  |
+## 模型要点
+
+- `NonSequentialTokenizer` 编码 user/item 稀疏特征组。
+- `DenseTokenProjector` 把 user/item dense 特征投影为 token。
+- `SequenceTokenizer` 编码各域行为序列，并加 sinusoidal position。
+- `ContextBlock` 使用 `nn.MultiheadAttention` 让上下文 token 读取序列信息。
+- `predict(inputs)` 返回 `(logits, embeddings)`，供共享评估/推理流程使用。
 
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/deepcontextnet
-uv run taac-evaluate single --experiment config/deepcontextnet
+bash run.sh train --experiment config/deepcontextnet \
+	--dataset-path /path/to/parquet_or_dataset_dir \
+	--schema-path /path/to/schema.json
+
+bash run.sh val --experiment config/deepcontextnet \
+	--dataset-path /path/to/parquet_or_dataset_dir \
+	--schema-path /path/to/schema.json \
+	--run-dir outputs/config/deepcontextnet
 ```
 
-## 当前自定义部分
+## 打包
 
-- `model.py`：保留 DeepContextNet 自己的序列建模块
-- `__init__.py`：`build_data_pipeline=None`、`build_loss_stack=None`、`build_optimizer_component=None`，训练侧完全复用框架默认 builder
-- `utils.py`：仅保留兼容性 helper，不再承载独立优化器实现
-
-## 输出目录
-
+```bash
+bash run.sh package --experiment config/deepcontextnet \
+	--output-dir outputs/training_bundles/deepcontextnet_training_bundle \
+	--force
 ```
-outputs/config/deepcontextnet/
-```
+
+打包产物会包含 `config/deepcontextnet/model.py` 与 `config/deepcontextnet/ns_groups.json`。
 
 ## 来源
 

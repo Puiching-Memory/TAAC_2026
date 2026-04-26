@@ -42,8 +42,8 @@ HyFormer（Hybrid Former）重新审视了 CTR 预估中序列建模与特征交
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/hyformer
-uv run taac-evaluate single --experiment config/hyformer
+bash run.sh train --experiment config/hyformer
+bash run.sh val --experiment config/hyformer
 ```
 
 ## 输出目录

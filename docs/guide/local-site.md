@@ -14,18 +14,18 @@ icon: lucide/hard-drive-download
 
 ## 构建静态站点
 
-EDA 与技术时间线图表 JSON 需要在本地生成后随代码一起提交；benchmark 图表仍可按需本地重建。构建前建议按下面顺序执行：
+EDA 与技术时间线图表 JSON 需要在本地生成后随代码一起提交；当前 benchmark 报告入口只写出占位 JSON。构建前建议按下面顺序执行：
 
 ```bash
 uv sync --locked --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu --no-install-package triton
 uv run taac-dataset-eda
 uv run taac-tech-timeline
-uv run taac-bench-report
+uv run taac-bench-report --output outputs/reports/benchmark_report.json
 uv run --no-project --isolated --with zensical zensical build --clean
 ```
 
 如果你本地已经安装了完整训练环境，可以直接跳过上面的轻量同步命令，继续执行后续 `uv run ...` 构建步骤。
-如果需要刷新完整训练环境，请重新执行对应 profile 的 `uv sync --locked --extra cpu` 或 `uv sync --locked --extra cuda128`（按你的机器改成 `cuda126` / `cuda130`）；不要改回裸 `uv sync --locked`，否则当前 profile 依赖会被移除。
+如果需要刷新完整训练环境，请重新执行 `uv sync --locked --extra cuda126`；不要改回裸 `uv sync --locked`，否则当前 profile 依赖会被移除。
 
 其中 `uv run taac-tech-timeline` 会在仓库根目录下写入本地缓存 `.cache/taac2026/.s2_cache.json`，该文件仅用于加速 Semantic Scholar 元数据抓取，不需要提交到 Git；需要提交的是 `docs/assets/figures/papers/tech-timeline.echarts.json` 本身。
 

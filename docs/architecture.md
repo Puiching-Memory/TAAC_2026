@@ -4,192 +4,185 @@ icon: lucide/blocks
 
 # 架构与概念
 
-## 工程结构
-
-```
-TAAC_2026/
-├── src/taac2026/          # 共享框架（不含具体模型实现）
-│   ├── domain/            # 领域模型：配置、指标、运行时
-│   ├── application/       # 应用层：训练、评估、搜索、报告 CLI
-│   └── infrastructure/    # 基础设施：实验加载、数据集解析、GPU 调度
-├── config/                # 目录式实验包（每个包独立）
-├── tests/                 # 测试套件
-├── docs/                  # 文档
-└── outputs/               # 训练输出产物（git 忽略）
-```
-
-## 核心抽象
-
-### ExperimentSpec
+当前仓库的主路径是 PCVR 实验运行时。实验包只保留模型和少量包级资产；数据读取、训练、评估、checkpoint、线上打包都由共享运行时负责。
 
 ## 工程结构
 
-```
+```text
 TAAC_2026/
-├── src/taac2026/domain/            # 配置、ExperimentSpec、FeatureSchema、BatchTensors
-├── src/taac2026/application/       # 训练、评估、搜索、报告 CLI 与服务层
-├── src/taac2026/infrastructure/    # 数据管道、TorchRec 适配器、共享 nn 组件、实验加载
-├── config/                         # 10 个目录式实验包
-├── tests/                          # 单元 / 集成 / GPU 测试
-├── docs/                           # 文档站点
-└── outputs/                        # 训练与评估产物（git 忽略）
+├── run.sh                         # 本地与线上共用入口
+├── config/                        # PCVR 实验包
+│   └── <experiment>/
+│       ├── __init__.py            # EXPERIMENT = PCVRExperiment(...)
+│       ├── model.py               # 包内模型类
+│       └── ns_groups.json         # 非序列特征分组资产
+├── src/taac2026/
+│   ├── application/               # train/evaluate/search/package/report CLI
+│   └── infrastructure/
+│       ├── pcvr/                  # PCVR 数据、协议、模型构建、trainer
+│       └── training/              # 通用运行时辅助
+├── tests/unit/                    # 当前可执行回归测试
+├── docs/                          # 文档站点源码
+└── outputs/                       # 训练、评估、打包输出
 ```
 
-## ExperimentSpec 合约
+## 运行入口
 
-当前框架遵循“默认实现 + Callable 逃生口”的模式。实验包仍然保留完整自由度，但大多数包已经不再需要自写 data / loss / optimizer builder。
+`run.sh` 是用户和线上平台都应调用的入口：
+
+| 命令 | 实际动作 |
+| --- | --- |
+| `train` | 调用 `taac2026.application.training.cli` |
+| `val` / `eval` | 调用 `taac2026.application.evaluation.cli single` |
+| `infer` | 调用 `taac2026.application.evaluation.cli infer` |
+| `test` | 运行 pytest |
+| `package` | 调用 `taac-package-train` 生成线上双文件 bundle |
+
+同一个脚本有两种模式：
+
+- 仓库本地模式：`run.sh` 同级没有 `code_package.zip`，默认通过 `uv` 运行，并按命令同步 `cpu` 或 `cuda126` profile。
+- Bundle 模式：`run.sh` 同级存在 `code_package.zip`，默认用平台 `python`，解压代码包并设置 `PYTHONPATH`。
+
+## 实验包契约
+
+每个 `config/<experiment>/` 包导出一个 `PCVRExperiment`：
 
 ```python
-@dataclass(slots=True)
-class ExperimentSpec:
-    name: str
-    data: DataConfig
-    model: ModelConfig
-    train: TrainConfig
+from pathlib import Path
 
-    feature_schema: FeatureSchema | None = None
+from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
 
-    build_data_pipeline: Callable | None = None
-    build_model_component: Callable = ...
-    build_loss_stack: Callable | None = None
-    build_optimizer_component: Callable | None = None
 
-    switches: dict[str, bool] = field(default_factory=dict)
-    search: SearchConfig = field(default_factory=SearchConfig)
-    build_search_experiment: Callable | None = None
+EXPERIMENT = PCVRExperiment(
+    name="pcvr_example",
+    package_dir=Path(__file__).resolve().parent,
+    model_class_name="PCVRExampleModel",
+    default_train_args=(
+        "--ns_groups_json",
+        "ns_groups.json",
+        "--num_blocks",
+        "2",
+    ),
+)
 ```
 
-框架入口会通过 `resolve_experiment_builders()` 把 `None` builder 自动解析到共享默认实现：
+关键约定：
 
-- 数据管道：`default_build_data_pipeline()`
-- 损失：`default_build_loss_stack()`
-- 优化器：`default_build_optimizer()`
+- `package_dir` 指向包目录，用于解析 `model.py`、`ns_groups.json` 和 bundle 资产。
+- `model_class_name` 必须匹配 `model.py` 中导出的类名。
+- 论文或实验专属模型体放在包内 `model.py`，不要集中塞进共享 runtime。
+- 非 baseline 包不要复用 `PCVRHyFormer` 名称；baseline 保留它是因为它代表官方 HyFormer baseline。
+- 包内不再新增 `run.sh`、`train.py` 或 `trainer.py`。
 
-这让 baseline、ctr_baseline、grok、hyformer、interformer、onetrans、oo、uniscaleformer 都可以只保留模型核心代码；目前仍显式自定义 optimizer builder 的实验包是 DeepContextNet 和 UniRec。
+## 模型输入与构建
 
-## 数据流
+共享 runtime 会读取官方 parquet 与 `schema.json`，构造 `ModelInput`：
+
+```text
+official parquet + schema.json
+        │
+        ▼
+PCVR dataset / dataloader
+        │
+        ▼
+ModelInput
+├── user_int_feats
+├── item_int_feats
+├── user_dense_feats
+├── item_dense_feats
+├── seq_data
+├── seq_lens
+└── seq_time_buckets
+```
+
+`build_pcvr_model` 根据 schema、模型配置和 `ns_groups.json` 调用包内模型构造函数。模型类通常复用 `taac2026.infrastructure.pcvr.modeling` 中的组件：
+
+- `ModelInput`
+- `EmbeddingParameterMixin`
+- `NonSequentialTokenizer`
+- `DenseTokenProjector`
+- `SequenceTokenizer`
+- `RMSNorm`
+- `masked_mean`、`masked_last`、`make_padding_mask` 等 helper
+
+模型行为要求：
+
+- `forward(inputs: ModelInput)` 返回 logits。
+- `predict(inputs: ModelInput)` 返回 `(logits, embeddings)`。
+- 暴露 `num_ns`，供日志和 checkpoint 元数据使用。
+
+## NS Groups
+
+每个 PCVR 实验包都应包含 `ns_groups.json`，并在默认训练参数中传入：
+
+```python
+default_train_args=("--ns_groups_json", "ns_groups.json", ...)
+```
+
+runtime 会把 JSON 中的 fid 分组映射到当前 schema 的特征索引。显式配置的 NS groups 文件缺失时会直接失败，避免悄悄退化为 singleton 分组。checkpoint 会复制训练使用的 `ns_groups.json`，让评估和推理复用同一套分组。
+
+## 训练流程
 
 ```mermaid
 graph TD
-    A[原始 parquet / HuggingFace rows] --> B[default_data_pipeline]
-    B --> C[FeatureSchema]
-    B --> D[BatchTensors]
-    D --> E[sparse_features<br/>KeyedJaggedTensor]
-    D --> F[sequence_features<br/>KeyedJaggedTensor]
-    D --> G[dense_features<br/>torch.Tensor]
-    E --> H[TorchRecEmbeddingBagAdapter]
-    F --> I[模型内部序列编码]
-    G --> J[特征拼接 / 交互]
-    H --> J
-    I --> J
-    J --> K[共享 pooling / heads / norms]
-    K --> L[logits]
+    A[run.sh train] --> B[training.cli]
+    B --> C[load_experiment_package]
+    C --> D[PCVRExperiment]
+    D --> E[train_pcvr_model]
+    E --> F[PCVR dataset and dataloader]
+    E --> G[build_pcvr_model]
+    F --> H[PCVRPointwiseTrainer]
+    G --> H
+    H --> I[best.pt / summary.json / validation_predictions.jsonl]
 ```
 
-### BatchTensors
+训练 CLI 负责统一参数解析：`--experiment`、`--dataset-path`、`--schema-path`、`--run-dir` 和 `--json`。其余参数会透传给 PCVR train parser，例如：
 
-当前 `BatchTensors` 已经从旧的“多组 padded token + mask”表示迁移到更统一的批处理结构：
+- `--batch_size`
+- `--num_epochs`
+- `--lr`
+- `--device`
+- `--num_workers`
+- `--seq_max_lens`
+- `--d_model`
+- `--emb_dim`
+- `--num_blocks`
+- `--num_heads`
+- `--loss_type`
+- `--ns_groups_json`
 
-- `sparse_features`：所有候选 / 用户 / 上下文等稀疏 token 特征
-- `sequence_features`：行为序列特征
-- `dense_features`：稠密数值特征
-- `labels`、`user_indices`、`item_indices`、`item_logq`
-- `metadata`：仅用于评估与产物导出的样本级标识信息（如 `sample_index` / `user_id` / `item_id` / `timestamp` / `raw_label`），不会进入模型 pytree
+当前 PCVR train parser 不支持历史训练栈里的 runtime optimization 参数；训练命令应只使用共享 PCVR parser 已声明的参数。
 
-其中稀疏与序列特征都可以直接映射到 TorchRec 的 `KeyedJaggedTensor` 路径。
+## 评估与推理
 
-## 共享基础设施
+评估入口是：
 
-### 特征与数据管道
-
-- `FeatureSchema` 统一声明表名、family、embedding 维度、pooling 策略与序列属性
-- `default_data_pipeline` 负责从 parquet/HF 行构建 `BatchTensors`
-- `sparse_collate` 负责把 masked dense batch 转成 `KeyedJaggedTensor`
-
-### 嵌入层
-
-- `TorchRecEmbeddingBagAdapter` 封装 `EmbeddingBagCollection`
-- 实验包不再直接管理 `nn.Embedding`
-- 稀疏特征按 schema 选择表并输出拼接后的 pooled embedding
-
-### 共享神经网络组件
-
-当前已经稳定共享的组件：
-
-- `pooling.py`：`masked_mean`、`MaskedMeanPool`、`TargetAwarePool`
-- `heads.py`：`ClassificationHead`
-- `norms.py`：`rms_norm()`、`RMSNorm`
-- `optimizers.py`：`Muon`、`CombinedOptimizer`、`build_hybrid_optimizer()`
-- `transformer.py`：`TaacTransformerBlock`、`TaacCrossAttentionBlock`
-- `hstu.py`：`HSTUBlock`、`TimeAwareHSTU`、`BranchTransducer`、`MixtureOfTransducers`、`BlockAttnRes`、时间偏置 / RoPE helper
-- `quantization.py`：评估侧动态 int8 量化入口（torchao `nn.Linear` 主路径；TorchRec `EmbeddingBagCollection` 显式不支持 int8）
-- `triton_norm.py`：首个 Triton RMSNorm kernel 与测试支架
-
-这些组件已经覆盖了主干里的共享注意力、RMSNorm、HSTU 与混合优化器路径；当前未完成的重点收尾转为 fp8 kernel，以及基于 benchmark 的最终验收报告。
-
-## 训练与评估流程
-
-```mermaid
-graph TD
-    A[加载 EXPERIMENT] --> B[resolve_experiment_builders]
-    B --> C[build_data_pipeline]
-    B --> D[build_model_component]
-    B --> E[build_loss_stack]
-    B --> F[build_optimizer_component]
-    D --> G[runtime optimization<br/>torch.compile / AMP]
-    C --> H[train/val loaders + DataStats]
-    H --> I[epoch loop]
-    E --> I
-    F --> I
-    G --> I
-    I --> J[best.pt / summary.json / validation_predictions.jsonl / training_curves.json / profiling]
+```bash
+bash run.sh val --experiment config/baseline \
+    --dataset-path /path/to/data \
+    --schema-path /path/to/schema.json \
+    --run-dir outputs/config/baseline
 ```
 
-训练服务会统一处理：
+`PCVRExperiment.evaluate()` 读取 checkpoint、构造模型和 dataloader，并写出：
 
-- `torch.compile` 与 AMP 选项
-- 训练 / 验证循环
-- checkpoint 与 profiling 产物落盘
-- Optuna search 过程中对 ExperimentSpec 的派生与覆写
-
-评估 CLI 复用相同的实验包定义，并支持在 `single` / `batch` 模式下额外打开编译、AMP、CPU 动态 int8 量化，以及 `torch.export` 评估图导出。
-
-## 配置对象
-
-核心配置分为四个 dataclass：
-
-- `DataConfig`：数据集路径、序列长度、dense 维度、切分比例等
-- `ModelConfig`：embedding / hidden 维度、层数、头数、各种子结构参数
-- `TrainConfig`：epochs、batch size、学习率、AMP、compile、输出目录
-- `SearchConfig`：Optuna trial 数、时间预算、参数量限制，以及可选的模型单样本前向计算量预算
-
-这些配置既用于训练 / 评估，也用于测试里的最小实验包构造。
-
-## 指标与输出产物
-
-共享指标实现位于 `src/taac2026/domain/metrics.py`，当前评估报告会输出：
-
-- AUC
-- PR-AUC
-- Brier Score
-- LogLoss
-- GAUC
-- mean / p95 latency
-
-标准运行目录会包含：
-
-- `best.pt`
-- `summary.json`
+- `evaluation.json`
 - `validation_predictions.jsonl`
-- `training_curves.json`
-- `profiling/`
+
+当前 PCVR 评估指标是 `auc`、`logloss` 和 `sample_count`。不要把历史服务里的扩展评估指标、量化导出或运行时优化能力写成当前 CLI 已支持的能力。
+
+## 线上打包
+
+`taac-package-train` 生成双文件上传目录：
+
+```text
+<training_bundle>/
+├── run.sh
+└── code_package.zip
+```
+
+`code_package.zip` 内只包含共享 runtime、`pyproject.toml`、`uv.lock`、顶层 `config/__init__.py` 和选中的实验包。平台执行 `run.sh` 后默认用 `python`，不会在线 `uv sync`。
 
 ## 当前边界
 
-当前仓库已经完成 TorchRec 稀疏特征、默认 builder、共享 HSTU 原语和 GPU CI 收口，但仍未完成以下计划项：
-
-- Triton attention / FFN 的 fp8 路径
-- Muon 的 Triton 化矩阵投影
-- 基于 benchmark 的最终 AUC / 时延验收报告
-
-文档中的架构描述以已经合并到仓库的实现为准，而不是以重构计划中的目标态为准。
+仍在仓库中保留的旧实验规范、TorchRec KJT、profile/search 代码可以作为历史素材和迁移参考，但新增或维护 PCVR 实验包时，以 `PCVRExperiment`、`ModelInput`、`ns_groups.json` 和共享 PCVR runtime 为准。

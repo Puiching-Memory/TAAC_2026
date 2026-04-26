@@ -4,94 +4,72 @@ icon: lucide/clipboard-list
 
 # 测试
 
-## 测试分层
-
-| 层级              | 标记                  | 特点                         | 示例                                                 |
-| ----------------- | --------------------- | ---------------------------- | ---------------------------------------------------- |
-| **Unit**          | `-m unit`             | 纯逻辑、轻依赖、快速         | 指标计算、CLI 参数解析、契约校验                     |
-| **Integration**   | `-m integration`      | 跨模块闭环、需要数据         | 训练→评估→搜索完整流程                               |
-| **CPU Benchmark** | `-m benchmark_cpu`    | CPU-only 基准，自动 CI 执行  | `tests/benchmarks/cpu/bench_ffn_forward.py`          |
-| **GPU Benchmark** | `-m benchmark_gpu`    | GPU-only 基准，仅本地 CUDA CLI 执行 | `tests/benchmarks/gpu/bench_transformer_backends.py` |
-| **Property**      | 归入 unit             | 基于 Hypothesis 的性质测试   | 指标边界、稳定哈希                                   |
-| **Fault**         | 归入 unit/integration | 失败路径和异常分支           | 坏 JSON、缺失 EXPERIMENT、worker 崩溃                |
-
-分类通过目录实现自动标记：`tests/unit/`、`tests/integration/`、`tests/gpu/`、`tests/benchmarks/cpu/` 和 `tests/benchmarks/gpu/` 会分别路由到对应阶段，不需要在每条用例上手写 `@pytest.mark`。
+当前仓库的可执行回归集中在 `tests/unit/`。历史上的 integration、GPU 和 benchmark 目录已经不再作为当前测试树的一部分；文档和 CI 应以当前存在的 unit suite 为准。
 
 ## 常用命令
 
 ```bash
-# 同步环境
-uv sync --locked --extra cpu
+uv sync --locked --extra cuda126
 
-# 如果要跑 integration / gpu / benchmark_gpu
-# 手动选择与你本机 CUDA 对应的 profile
-uv sync --locked --extra cuda128
-
-# 完整回归
-uv run pytest tests -q
-
-# 只跑快速单元测试
-uv run pytest -m unit -q
-
-# 只跑集成测试
-uv run pytest -m integration -q
-
-# 自动 CI 上的 CPU benchmark
-uv run pytest tests/benchmarks/cpu -m benchmark_cpu -v
-
-# GPU benchmark（CLI only）
-uv run pytest tests/benchmarks/gpu -m benchmark_gpu -v
+bash run.sh test tests/unit -q
+bash run.sh test tests/unit/test_experiment_packages.py -q
+bash run.sh test tests/unit/test_package_training.py -q
 ```
 
-## Coverage 收集
+也可以直接用 pytest：
 
 ```bash
-uv run --with coverage coverage erase
-uv run --with coverage coverage run -m pytest -m unit -q
-uv run --with coverage coverage run --append -m pytest -m integration -q
-uv run --with coverage coverage report
+uv run --extra cuda126 pytest tests/unit -q
 ```
 
-Coverage 统计范围与门槛由 `pyproject.toml` 控制：
+Lint 当前核心代码时：
 
-| 配置     | 值                                                                                            |
-| -------- | --------------------------------------------------------------------------------------------- |
-| 统计范围 | `src/taac2026/domain`、`src/taac2026/application/search`、`src/taac2026/application/training` |
-| 分支覆盖 | 开启                                                                                          |
-| 最低门槛 | 70%                                                                                           |
+```bash
+uv run --with ruff ruff check src/taac2026 tests/unit
+```
 
-本地完整 coverage 仍建议按上面的 unit + integration 方式采集。快速 CI 会自动再跑一轮 `benchmark_cpu` 的 CPU-safe 子集，但 coverage 门槛仍只对 `-m unit` 的 CPU-safe 子集执行：`src/taac2026/domain/*`、`src/taac2026/application/training/__init__.py`、`src/taac2026/application/training/cli.py`、`src/taac2026/application/training/runtime_optimization.py`。`integration`、`gpu` 与 `benchmark_gpu` 则保留在本地 CUDA CLI 入口中。
+## 当前测试文件
+
+| 文件 | 覆盖重点 |
+| --- | --- |
+| `tests/unit/test_metrics.py` | AUC、logloss 和分类指标边界 |
+| `tests/unit/test_runtime_contract_matrix.py` | runtime 契约矩阵与命令行为 |
+| `tests/unit/test_checkpoint_and_loader.py` | checkpoint、sidecar 与包加载 |
+| `tests/unit/test_experiment_packages.py` | 实验包加载、模型类、forward/backward/predict、NS groups |
+| `tests/unit/test_package_training.py` | `run.sh` + `code_package.zip` 双文件 bundle 内容 |
+| `tests/unit/test_training_cli.py` | 训练 CLI 参数解析和 extra args 透传 |
+| `tests/unit/test_pcvr_protocol.py` | schema、特征规格、NS groups 映射与缺失文件失败 |
 
 ## 模块改动后的最小复核
 
-| 改动范围                                          | 跑哪些测试                                                                                                                                                            |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domain/metrics.py`                               | `tests/unit/test_metrics.py tests/unit/test_property_based.py`                                                                                                        |
-| `infrastructure/experiments/payload.py` 或 loader | `tests/unit/test_payload.py`                                                                                                                                          |
-| `application/training/`                           | `tests/integration/test_profiling_unit.py tests/integration/test_profiling.py tests/unit/test_runtime_optimization.py tests/integration/test_training_recovery.py`    |
-| `application/search/`                             | `tests/integration/test_search_trial.py tests/integration/test_search_worker.py tests/integration/test_search_worker_integration.py tests/integration/test_search.py` |
-| 数据读取 / batch 组装                             | `tests/integration/test_data_pipeline.py tests/integration/test_runtime_integration.py`                                                                               |
+| 改动范围 | 建议命令 |
+| --- | --- |
+| 实验包 `config/<name>/` | `bash run.sh test tests/unit/test_experiment_packages.py -q` |
+| `ns_groups.json` 或 PCVR schema 解析 | `bash run.sh test tests/unit/test_pcvr_protocol.py tests/unit/test_experiment_packages.py -q` |
+| 线上打包 | `bash run.sh test tests/unit/test_package_training.py -q` |
+| 训练入口参数 | `bash run.sh test tests/unit/test_training_cli.py -q` |
+| checkpoint 或 loader | `bash run.sh test tests/unit/test_checkpoint_and_loader.py -q` |
+| 指标实现 | `bash run.sh test tests/unit/test_metrics.py -q` |
 
-!!! tip "快速复核模板"
-    ```bash
-    uv run pytest tests/unit/test_metrics.py tests/unit/test_property_based.py -q
-    ```
+## 新增测试约定
 
-## 当前回归覆盖点
+- 当前新增测试默认放在 `tests/unit/`。
+- 测试应尽量使用轻量 synthetic 输入，不依赖完整线上数据。
+- 修改实验包时，优先补 `test_experiment_packages.py` 覆盖加载、forward、backward、predict 和命名契约。
+- 修改打包逻辑时，检查 `code_package.zip` 中是否包含目标包的 `model.py` 与 `ns_groups.json`，并排除 docs/tests/其他实验包。
+- 修改 CLI 时，同时覆盖 argparse 结果和未知参数透传。
 
-| 测试文件                            | 覆盖内容                                   |
-| ----------------------------------- | ------------------------------------------ |
-| `test_experiment_packages.py`       | 全部 10 个实验包的前向传播和数据管道所有权 |
-| `test_training_recovery.py`         | Checkpoint 恢复、训练曲线一致性            |
-| `test_search_worker_integration.py` | 多 trial 派发与结果收敛                    |
-| `test_property_based.py`            | 指标边界条件（空输入、NaN）                |
-| `test_payload.py`                   | 缺 section、坏字段、导入失败               |
-| `test_search_worker.py`             | Worker 丢结果、坏 JSON、trial 异常         |
+## 训练 Smoke 不等于单测
 
-## 编写新测试
+训练 smoke 用来确认真实数据路径、schema、dataloader 和设备环境能跑通：
 
-1. 新文件加入后，放进对应阶段目录；benchmark 需要进一步区分到 `tests/benchmarks/cpu/` 或 `tests/benchmarks/gpu/`；未分类的测试如果仍留在 `tests/` 根目录，收集阶段会直接失败
-2. 命令统一使用 `uv run pytest ...`
-3. Property 测试控制样本数，保持稳定和快速
-4. 影响训练输出物时，检查 `best.pt`、`summary.json`、`training_curves.json`、`profiling/` 的兼容性
-5. 影响搜索运行时时，至少覆盖 success、fail、pruned 三类状态
+```bash
+bash run.sh train --experiment config/baseline \
+    --dataset-path /path/to/parquet_or_dataset_dir \
+    --schema-path /path/to/schema.json \
+    --num_epochs 1 \
+    --batch_size 8 \
+    --device cpu
+```
+
+它适合在提交前做人工确认，但不能替代 `tests/unit/` 的契约测试。

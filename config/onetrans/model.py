@@ -1,296 +1,246 @@
+"""OneTrans-style unified PCVR model."""
+
 from __future__ import annotations
 
-from collections.abc import Callable
+import math
 
 import torch
-from torch import nn
+import torch.nn as nn
 
-from taac2026.domain.config import DataConfig, ModelConfig
-from taac2026.domain.features import build_default_feature_schema
-from taac2026.domain.types import BatchTensors
-from taac2026.infrastructure.nn.embedding import TorchRecEmbeddingBagAdapter
-from taac2026.infrastructure.nn.heads import ClassificationHead
-from taac2026.infrastructure.nn.transformer import TaacMixedCausalBlock
-
-from .data import TIME_GAP_BUCKET_COUNT
-
-
-SPARSE_TABLE_NAMES = (
-    "user_tokens",
-    "context_tokens",
-    "candidate_tokens",
-    "candidate_post_tokens",
-    "candidate_author_tokens",
-)
-
-SEQUENCE_FEATURE_KEYS = (
-    "history_tokens",
-    "history_post_tokens",
-    "history_author_tokens",
-    "history_action_tokens",
-    "history_time_gap",
-    "history_group_ids",
+from taac2026.infrastructure.pcvr.modeling import (
+    DenseTokenProjector,
+    EmbeddingParameterMixin,
+    ModelInput,
+    NonSequentialTokenizer,
+    RMSNorm,
+    SequenceTokenizer,
+    causal_valid_attention_mask,
+    choose_num_heads,
+    make_padding_mask,
+    masked_mean,
+    scaled_dot_product_attention,
+    sinusoidal_positions,
 )
 
 
-
-class AutoSplitNSTokenizer(nn.Module):
-    def __init__(self, dense_dim: int, hidden_dim: int, ns_token_count: int, dropout: float) -> None:
+class FeedForward(nn.Module):
+    def __init__(self, d_model: int, hidden_mult: int, dropout: float) -> None:
         super().__init__()
-        self.ns_token_count = ns_token_count
-        self.hidden_dim = hidden_dim
-        self.group_position_embedding = nn.Embedding(ns_token_count, hidden_dim)
-        self.dense_projection = nn.Sequential(
-            nn.Linear(dense_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
-        )
-        input_dim = hidden_dim * 6
-        self.auto_split = nn.Sequential(
-            nn.LayerNorm(input_dim),
-            nn.Linear(input_dim, hidden_dim * 4),
+        self.net = nn.Sequential(
+            nn.Linear(d_model, d_model * hidden_mult),
             nn.SiLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 4, ns_token_count * hidden_dim),
+            nn.Linear(d_model * hidden_mult, d_model),
         )
 
-    def forward(self, batch: BatchTensors, sparse_summaries: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        dense_summary = self.dense_projection(batch.dense_features)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
-        fused = torch.cat(
-            [
-                dense_summary,
-                sparse_summaries["user_tokens"],
-                sparse_summaries["context_tokens"],
-                sparse_summaries["candidate_post_tokens"],
-                sparse_summaries["candidate_author_tokens"],
-                sparse_summaries["candidate_tokens"],
-            ],
-            dim=-1,
+
+class MixedCausalAttention(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, num_ns_tokens: int, dropout: float) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.dropout = dropout
+        self.shared_qkv = nn.Linear(d_model, d_model * 3)
+        self.ns_q = nn.ModuleList(nn.Linear(d_model, d_model) for _ in range(num_ns_tokens))
+        self.ns_k = nn.ModuleList(nn.Linear(d_model, d_model) for _ in range(num_ns_tokens))
+        self.ns_v = nn.ModuleList(nn.Linear(d_model, d_model) for _ in range(num_ns_tokens))
+        self.out = nn.Linear(d_model, d_model)
+
+    def forward(self, tokens: torch.Tensor, padding_mask: torch.Tensor, seq_token_count: int) -> torch.Tensor:
+        q, k, v = (part.clone() for part in self.shared_qkv(tokens).chunk(3, dim=-1))
+        for ns_index, (q_proj, k_proj, v_proj) in enumerate(zip(self.ns_q, self.ns_k, self.ns_v, strict=True)):
+            position = seq_token_count + ns_index
+            if position >= tokens.shape[1]:
+                continue
+            token = tokens[:, position, :]
+            q[:, position, :] = q_proj(token)
+            k[:, position, :] = k_proj(token)
+            v[:, position, :] = v_proj(token)
+        attn_mask = causal_valid_attention_mask(padding_mask, self.num_heads)
+        output = scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            num_heads=self.num_heads,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout,
+            training=self.training,
         )
-        tokens = self.auto_split(fused).view(batch.batch_size, self.ns_token_count, self.hidden_dim)
-        positions = torch.arange(self.ns_token_count, device=tokens.device)
-        tokens = tokens + self.group_position_embedding(positions).unsqueeze(0)
-        mask = torch.ones(batch.batch_size, self.ns_token_count, dtype=torch.bool, device=tokens.device)
-        return tokens, mask
+        return self.out(output)
 
 
-class UnifiedSequentialTokenizer(nn.Module):
+class MixedFeedForward(nn.Module):
+    def __init__(self, d_model: int, hidden_mult: int, num_ns_tokens: int, dropout: float) -> None:
+        super().__init__()
+        self.shared = FeedForward(d_model, hidden_mult, dropout)
+        self.ns_specific = nn.ModuleList(FeedForward(d_model, hidden_mult, dropout) for _ in range(num_ns_tokens))
+
+    def forward(self, tokens: torch.Tensor, seq_token_count: int) -> torch.Tensor:
+        output = self.shared(tokens)
+        for ns_index, ffn in enumerate(self.ns_specific):
+            position = seq_token_count + ns_index
+            if position >= tokens.shape[1]:
+                continue
+            output[:, position, :] = ffn(tokens[:, position, :])
+        return output
+
+
+class OneTransBlock(nn.Module):
+    def __init__(self, d_model: int, num_heads: int, hidden_mult: int, num_ns_tokens: int, dropout: float) -> None:
+        super().__init__()
+        self.attn_norm = RMSNorm(d_model)
+        self.attention = MixedCausalAttention(d_model, num_heads, num_ns_tokens, dropout)
+        self.ffn_norm = RMSNorm(d_model)
+        self.ffn = MixedFeedForward(d_model, hidden_mult, num_ns_tokens, dropout)
+
+    def forward(self, tokens: torch.Tensor, padding_mask: torch.Tensor, seq_token_count: int) -> torch.Tensor:
+        tokens = tokens + self.attention(self.attn_norm(tokens), padding_mask, seq_token_count)
+        return tokens + self.ffn(self.ffn_norm(tokens), seq_token_count)
+
+
+class PCVROneTrans(EmbeddingParameterMixin, nn.Module):
     def __init__(
         self,
-        max_sequence_tokens: int,
-        history_capacity: int,
-        hidden_dim: int,
-        sequence_group_count: int,
-        dropout: float,
+        user_int_feature_specs: list[tuple[int, int, int]],
+        item_int_feature_specs: list[tuple[int, int, int]],
+        user_dense_dim: int,
+        item_dense_dim: int,
+        seq_vocab_sizes: dict[str, list[int]],
+        user_ns_groups: list[list[int]],
+        item_ns_groups: list[list[int]],
+        d_model: int = 64,
+        emb_dim: int = 64,
+        num_queries: int = 1,
+        num_blocks: int = 2,
+        num_heads: int = 4,
+        seq_encoder_type: str = "transformer",
+        hidden_mult: int = 4,
+        dropout_rate: float = 0.01,
+        seq_top_k: int = 50,
+        seq_causal: bool = False,
+        action_num: int = 1,
+        num_time_buckets: int = 65,
+        rank_mixer_mode: str = "full",
+        use_rope: bool = False,
+        rope_base: float = 10000.0,
+        emb_skip_threshold: int = 0,
+        seq_id_threshold: int = 10000,
+        ns_tokenizer_type: str = "rankmixer",
+        user_ns_tokens: int = 5,
+        item_ns_tokens: int = 2,
     ) -> None:
         super().__init__()
-        self.max_sequence_tokens = max_sequence_tokens
-        self.history_capacity = history_capacity
-        self.hidden_dim = hidden_dim
-        self.event_projection = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 6),
-            nn.Linear(hidden_dim * 6, hidden_dim * 4),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 4, hidden_dim),
+        del num_queries, seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, use_rope, rope_base, seq_id_threshold
+        num_heads = choose_num_heads(d_model, num_heads)
+        self.d_model = d_model
+        self.action_num = action_num
+        self.seq_domains = sorted(seq_vocab_sizes)
+        force_auto_split = ns_tokenizer_type == "rankmixer"
+        self.user_tokenizer = NonSequentialTokenizer(
+            user_int_feature_specs,
+            user_ns_groups,
+            emb_dim,
+            d_model,
+            user_ns_tokens,
+            emb_skip_threshold,
+            force_auto_split=force_auto_split,
         )
-        self.time_gap_embedding = nn.Embedding(TIME_GAP_BUCKET_COUNT + 1, hidden_dim, padding_idx=0)
-        self.sequence_group_embedding = nn.Embedding(sequence_group_count + 1, hidden_dim, padding_idx=0)
-        self.sequence_position_embedding = nn.Embedding(max_sequence_tokens, hidden_dim)
-        self.sep_token = nn.Parameter(torch.randn(hidden_dim) * 0.02)
-
-    def _require_sequence_features(self, batch: BatchTensors):
-        if batch.sequence_features is None:
-            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sequence_features")
-        return batch.sequence_features
-
-    def _dense_sequence_tokens(self, sequence_by_key, name: str) -> tuple[torch.Tensor, torch.Tensor]:
-        jagged = sequence_by_key[name]
-        tokens = jagged.to_padded_dense(desired_length=self.history_capacity, padding_value=0).to(dtype=torch.long)
-        lengths = jagged.lengths().to(device=tokens.device)
-        positions = torch.arange(self.history_capacity, device=tokens.device).unsqueeze(0)
-        mask = positions < lengths.unsqueeze(1)
-        return tokens, mask
-
-    def forward(
-        self,
-        batch: BatchTensors,
-        token_embedding: Callable[[torch.Tensor], torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        sequence_by_key = self._require_sequence_features(batch).to_dict()
-        missing_keys = [name for name in SEQUENCE_FEATURE_KEYS if name not in sequence_by_key]
-        if missing_keys:
-            missing = ", ".join(missing_keys)
-            raise RuntimeError(f"Batch sequence_features is missing required keys: {missing}")
-
-        history_tokens, history_mask = self._dense_sequence_tokens(sequence_by_key, "history_tokens")
-        history_post_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_post_tokens")
-        history_author_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_author_tokens")
-        history_action_tokens, _ = self._dense_sequence_tokens(sequence_by_key, "history_action_tokens")
-        history_time_gap, _ = self._dense_sequence_tokens(sequence_by_key, "history_time_gap")
-        history_group_ids, _ = self._dense_sequence_tokens(sequence_by_key, "history_group_ids")
-
-        history_hidden = token_embedding(history_tokens)
-        post_hidden = token_embedding(history_post_tokens)
-        author_hidden = token_embedding(history_author_tokens)
-        action_hidden = token_embedding(history_action_tokens)
-        time_hidden = self.time_gap_embedding(history_time_gap.clamp(min=0, max=TIME_GAP_BUCKET_COUNT))
-        group_hidden = self.sequence_group_embedding(history_group_ids)
-        event_inputs = torch.cat(
-            [
-                history_hidden,
-                post_hidden,
-                author_hidden,
-                action_hidden,
-                time_hidden,
-                group_hidden,
-            ],
-            dim=-1,
+        self.item_tokenizer = NonSequentialTokenizer(
+            item_int_feature_specs,
+            item_ns_groups,
+            emb_dim,
+            d_model,
+            item_ns_tokens,
+            emb_skip_threshold,
+            force_auto_split=force_auto_split,
         )
-        event_tokens = self.event_projection(event_inputs)
-        return self.merge_with_sep(event_tokens, history_group_ids, history_mask)
-
-    def merge_with_sep(
-        self,
-        event_tokens: torch.Tensor,
-        history_group_ids: torch.Tensor,
-        history_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        batch_size = event_tokens.shape[0]
-        device = event_tokens.device
-        merged_tokens = event_tokens.new_zeros(batch_size, self.max_sequence_tokens, self.hidden_dim)
-        merged_mask = torch.zeros(batch_size, self.max_sequence_tokens, dtype=torch.bool, device=device)
-
-        for batch_index in range(batch_size):
-            valid_positions = torch.nonzero(history_mask[batch_index], as_tuple=False).squeeze(-1).tolist()
-            if not valid_positions:
-                continue
-            pieces: list[torch.Tensor] = []
-            for offset, position in enumerate(valid_positions):
-                pieces.append(event_tokens[batch_index, position])
-                if offset + 1 >= len(valid_positions):
-                    continue
-                next_position = valid_positions[offset + 1]
-                if int(history_group_ids[batch_index, position]) != int(history_group_ids[batch_index, next_position]):
-                    pieces.append(self.sep_token)
-
-            merged_length = min(len(pieces), self.max_sequence_tokens)
-            start = self.max_sequence_tokens - merged_length
-            merged_tokens[batch_index, start:] = torch.stack(pieces[-merged_length:], dim=0)
-            merged_mask[batch_index, start:] = True
-
-        positions = torch.arange(self.max_sequence_tokens, device=device)
-        merged_tokens = merged_tokens + self.sequence_position_embedding(positions).unsqueeze(0)
-        merged_tokens = merged_tokens * merged_mask.unsqueeze(-1).float()
-        return merged_tokens, merged_mask
-
-
-class OneTransModel(nn.Module):
-    def __init__(self, data_config: DataConfig, model_config: ModelConfig, dense_dim: int) -> None:
-        super().__init__()
-        self.sequence_group_count = len(data_config.sequence_names)
-        self.history_capacity = self.sequence_group_count * data_config.max_seq_len
-        self.max_sequence_tokens = max(1, self.history_capacity * 2 - 1)
-        self.ns_token_count = max(1, model_config.segment_count)
-        self.hidden_dim = model_config.hidden_dim
-        self.ffn_dim = int(model_config.hidden_dim * model_config.ffn_multiplier)
-        self.sparse_embedding = TorchRecEmbeddingBagAdapter(
-            feature_schema=build_default_feature_schema(data_config, model_config),
-            table_names=SPARSE_TABLE_NAMES,
+        self.user_dense = DenseTokenProjector(user_dense_dim, d_model)
+        self.item_dense = DenseTokenProjector(item_dense_dim, d_model)
+        self.sequence_tokenizers = nn.ModuleDict(
+            {
+                domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model, num_time_buckets, emb_skip_threshold)
+                for domain, vocab_sizes in seq_vocab_sizes.items()
+            }
         )
-
-        self.token_embedding = nn.Embedding(
-            num_embeddings=model_config.vocab_size,
-            embedding_dim=model_config.embedding_dim,
-            padding_idx=0,
-        )
-        self.token_projection = (
-            nn.Identity()
-            if model_config.embedding_dim == model_config.hidden_dim
-            else nn.Linear(model_config.embedding_dim, model_config.hidden_dim)
-        )
-        self.sequential_tokenizer = UnifiedSequentialTokenizer(
-            max_sequence_tokens=self.max_sequence_tokens,
-            history_capacity=self.history_capacity,
-            hidden_dim=model_config.hidden_dim,
-            sequence_group_count=self.sequence_group_count,
-            dropout=model_config.dropout,
-        )
-        self.ns_tokenizer = AutoSplitNSTokenizer(
-            dense_dim=dense_dim,
-            hidden_dim=model_config.hidden_dim,
-            ns_token_count=self.ns_token_count,
-            dropout=model_config.dropout,
-        )
+        self.num_ns = self.user_tokenizer.num_tokens + self.item_tokenizer.num_tokens
+        self.num_ns += int(user_dense_dim > 0) + int(item_dense_dim > 0)
+        self.separator_tokens = nn.Parameter(torch.randn(max(1, len(self.seq_domains) - 1), d_model) * 0.02)
         self.blocks = nn.ModuleList(
-            [
-                TaacMixedCausalBlock(
-                    hidden_dim=model_config.hidden_dim,
-                    num_heads=model_config.num_heads,
-                    ffn_dim=self.ffn_dim,
-                    ns_token_count=self.ns_token_count,
-                    dropout=model_config.dropout,
-                    attention_dropout=model_config.attention_dropout,
-                )
-                for _ in range(model_config.num_layers)
-            ]
+            [OneTransBlock(d_model, num_heads, hidden_mult, self.num_ns, dropout_rate) for _ in range(max(1, num_blocks))]
         )
-        head_hidden_dim = model_config.head_hidden_dim or model_config.hidden_dim * 4
-        self.output_head = ClassificationHead(
-            input_dim=(self.ns_token_count * 2) * model_config.hidden_dim,
-            hidden_dims=[head_hidden_dim, model_config.hidden_dim * 2],
-            activation="silu",
-            dropout=[model_config.dropout, model_config.dropout],
+        self.final_norm = RMSNorm(d_model)
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model * 2, d_model),
+            nn.SiLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(d_model, action_num),
         )
 
-    def embed_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        return self.token_projection(self.token_embedding(tokens))
+    def _encode_non_sequence(self, inputs: ModelInput) -> torch.Tensor:
+        parts = [self.user_tokenizer(inputs.user_int_feats)]
+        user_dense = self.user_dense(inputs.user_dense_feats)
+        if user_dense is not None:
+            parts.append(user_dense)
+        parts.append(self.item_tokenizer(inputs.item_int_feats))
+        item_dense = self.item_dense(inputs.item_dense_feats)
+        if item_dense is not None:
+            parts.append(item_dense)
+        return torch.cat(parts, dim=1)
 
-    def _require_sparse_features(self, batch: BatchTensors):
-        if batch.sparse_features is None:
-            raise RuntimeError("Batch is missing required TorchRec sparse feature tensor: sparse_features")
-        return batch.sparse_features
+    def _encode_sequence_stream(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor]:
+        pieces: list[torch.Tensor] = []
+        masks: list[torch.Tensor] = []
+        sep_index = 0
+        for domain_index, domain in enumerate(self.seq_domains):
+            raw_sequence = inputs.seq_data[domain]
+            seq_len = inputs.seq_lens[domain].to(raw_sequence.device)
+            tokens = self.sequence_tokenizers[domain](raw_sequence, inputs.seq_time_buckets.get(domain))
+            tokens = tokens + sinusoidal_positions(tokens.shape[1], self.d_model, tokens.device).unsqueeze(0)
+            pieces.append(tokens)
+            masks.append(make_padding_mask(seq_len, raw_sequence.shape[2]))
+            if domain_index < len(self.seq_domains) - 1:
+                sep = self.separator_tokens[sep_index].view(1, 1, -1).expand(raw_sequence.shape[0], -1, -1)
+                pieces.append(sep)
+                masks.append(torch.zeros(raw_sequence.shape[0], 1, dtype=torch.bool, device=raw_sequence.device))
+                sep_index += 1
+        return torch.cat(pieces, dim=1), torch.cat(masks, dim=1)
 
-    def _pooled_sparse_summaries(self, batch: BatchTensors) -> dict[str, torch.Tensor]:
-        pooled_sparse = self.sparse_embedding.forward_dict(self._require_sparse_features(batch))
-        return {
-            name: self.token_projection(pooled_sparse[name])
-            for name in SPARSE_TABLE_NAMES
-        }
+    def _pyramid_keep_count(self, seq_token_count: int, layer_index: int) -> int:
+        if seq_token_count <= max(1, self.num_ns):
+            return seq_token_count
+        remaining_layers = max(1, len(self.blocks) - layer_index)
+        target = max(1, self.num_ns)
+        decay = (target / seq_token_count) ** (1.0 / remaining_layers)
+        return max(target, min(seq_token_count, math.ceil(seq_token_count * decay)))
 
-    def make_pyramid_schedule(self, layer_count: int) -> list[int]:
-        if layer_count <= 0:
-            return []
-        schedule: list[int] = []
-        for layer_index in range(1, layer_count + 1):
-            ratio = layer_index / layer_count
-            keep = round(self.max_sequence_tokens + ratio * (self.ns_token_count - self.max_sequence_tokens))
-            keep = max(self.ns_token_count, min(self.max_sequence_tokens, keep))
-            if schedule:
-                keep = min(keep, schedule[-1])
-            schedule.append(keep)
-        schedule[-1] = self.ns_token_count
-        return schedule
+    def _embed(self, inputs: ModelInput) -> torch.Tensor:
+        sequence_tokens, sequence_mask = self._encode_sequence_stream(inputs)
+        ns_tokens = self._encode_non_sequence(inputs)
+        tokens = torch.cat([sequence_tokens, ns_tokens], dim=1)
+        ns_mask = torch.zeros(ns_tokens.shape[0], ns_tokens.shape[1], dtype=torch.bool, device=ns_tokens.device)
+        padding_mask = torch.cat([sequence_mask, ns_mask], dim=1)
+        seq_token_count = sequence_tokens.shape[1]
+        for layer_index, block in enumerate(self.blocks):
+            tokens = block(tokens, padding_mask, seq_token_count)
+            keep_count = self._pyramid_keep_count(seq_token_count, layer_index)
+            if keep_count < seq_token_count:
+                sequence_part = tokens[:, :seq_token_count, :]
+                ns_part = tokens[:, seq_token_count:, :]
+                sequence_mask = padding_mask[:, :seq_token_count]
+                ns_mask = padding_mask[:, seq_token_count:]
+                tokens = torch.cat([sequence_part[:, -keep_count:, :], ns_part], dim=1)
+                padding_mask = torch.cat([sequence_mask[:, -keep_count:], ns_mask], dim=1)
+                seq_token_count = keep_count
+        tokens = self.final_norm(tokens)
+        seq_summary = masked_mean(tokens[:, :seq_token_count, :], padding_mask[:, :seq_token_count])
+        ns_summary = masked_mean(tokens[:, seq_token_count:, :], padding_mask[:, seq_token_count:])
+        return torch.cat([seq_summary, ns_summary], dim=-1)
 
-    def forward(self, batch: BatchTensors) -> torch.Tensor:
-        sequence_tokens, sequence_mask = self.sequential_tokenizer(batch, self.embed_tokens)
-        ns_tokens, ns_mask = self.ns_tokenizer(batch, self._pooled_sparse_summaries(batch))
-        pyramid_schedule = self.make_pyramid_schedule(len(self.blocks))
+    def forward(self, inputs: ModelInput) -> torch.Tensor:
+        return self.classifier(self._embed(inputs))
 
-        for block, next_sequence_length in zip(self.blocks, pyramid_schedule, strict=True):
-            sequence_tokens, sequence_mask, ns_tokens, ns_mask = block(
-                sequence_tokens,
-                sequence_mask,
-                ns_tokens,
-                ns_mask,
-                next_sequence_length=next_sequence_length,
-            )
-
-        fused = torch.cat([sequence_tokens, ns_tokens], dim=1).reshape(batch.batch_size, -1)
-        logits = self.output_head(fused)
-        return logits.squeeze(-1)
-
-
-def build_model_component(data_config: DataConfig, model_config: ModelConfig, dense_dim: int) -> OneTransModel:
-    return OneTransModel(data_config=data_config, model_config=model_config, dense_dim=dense_dim)
+    def predict(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor]:
+        embeddings = self._embed(inputs)
+        return self.classifier(embeddings), embeddings

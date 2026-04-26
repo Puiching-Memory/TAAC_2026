@@ -69,7 +69,7 @@ icon: lucide/lightbulb
 - **RankMixer / TokenMixer 方向**：与当前 OneTrans / HyFormer 等统一 Token 化方向高度吻合。RankMixer 的语义切分 Token + MoE 可以理解为另一种特征交叉 Token 化策略，值得与现有 `feature_cross_layers` 机制对比
 - **STCA 长序列**：当前实验包 `max_seq_len=32` 较短，但 STCA 的 KV 复用 + 多层 Q 堆叠思路在扩大序列长度时可直接应用。比起简单堆层，参数量更可控
 - **行为序列融合**：当前数据管道按 `action_type` 区分行为，融合为统一时间序列的思路可在 `data.py` / tokenizer 层面实验
-- **生成式辅助 loss**：类目层级 NTP 作为只训练不推理的辅助任务，不影响推理延迟约束（180s），可在 `build_loss_stack` 中加入
+- **生成式辅助 loss**：类目层级 NTP 作为只训练不推理的辅助任务，不影响推理延迟约束（180s），可在训练损失模块中加入
 
 **风险点：**
 
@@ -91,6 +91,6 @@ icon: lucide/lightbulb
 
 - [ ] **STCA 注意力机制**：在 baseline 或 interformer 的 `model.py` 中实现 STCA（SWiGLU-Q + 多层堆叠 + KV 复用），作为新实验包 `config/stca/`
 - [ ] **行为序列融合 tokenizer**：在 `data.py` 中实现按时间排序的统一行为序列构造，将 `action_type` 作为嵌入特征融入 token 表示
-- [ ] **生成式辅助 loss**：在 `utils.py` 的 `build_loss_stack` 中加入类目层级 NTP 辅助任务（半因果 mask，只训练不推理）
+- [ ] **生成式辅助 loss**：在训练损失模块中加入类目层级 NTP 辅助任务（半因果 mask，只训练不推理）
 - [ ] **MoE 特征交叉**：在 RankMixer 思路下实现 MoE 版特征交叉层，替换现有 `feature_cross_layers`，注意加 balancing loss
 - [ ] **观测指标扩充**：在 `metrics.py` 或 profiling 中增加注意力分布熵、Expert 负载均衡度等诊断指标

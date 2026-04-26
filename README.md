@@ -9,7 +9,7 @@
   <a href="https://puiching-memory.github.io/TAAC_2026/"><img src="https://img.shields.io/website?label=Docs&up_message=Online&down_message=Offline&up_color=0A7B83&url=https%3A%2F%2Fpuiching-memory.github.io%2FTAAC_2026%2F" alt="Online Docs Status"></a>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/PyTorch-2.6%2B-EE4C2C.svg" alt="PyTorch">
+  <img src="https://img.shields.io/badge/PyTorch-2.7.1-EE4C2C.svg" alt="PyTorch">
   <img src="https://img.shields.io/badge/Task-Recommendation-brightgreen.svg" alt="Task">
   <img src="https://img.shields.io/badge/Track-TAAC%202026-orange.svg" alt="Track">
   <img src="https://img.shields.io/badge/Status-Research-yellow.svg" alt="Status">
@@ -19,8 +19,8 @@
   <a href="https://algo.qq.com/#intro">Competition</a> ·
   <a href="docs/getting-started.md">Quick Start</a> ·
   <a href="docs/experiments/index.md">Experiments</a> ·
-  <a href="docs/index.md">Docs</a> ·
-  <a href="https://puiching-memory.github.io/TAAC_2026/">Online Docs</a>
+  <a href="https://puiching-memory.github.io/TAAC_2026/">Online Docs</a> ·
+  <a href="#交流讨论">QQ 群</a>
 </p>
 
 <p align="center">
@@ -67,67 +67,47 @@
 ## 快速开始
 
 ```bash
-uv python install 3.13
+uv python install 3.10.20
+uv sync --locked --extra cuda126
 
-# CPU-only profile: unit tests, docs, CPU benchmarks
-uv sync --locked --extra cpu
-
-# GPU profile: training, local integration / GPU tests / GPU benchmarks
-# 手动选择与你本机 CUDA 对应的 profile：cuda126 / cuda128 / cuda130
-uv sync --locked --extra cuda128
-
-# 训练 starter baseline
-uv run taac-train --experiment config/baseline
-
-# 打包单个实验包为线上训练 zip
-uv run taac-package-train --experiment config/baseline
-
-# 用 optuna 搜索 baseline，默认会按当前可见 GPU 空闲显存自动并行派发 trial
-# 默认约束参数量 <= 3 GiB
-uv run taac-search --experiment config/baseline --trials 20
+# 训练baseline
+bash run.sh train --experiment config/baseline \
+  --dataset-path /path/to/dataset_dir \
+  --schema-path /path/to/dataset_dir/schema.json
 
 # 评估默认输出目录中的 best.pt；single 模式始终只评估一个实验/一个 checkpoint
-uv run taac-evaluate single --experiment config/baseline
+bash run.sh val --experiment config/baseline \
+  --dataset-path /path/to/dataset_dir \
+  --schema-path /path/to/dataset_dir/schema.json
 ```
 
-训练/评估默认会使用 HuggingFace 数据集名 `TAAC2026/data_sample_1000`。
-你可以随时覆盖为本地或自定义数据源：
+本地仓库默认通过 [.python-version](.python-version) 固定到 Python 3.10.20，以便和当前线上 competition Conda 环境对齐；项目兼容范围仍保持在 [pyproject.toml](pyproject.toml) 声明的 3.10-3.13。
+
+官方 HyFormer 实验包位于 [config/baseline](config/baseline)，只保留实验定义、模型和 NS 分组资产；PCVR 数据管线、训练编排、trainer 和 checkpoint 协议已下沉到 [src/taac2026/infrastructure/pcvr](src/taac2026/infrastructure/pcvr) 与 [src/taac2026/infrastructure/training](src/taac2026/infrastructure/training)。统一入口 [run.sh](run.sh) 负责本地训练、验证、测试和打包，也兼容线上平台直接执行；仓库环境统一固定为 Linux + `cuda126`，本地 `TAAC_CUDA_PROFILE`/`--cuda-profile` 仅支持 `cuda126`，线上上传包默认使用平台已激活的 Python/Conda 环境并通过 `PYTHONPATH` 载入代码。`--dataset-path` 可以指向 parquet 文件或包含 parquet 的目录；如果 `schema.json` 与 parquet 位于同一目录，可以省略 `--schema-path`。线上如果只执行 `run.sh`，设置 `TAAC_DATASET_PATH`、`TAAC_SCHEMA_PATH` 和 `TAAC_EXPERIMENT` 即可，默认命令就是训练。
 
 ```bash
-# 覆盖为本地 parquet
-uv run taac-train --experiment config/baseline --dataset-path /path/to/train.parquet
+# 生成线上训练上传文件
+bash run.sh package --experiment config/baseline
 
-# 覆盖为本地目录（包含 parquet）
-uv run taac-train --experiment config/baseline --dataset-path /path/to/dataset_dir
-
-# 覆盖为自定义 Hub 数据集名
-uv run taac-train --experiment config/baseline --dataset-path some_owner/some_dataset
-```
-
-若目标 Hub 数据集尚未缓存，`datasets` 会自动下载并写入本地缓存。
-
-```bash
 # 跑完整训练栈回归
-uv run pytest tests -q
+bash run.sh test tests -q
 ```
 
-更细的测试分层、Property/Fault/Recovery 回归入口和模块改动后的最小复核集合，见 `TESTING.md`。
+当前统一使用 `uv sync --locked --extra cuda126`；pytest、hypothesis 和 benchmark 工具已经并入默认依赖。当前可执行测试集中在 `tests/unit/`，更细的测试文件说明和模块改动后的最小复核集合，见 [docs/guide/testing.md](docs/guide/testing.md)。
 
 ## 当前支持实验包
 
 | 实验包         | 目录                                           | 公开来源                                                                                                                                      |
 | -------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline       | [config/baseline](config/baseline)             | 本仓库维护，强调可扩展性、注释与二次开发体验                                                                                                  |
-| Symbiosis      | [config/symbiosis](config/symbiosis)           | 本仓库维护, 比赛用的实验模型, 暂时闭源                                                                                                        |
-| Grok           | [config/grok](config/grok)                     | [xai-org/x-algorithm](https://github.com/xai-org/x-algorithm)                                                                                 |
-| CTR Baseline   | [config/ctr_baseline](config/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       |
-| DeepContextNet | [config/deepcontextnet](config/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) |
+| Baseline       | [config/baseline](config/baseline)             | 官方 Day0 HyFormer baseline；训练、评估、打包与 checkpoint runtime 已下沉到 [src/taac2026](src/taac2026)                                      |
+| Symbiosis      | [config/symbiosis](config/symbiosis)           | 本仓库维护的比赛用融合实验模型                                                                                                                |
+| CTR Baseline   | [config/ctr_baseline](config/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline) 启发的轻量 CTR 实验包                                 |
+| DeepContextNet | [config/deepcontextnet](config/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) 启发的上下文实验包 |
 | InterFormer    | [config/interformer](config/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
 | OneTrans       | [config/onetrans](config/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
 | HyFormer       | [config/hyformer](config/hyformer)             | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            |
 | UniRec         | [config/unirec](config/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     |
 | UniScaleFormer | [config/uniscaleformer](config/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             |
-| O_o            | [config/oo](config/oo)                         | [salmon1802/O_o](https://github.com/salmon1802/O_o)                                                                                           |
 
 更详细的训练命令、线上训练打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。
 
@@ -204,6 +184,16 @@ print(df.shape)       # (1000, 120)
 print(df.columns)     # ['user_id', 'item_id', 'label_type', ...]
 ```
 
+如果你按仓库当前文档做本地 smoke，推荐目录布局如下：
+
+```text
+data/sample_1000_raw/
+├── demo_1000.parquet
+└── schema.json
+```
+
+补充说明：官方 `demo_1000.parquet` 当前只有 1 个 Row Group。本仓库已经兼容这种样例文件，在 smoke 训练时会复用同一个 Row Group 做 train/valid 切分，仅用于通路验证，不代表有统计意义的离线验证。
+
 ## Evaluation
 我们将使用单一的ROC曲线下面积（AUC）指标对所有团队进行排名（越高越好）。为确保实用性，每次提交还必须在官方评估环境和协议下满足特定于赛道和轮次的推理延迟限制；超出延迟预算的提交将被视为无效，因此不予排名，无论AUC分数如何。
 
@@ -217,6 +207,10 @@ print(df.columns)     # ['user_id', 'item_id', 'label_type', ...]
 
 比赛采用两阶段评估框架，逐步强调预测准确性、可扩展性、效率和可复现性。在第一轮（开放初赛阶段），所有团队将在隐藏测试集上根据官方评估指标进行排名，同时实施严格的防过拟合控制（如提交限制和延迟反馈）。如有必要，将实施容量感知滚动准入机制（支持多达5,000支并发团队），以确保公平的资源访问。第一轮结束时，排行榜将被冻结，前50名学术团队和前20名工业团队将仅根据官方指标表现晋级第二轮。
 第二轮在约10倍更大规模的数据集上评估模型的鲁棒性和大规模建模能力，同时设置严格的推理延迟限制，以鼓励采用GPU高效统一架构。每支决赛团队将获得相当的计算资源，且所有提交必须通过官方环境中的可复现性和规则合规性验证。
+
+## 交流讨论
+
+欢迎加入 TAAC2026(民间群) 交流训练、复现、实验管理和线上提交经验。QQ群：1098676137。
 
 ## 相关工作
 以下按公开可访问资料整理，优先保留能直接借鉴代码、EDA、方法说明和赛事资料的链接，持续补充。

@@ -6,75 +6,71 @@ icon: lucide/house
 
 **迈向统一序列建模与特征交互的大规模推荐系统**
 
----
-
-## 项目定位
-
-这是一个面向 [TAAC 2026](https://algo.qq.com/#intro) 的实验工作区。我们把共享训练底座、目录式实验包、统一输出产物和回归测试放进同一套工程里，让新实验可以更快接入、训练、评估和复核。
+这是一个面向 [TAAC 2026](https://algo.qq.com/#intro) 的实验工作区。仓库把共享 PCVR 训练运行时、目录式实验包、线上训练打包、评估和回归测试放在同一套工程里，让每个新模型都能沿着同一条路径接入、训练和复核。
 
 !!! note "声明"
     本仓库是 TAAC 2026 其中一个参赛队伍的代码仓库，不代表官方。
 
 ## 核心能力
 
-| 能力             | 说明                                                          |
-| ---------------- | ------------------------------------------------------------- |
-| **统一训练框架** | 一条命令完成训练、评估、checkpoint 保存                       |
-| **目录式实验包** | 每个实验包独立管理数据、模型、损失函数，互不干扰              |
-| **线上训练打包** | 将指定实验包压缩成单个 zip，并提供自动解压和训练入口脚本      |
-| **超参数搜索**   | 基于 Optuna，自动检测 GPU 空闲显存并发派发 trial              |
-| **回归测试**     | Unit / Integration / Property 三层测试，CI 自动覆盖率门控     |
-| **论文复现**     | 内置 InterFormer、OneTrans、HyFormer 等已发表工作的可运行实现 |
+| 能力 | 说明 |
+| --- | --- |
+| 统一入口 | 顶层 `run.sh` 覆盖训练、验证、推理、测试和打包 |
+| PCVR 实验包 | 每个 `config/<name>/` 包声明 `PCVRExperiment`、模型类和 `ns_groups.json` |
+| 共享训练运行时 | 数据读取、模型构建、trainer、checkpoint 和评估协议集中在 `src/taac2026/infrastructure/pcvr` |
+| 线上训练打包 | 生成平台上传用的 `run.sh` 与 `code_package.zip` 双文件目录 |
+| 搜索与报告 | 保留搜索请求记录、EDA、技术时间线和占位 benchmark 报告工具 |
+| 单元回归 | 当前可执行回归集中在 `tests/unit/`，覆盖实验包、协议、打包和 CLI 契约 |
 
 ## 内置实验包
 
-当前共 **10** 个独立实验包，覆盖从基础 baseline 到前沿论文的多种架构：
+当前共有 **9** 个 PCVR 实验包：
 
-| 实验包                                          | 架构特点                        | 来源                                                                                                            |
-| ----------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| [Baseline](experiments/baseline.md)             | 最小参考实现，强调可扩展性      | 本仓库                                                                                                          |
-| [CTR Baseline](experiments/ctr-baseline.md)     | DIN 风格注意力                  | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                         |
-| [DeepContextNet](experiments/deepcontextnet.md) | 上下文感知建模                  | [suyanli220/TAAC-2026-Baseline](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) |
-| [Grok](experiments/grok.md)                     | 分段建模 + pairwise 损失        | 本仓库                                                                                                          |
-| [HyFormer](experiments/hyformer.md)             | 多序列分支 + Query Decode/Boost | [论文](https://arxiv.org/abs/2601.12681)                                                                        |
-| [InterFormer](experiments/interformer.md)       | 双向序列-特征交互               | [论文](https://arxiv.org/abs/2411.09852)                                                                        |
-| [OneTrans](experiments/onetrans.md)             | 统一 Tokenizer + 单 Transformer | [论文](https://arxiv.org/abs/2510.26104)                                                                        |
-| [O_o](experiments/oo.md)                        | 简化统一设计                    | [salmon1802/O_o](https://github.com/salmon1802/O_o)                                                             |
-| [UniRec](experiments/unirec.md)                 | 多阶段融合                      | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                       |
-| [UniScaleFormer](experiments/uniscaleformer.md) | 缩放序列 + 融合                 | [twx145/Unirec](https://github.com/twx145/Unirec)                                                               |
+| 实验包 | 目录 | 说明 |
+| --- | --- | --- |
+| [Baseline](experiments/baseline.md) | `config/baseline` | 官方 HyFormer 风格 baseline，保留 `PCVRHyFormer` 名称 |
+| [Symbiosis](experiments/symbiosis.md) | `config/symbiosis` | 本仓库维护的融合式 PCVR 实验模型 |
+| [CTR Baseline](experiments/ctr-baseline.md) | `config/ctr_baseline` | DIN/CTR 风格轻量对照模型 |
+| [DeepContextNet](experiments/deepcontextnet.md) | `config/deepcontextnet` | 上下文增强的深度交互模型 |
+| [HyFormer](experiments/hyformer.md) | `config/hyformer` | HyFormer 论文方向的实验包 |
+| [InterFormer](experiments/interformer.md) | `config/interformer` | 序列与非序列特征交互建模 |
+| [OneTrans](experiments/onetrans.md) | `config/onetrans` | 统一 token 化与单 Transformer 建模 |
+| [UniRec](experiments/unirec.md) | `config/unirec` | 多阶段融合方向实验包 |
+| [UniScaleFormer](experiments/uniscaleformer.md) | `config/uniscaleformer` | 缩放序列建模与融合实验包 |
 
 ## 技术栈
 
-- **Python** ≥ 3.12
-- **PyTorch** ≥ 2.6
-- **uv** 作为包管理器
-- **Optuna** ≥ 4.4 用于超参数搜索
-- **pytest** + Hypothesis 用于测试
+- Python `>=3.10,<3.14`，本地推荐使用仓库固定的 Python 3.10.20。
+- 本地依赖管理使用 `uv` 与 `uv.lock`。
+- 仅支持 Linux 运行时。
+- 仓库默认依赖已包含 pytest、hypothesis 和 benchmark 工具；CUDA 运行时统一使用 `cuda126` extra，对齐线上 CUDA 12.6 事实。
+- 线上 bundle 默认使用平台已激活的 Python/Conda 环境，不要求平台安装 `uv`。
 
 ## 快速预览
 
 ```bash
-# 安装环境
-uv python install 3.13
-uv sync --locked --extra cpu
+uv python install 3.10.20
+uv sync --locked --extra cuda126
 
-# 需要 GPU 时，手动选择与你本机 CUDA 对应的 profile
-# 如需切换，再改成 cuda126 / cuda128 / cuda130
-uv sync --locked --extra cuda128
+bash run.sh train --experiment config/baseline \
+    --dataset-path /path/to/parquet_or_dataset_dir \
+    --schema-path /path/to/schema.json \
+    --num_epochs 1 \
+    --batch_size 8 \
+    --device cpu
 
-# 训练 baseline
-uv run taac-train --experiment config/baseline
+bash run.sh val --experiment config/baseline \
+    --dataset-path /path/to/parquet_or_dataset_dir \
+    --schema-path /path/to/schema.json \
+    --run-dir outputs/config/baseline \
+    --device cpu
 
-# 打包 baseline 为线上训练 zip
-uv run taac-package-train --experiment config/baseline
-
-# 评估
-uv run taac-evaluate single --experiment config/baseline
-
-# 超参数搜索
-uv run taac-search --experiment config/baseline --trials 20
+bash run.sh package --experiment config/baseline --force
+bash run.sh test tests/unit -q
 ```
 
 → 详细步骤见 [快速开始](getting-started.md)
 
-→ 线上训练压缩包格式见 [线上训练打包](guide/online-training-bundle.md)
+→ 线上双文件格式见 [线上训练打包](guide/online-training-bundle.md)
+
+→ 新实验包契约见 [架构与概念](architecture.md) 与 [新增实验包](guide/contributing.md)

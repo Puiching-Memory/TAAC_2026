@@ -15,6 +15,3 @@ site/
 !docs/assets/figures/eda/*.echarts.json
 !docs/assets/figures/papers/tech-timeline.echarts.json
 docs/assets/figures/benchmarks/benchmark_acceptance.json
-
-# TAAC2026 Symbiosis
-config/symbiosis/

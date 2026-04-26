@@ -1,88 +1,25 @@
+"""Benchmark reporting command placeholder."""
+
 from __future__ import annotations
 
 import argparse
+import json
+from collections.abc import Sequence
 from pathlib import Path
 
-from taac2026.infrastructure.io.console import configure_logging, logger
-from taac2026.reporting.benchmark_charts import (
-    DEFAULT_OUTPUT_DIR,
-    DEFAULT_PERFORMANCE_DIR,
-    DEFAULT_SUMMARY_PATH,
-    load_benchmark_records,
-    write_benchmark_charts,
-    write_benchmark_summary,
-)
 
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate ECharts benchmark reports")
-    parser.add_argument(
-        "--input",
-        nargs="*",
-        default=[],
-        help="Optional pytest-benchmark JSON file(s)",
-    )
-    parser.add_argument(
-        "--performance-dir",
-        default=str(DEFAULT_PERFORMANCE_DIR),
-        help="Directory containing custom benchmark JSON payloads",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=str(DEFAULT_OUTPUT_DIR),
-        help="Output directory for benchmark .echarts.json files",
-    )
-    parser.add_argument(
-        "--summary-path",
-        default=str(DEFAULT_SUMMARY_PATH),
-        help="Output path for the benchmark acceptance summary JSON",
-    )
-    parser.add_argument(
-        "--label",
-        default="",
-        help="Fallback run label used when the benchmark JSON has no explicit phase metadata",
-    )
-    parser.add_argument(
-        "--baseline-phase",
-        default="baseline",
-        help="Phase name treated as the benchmark baseline in the acceptance summary",
-    )
-    parser.add_argument(
-        "--candidate-phase",
-        default=None,
-        help="Optional phase name compared against the baseline in the acceptance summary",
-    )
-    parser.add_argument(
-        "--fail-on-empty",
-        action="store_true",
-        help="Exit with an error when no benchmark records are available instead of writing placeholder charts",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    configure_logging()
-    args = parse_args(argv)
-    output_dir = Path(args.output_dir)
-    records = load_benchmark_records(
-        args.input,
-        performance_dir=args.performance_dir,
-        default_label=args.label,
-    )
-    if args.fail_on_empty and not records:
-        raise FileNotFoundError(
-            "No benchmark records were found in the provided pytest-benchmark inputs or performance directory"
-        )
-    written = write_benchmark_charts(output_dir=output_dir, records=records)
-    summary_path = write_benchmark_summary(
-        args.summary_path,
-        records=records,
-        baseline_phase=args.baseline_phase,
-        candidate_phase=args.candidate_phase,
-    )
-    logger.info("Written {} benchmark charts → {}", len(written), output_dir)
-    logger.info("Written benchmark acceptance summary → {}", summary_path)
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Write a minimal benchmark report placeholder")
+    parser.add_argument("--input", action="append", default=[])
+    parser.add_argument("--output", default="outputs/reports/benchmark_report.json")
+    args = parser.parse_args(argv)
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"report": "benchmark", "input": args.input, "status": "placeholder"}
+    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(output)
     return 0
 
 
-__all__ = ["main", "parse_args"]
+if __name__ == "__main__":
+    raise SystemExit(main())

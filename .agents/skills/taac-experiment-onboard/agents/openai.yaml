@@ -1,4 +1,0 @@
-interface:
-  display_name: "TAAC Experiment Onboard"
-  short_description: "Onboard TAAC experiment packages safely"
-  default_prompt: "Use $taac-experiment-onboard to add or migrate a TAAC experiment package into this repository."

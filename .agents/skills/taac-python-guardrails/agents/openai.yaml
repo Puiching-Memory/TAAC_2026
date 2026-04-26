@@ -1,4 +1,0 @@
-interface:
-  display_name: "TAAC Python Guardrails"
-  short_description: "Avoid try import; standardize uv workflows"
-  default_prompt: "Use $taac-python-guardrails to make Python changes that follow this repository import and uv workflow rules."

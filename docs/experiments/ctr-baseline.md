@@ -34,8 +34,8 @@ icon: lucide/flask-conical
 ## 快速运行
 
 ```bash
-uv run taac-train --experiment config/ctr_baseline
-uv run taac-evaluate single --experiment config/ctr_baseline
+bash run.sh train --experiment config/ctr_baseline
+bash run.sh val --experiment config/ctr_baseline
 ```
 
 ## 输出目录
