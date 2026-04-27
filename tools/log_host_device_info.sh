@@ -4,103 +4,33 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
+# Edit these values directly before running the script.
 REPO_ROOT="$DEFAULT_REPO_ROOT"
-REQUESTED_PROFILE="${TAAC_REQUESTED_PROFILE:-${TAAC_CUDA_PROFILE:-}}"
-REQUESTED_PYTHON="${TAAC_REQUESTED_PYTHON:-}"
-UV_INSTALL_URL="${TAAC_UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
-PYPI_INDEX_URL="${TAAC_PYPI_INDEX_URL:-https://pypi.org/simple}"
-PYTORCH_CPU_INDEX_URL="${TAAC_PYTORCH_CPU_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
-PYTORCH_CUDA126_INDEX_URL="${TAAC_PYTORCH_CUDA126_INDEX_URL:-https://download.pytorch.org/whl/cu126}"
-CONDA_SUBDIR="${TAAC_CONDA_SUBDIR:-linux-64}"
-CONDA_MAIN_CHANNEL_BASE_URL="${TAAC_CONDA_MAIN_CHANNEL_BASE_URL:-https://repo.anaconda.com/pkgs/main}"
-CONDA_FORGE_CHANNEL_BASE_URL="${TAAC_CONDA_FORGE_CHANNEL_BASE_URL:-https://conda.anaconda.org/conda-forge}"
-CONDA_MAIN_CHANNEL_URL="${TAAC_CONDA_MAIN_CHANNEL_URL:-$CONDA_MAIN_CHANNEL_BASE_URL/$CONDA_SUBDIR/repodata.json}"
-CONDA_FORGE_CHANNEL_URL="${TAAC_CONDA_FORGE_CHANNEL_URL:-$CONDA_FORGE_CHANNEL_BASE_URL/$CONDA_SUBDIR/repodata.json}"
-PROBE_TIMEOUT_SECONDS="${TAAC_NETWORK_PROBE_TIMEOUT:-10}"
-PROBE_DETAIL_LIMIT="${TAAC_NETWORK_PROBE_DETAIL_LIMIT:-240}"
-SITE_PROBE_TARGETS="${TAAC_SITE_PROBE_TARGETS:-example=https://example.com github=https://github.com python=https://www.python.org pypi=https://pypi.org/simple astral=https://astral.sh/uv/install.sh pytorch_cpu=https://download.pytorch.org/whl/cpu conda_main=https://repo.anaconda.com/pkgs/main/linux-64/repodata.json conda_forge=https://conda.anaconda.org/conda-forge/linux-64/repodata.json}"
-ENABLE_PROXY_MATRIX="${TAAC_ENABLE_PROXY_MATRIX:-1}"
-ENABLE_PIP_DOWNLOAD_PROBE="${TAAC_ENABLE_PIP_DOWNLOAD_PROBE:-1}"
-PIP_DOWNLOAD_PACKAGE="${TAAC_PIP_DOWNLOAD_PACKAGE:-sampleproject==4.0.0}"
-PIP_DOWNLOAD_INDEX_URL="${TAAC_PIP_DOWNLOAD_INDEX_URL:-$PYPI_INDEX_URL}"
-ENABLE_CONDA_SEARCH_PROBE="${TAAC_ENABLE_CONDA_SEARCH_PROBE:-1}"
-CONDA_SEARCH_CHANNEL_URL="${TAAC_CONDA_SEARCH_CHANNEL_URL:-$CONDA_FORGE_CHANNEL_BASE_URL}"
-CONDA_PROBE_SPEC="${TAAC_CONDA_PROBE_SPEC:-python=3.10}"
+REQUESTED_PROFILE=""
+REQUESTED_PYTHON=""
+UV_INSTALL_URL="https://astral.sh/uv/install.sh"
+PYPI_INDEX_URL="https://pypi.org/simple"
+TENCENT_PYPI_INDEX_URL="https://mirrors.cloud.tencent.com/pypi/simple/"
+PYTORCH_CPU_INDEX_URL="https://download.pytorch.org/whl/cpu"
+PYTORCH_CUDA126_INDEX_URL="https://download.pytorch.org/whl/cu126"
+CONDA_SUBDIR="linux-64"
+CONDA_MAIN_CHANNEL_BASE_URL="https://repo.anaconda.com/pkgs/main"
+CONDA_FORGE_CHANNEL_BASE_URL="https://conda.anaconda.org/conda-forge"
+CONDA_MAIN_CHANNEL_URL="$CONDA_MAIN_CHANNEL_BASE_URL/$CONDA_SUBDIR/repodata.json"
+CONDA_FORGE_CHANNEL_URL="$CONDA_FORGE_CHANNEL_BASE_URL/$CONDA_SUBDIR/repodata.json"
+TENCENT_CONDA_MAIN_CHANNEL_URL="http://mirrors.cloud.tencent.com/anaconda/pkgs/main/"
+TENCENT_CONDA_FREE_CHANNEL_URL="http://mirrors.cloud.tencent.com/anaconda/pkgs/free/"
+PROBE_TIMEOUT_SECONDS="10"
+PROBE_DETAIL_LIMIT="240"
+SITE_PROBE_TARGETS="example=https://example.com github=https://github.com python=https://www.python.org pypi=$PYPI_INDEX_URL tencent_pypi=$TENCENT_PYPI_INDEX_URL astral=$UV_INSTALL_URL pytorch_cpu=$PYTORCH_CPU_INDEX_URL conda_main=$CONDA_MAIN_CHANNEL_URL conda_forge=$CONDA_FORGE_CHANNEL_URL tencent_conda_main=$TENCENT_CONDA_MAIN_CHANNEL_URL tencent_conda_free=$TENCENT_CONDA_FREE_CHANNEL_URL"
+ENABLE_PROXY_MATRIX="1"
+ENABLE_PIP_DOWNLOAD_PROBE="1"
+PIP_DOWNLOAD_PACKAGE="sampleproject==4.0.0"
+PIP_DOWNLOAD_INDEX_URL="$PYPI_INDEX_URL"
+ENABLE_CONDA_SEARCH_PROBE="1"
+CONDA_SEARCH_CHANNEL_URL="$CONDA_FORGE_CHANNEL_BASE_URL"
+CONDA_PROBE_SPEC="python=3.10"
 OUTPUT_PATH=""
-
-usage() {
-    cat <<'EOF'
-Usage: bash tools/log_host_device_info.sh [options]
-
-Options:
-  --repo-root PATH           Override repo root shown in the log.
-  --requested-profile NAME   Record the requested runtime profile.
-  --requested-python VER     Record the requested Python version.
-    --uv-install-url URL       Override the uv installer URL probe target.
-  --output PATH              Tee the log to PATH while printing to stdout.
-  -h, --help                 Show this help message.
-
-Examples:
-  bash tools/log_host_device_info.sh --requested-profile cpu --requested-python 3.13
-  bash tools/log_host_device_info.sh --output /tmp/host-device.log
-EOF
-}
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --repo-root)
-                [[ $# -ge 2 ]] || {
-                    echo "Missing value for $1" >&2
-                    exit 2
-                }
-                REPO_ROOT="$2"
-                shift 2
-                ;;
-            --requested-profile)
-                [[ $# -ge 2 ]] || {
-                    echo "Missing value for $1" >&2
-                    exit 2
-                }
-                REQUESTED_PROFILE="$2"
-                shift 2
-                ;;
-            --requested-python)
-                [[ $# -ge 2 ]] || {
-                    echo "Missing value for $1" >&2
-                    exit 2
-                }
-                REQUESTED_PYTHON="$2"
-                shift 2
-                ;;
-            --output)
-                [[ $# -ge 2 ]] || {
-                    echo "Missing value for $1" >&2
-                    exit 2
-                }
-                OUTPUT_PATH="$2"
-                shift 2
-                ;;
-            --uv-install-url)
-                [[ $# -ge 2 ]] || {
-                    echo "Missing value for $1" >&2
-                    exit 2
-                }
-                UV_INSTALL_URL="$2"
-                shift 2
-                ;;
-            -h|--help)
-                usage
-                exit 0
-                ;;
-            *)
-                echo "Unknown argument: $1" >&2
-                usage >&2
-                exit 2
-                ;;
-        esac
-    done
-}
 
 timestamp() {
     date '+%Y-%m-%dT%H:%M:%S%z'
@@ -434,15 +364,21 @@ log_url_probe_with_mode() {
         local probe_status=0
         local http_code=""
         local probe_detail=""
+        local failure_class=""
 
         probe_output="$(run_with_proxy_mode "$proxy_mode" curl -I -L -sS --max-time "$PROBE_TIMEOUT_SECONDS" -o /dev/null -w $'\n__HTTP_CODE__=%{http_code}' "$url" 2>&1)" || probe_status=$?
         http_code="$(printf '%s\n' "$probe_output" | sed -n 's/^__HTTP_CODE__=//p' | tail -n 1)"
         probe_detail="$(printf '%s\n' "$probe_output" | sed '/^__HTTP_CODE__=/d')"
-        if [[ $probe_status -eq 0 && -n "$http_code" && "$http_code" != "000" ]]; then
+        if [[ $probe_status -eq 0 && "$http_code" =~ ^[23][0-9][0-9]$ ]]; then
             log_line "${label}_probe=reachable"
             log_line "${label}_http_code=$http_code"
         else
-            log_failed_url_probe "$label" "$host" "$probe_status" "$(classify_curl_probe_failure "$probe_status" "$probe_detail")" "$http_code" "$probe_detail"
+            if [[ $probe_status -eq 0 && -n "$http_code" && "$http_code" != "000" ]]; then
+                failure_class="http_error"
+            else
+                failure_class="$(classify_curl_probe_failure "$probe_status" "$probe_detail")"
+            fi
+            log_failed_url_probe "$label" "$host" "$probe_status" "$failure_class" "$http_code" "$probe_detail"
         fi
         return
     fi
@@ -548,29 +484,36 @@ classify_pip_download_failure() {
 
 log_pip_download_probe_with_mode() {
     local label="$1"
-    local proxy_mode="$2"
-    local pip_executable=""
+    local index_url="$2"
+    local proxy_mode="$3"
+    local pip_tool=""
     local probe_status=0
     local probe_output=""
     local temp_dir=""
+    local -a pip_command=()
 
     if command -v pip >/dev/null 2>&1; then
-        pip_executable="pip"
+        pip_tool="pip"
+        pip_command=(pip)
     elif command -v pip3 >/dev/null 2>&1; then
-        pip_executable="pip3"
+        pip_tool="pip3"
+        pip_command=(pip3)
+    elif command -v python3 >/dev/null 2>&1; then
+        pip_tool="python3 -m pip"
+        pip_command=(python3 -m pip)
     else
         log_line "${label}_probe=unavailable"
-        log_line "${label}_probe_detail=pip executable not found"
+        log_line "${label}_probe_detail=pip executable and python3 not found"
         return
     fi
 
     log_line "${label}_package=$PIP_DOWNLOAD_PACKAGE"
-    log_line "${label}_index_url=$PIP_DOWNLOAD_INDEX_URL"
-    log_line "${label}_tool=$pip_executable"
+    log_line "${label}_index_url=$index_url"
+    log_line "${label}_tool=$pip_tool"
     log_line "${label}_proxy_mode=$proxy_mode"
 
     temp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t taac-pip-probe)"
-    probe_output="$(run_with_proxy_mode "$proxy_mode" "$pip_executable" download --disable-pip-version-check --no-cache-dir --no-deps --retries 0 --timeout "$PROBE_TIMEOUT_SECONDS" --dest "$temp_dir" --index-url "$PIP_DOWNLOAD_INDEX_URL" "$PIP_DOWNLOAD_PACKAGE" 2>&1)" || probe_status=$?
+    probe_output="$(run_with_proxy_mode "$proxy_mode" "${pip_command[@]}" download --disable-pip-version-check --no-cache-dir --no-deps --retries 0 --timeout "$PROBE_TIMEOUT_SECONDS" --dest "$temp_dir" --index-url "$index_url" "$PIP_DOWNLOAD_PACKAGE" 2>&1)" || probe_status=$?
     rm -rf "$temp_dir"
 
     if [[ $probe_status -eq 0 ]]; then
@@ -590,8 +533,10 @@ log_pip_download_probes() {
     fi
 
     log_line "---- pip download probes ----"
-    log_pip_download_probe_with_mode "pip_download_inherited" inherited
-    log_pip_download_probe_with_mode "pip_download_no_proxy" no_proxy
+    log_pip_download_probe_with_mode "pip_download_inherited" "$PIP_DOWNLOAD_INDEX_URL" inherited
+    log_pip_download_probe_with_mode "pip_download_no_proxy" "$PIP_DOWNLOAD_INDEX_URL" no_proxy
+    log_pip_download_probe_with_mode "pip_download_tencent_inherited" "$TENCENT_PYPI_INDEX_URL" inherited
+    log_pip_download_probe_with_mode "pip_download_tencent_no_proxy" "$TENCENT_PYPI_INDEX_URL" no_proxy
 }
 
 classify_conda_search_failure() {
@@ -634,7 +579,8 @@ classify_conda_search_failure() {
 
 log_conda_search_probe_with_mode() {
     local label="$1"
-    local proxy_mode="$2"
+    local channel_url="$2"
+    local proxy_mode="$3"
     local conda_executable=""
     local probe_status=0
     local probe_output=""
@@ -648,11 +594,11 @@ log_conda_search_probe_with_mode() {
     fi
 
     log_line "${label}_spec=$CONDA_PROBE_SPEC"
-    log_line "${label}_channel_url=$CONDA_SEARCH_CHANNEL_URL"
+    log_line "${label}_channel_url=$channel_url"
     log_line "${label}_tool=$conda_executable"
     log_line "${label}_proxy_mode=$proxy_mode"
 
-    probe_output="$(run_with_proxy_mode "$proxy_mode" env CONDA_NO_PLUGINS=true "$conda_executable" search --json --override-channels --channel "$CONDA_SEARCH_CHANNEL_URL" "$CONDA_PROBE_SPEC" 2>&1)" || probe_status=$?
+    probe_output="$(run_with_proxy_mode "$proxy_mode" env CONDA_NO_PLUGINS=true "$conda_executable" search --json --override-channels --channel "$channel_url" "$CONDA_PROBE_SPEC" 2>&1)" || probe_status=$?
 
     if [[ $probe_status -eq 0 ]]; then
         log_line "${label}_probe=reachable"
@@ -671,8 +617,10 @@ log_conda_search_probes() {
     fi
 
     log_line "---- conda search probes ----"
-    log_conda_search_probe_with_mode "conda_search_inherited" inherited
-    log_conda_search_probe_with_mode "conda_search_no_proxy" no_proxy
+    log_conda_search_probe_with_mode "conda_search_inherited" "$CONDA_SEARCH_CHANNEL_URL" inherited
+    log_conda_search_probe_with_mode "conda_search_no_proxy" "$CONDA_SEARCH_CHANNEL_URL" no_proxy
+    log_conda_search_probe_with_mode "conda_search_tencent_main_inherited" "$TENCENT_CONDA_MAIN_CHANNEL_URL" inherited
+    log_conda_search_probe_with_mode "conda_search_tencent_main_no_proxy" "$TENCENT_CONDA_MAIN_CHANNEL_URL" no_proxy
 }
 
 pytorch_index_url_for_profile() {
@@ -705,8 +653,11 @@ log_uv_bootstrap_status() {
 log_dependency_index_status() {
     log_line "---- dependency indexes ----"
     log_url_probe "pypi_index" "$PYPI_INDEX_URL"
+    log_url_probe "tencent_pypi_index" "$TENCENT_PYPI_INDEX_URL"
     log_url_probe "conda_main_channel" "$CONDA_MAIN_CHANNEL_URL"
     log_url_probe "conda_forge_channel" "$CONDA_FORGE_CHANNEL_URL"
+    log_url_probe "tencent_conda_main_channel" "$TENCENT_CONDA_MAIN_CHANNEL_URL"
+    log_url_probe "tencent_conda_free_channel" "$TENCENT_CONDA_FREE_CHANNEL_URL"
 
     if [[ -n "$REQUESTED_PROFILE" ]]; then
         local requested_url
@@ -743,7 +694,6 @@ log_build_tools() {
 }
 
 main() {
-    parse_args "$@"
     start_capture
 
     log_line "==== Host and device information ===="
@@ -783,4 +733,4 @@ main() {
     log_python_packages
 }
 
-main "$@"
+main
