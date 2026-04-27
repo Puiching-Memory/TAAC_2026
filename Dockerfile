@@ -3,6 +3,7 @@
 ARG BASE_IMAGE=nvidia/cuda:12.8.0-devel-ubuntu24.04
 FROM ${BASE_IMAGE} AS base
 
+ARG BASE_IMAGE
 ARG PYTHON_VERSION=3.13
 ARG UV_EXTRA=cuda128
 ARG ENABLE_TE=0
@@ -11,7 +12,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/root/.local/bin:${PATH} \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_LINK_MODE=copy \
-    HF_HOME=/root/.cache/huggingface
+    HF_HOME=/root/.cache/huggingface \
+    BASE_IMAGE=${BASE_IMAGE} \
+    IMAGE_BASE_NAME=${BASE_IMAGE} \
+    PYTHON_VERSION=${PYTHON_VERSION} \
+    UV_EXTRA=${UV_EXTRA}
 
 WORKDIR /workspace
 
