@@ -65,7 +65,7 @@ bash run.sh val --experiment config/baseline \
     --run-dir outputs/config/baseline \
     --device cpu
 
-bash run.sh package --experiment config/baseline --force
+uv run taac-package-train --experiment config/baseline --force
 uv run pytest tests/unit -q
 ```
 

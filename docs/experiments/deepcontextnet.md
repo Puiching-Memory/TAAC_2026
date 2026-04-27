@@ -54,7 +54,7 @@ bash run.sh val --experiment config/deepcontextnet \
 ## 打包
 
 ```bash
-bash run.sh package --experiment config/deepcontextnet \
+uv run taac-package-train --experiment config/deepcontextnet \
 	--output-dir outputs/training_bundles/deepcontextnet_training_bundle \
 	--force
 ```

@@ -35,9 +35,13 @@ TAAC_2026/
 | `train`        | 调用 `taac2026.application.training.cli`          |
 | `val` / `eval` | 调用 `taac2026.application.evaluation.cli single` |
 | `infer`        | 调用 `taac2026.application.evaluation.cli infer`  |
-| `package`      | 调用 `taac-package-train` 生成线上双文件 bundle   |
 
 测试统一直接通过 `uv run pytest ...` 执行，不再通过 `run.sh` 入口转发。
+
+打包不再由 `run.sh` 承担，统一使用维护命令：
+
+- `uv run taac-package-train`
+- `uv run taac-package-infer`
 
 同一个脚本有两种模式：
 
@@ -183,6 +187,16 @@ bash run.sh val --experiment config/baseline \
 ```
 
 `code_package.zip` 内只包含共享 runtime、`pyproject.toml`、`uv.lock`、顶层 `config/__init__.py` 和选中的实验包。平台执行 `run.sh` 后默认用 `python`，不会在线 `uv sync`。
+
+推理上传则使用 `taac-package-infer` 生成：
+
+```text
+<inference_bundle>/
+├── infer.py
+└── code_package.zip
+```
+
+顶层 `infer.py` 会在 `EVAL_INFER_PATH` 目录下解压旁边的 `code_package.zip`，设置 `sys.path` 并转调 `taac2026.application.evaluation.infer`。这样可以满足官方“主入口必须是 infer.py”的契约，同时继续复用仓库内共享的推理 runtime。
 
 ## 当前边界
 

@@ -39,3 +39,35 @@ def test_run_sh_rejects_test_subcommand(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert result.stdout == ""
     assert "run.sh no longer supports 'test'; use 'uv run pytest ...' directly" in result.stderr
+
+
+def test_run_sh_rejects_package_infer_subcommand(tmp_path: Path) -> None:
+    project_dir = _prepare_project(tmp_path)
+
+    result = subprocess.run(
+        ["bash", "run.sh", "package-infer", "--help"],
+        cwd=project_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr == "unknown command: package-infer\n"
+
+
+def test_run_sh_rejects_package_subcommand(tmp_path: Path) -> None:
+    project_dir = _prepare_project(tmp_path)
+
+    result = subprocess.run(
+        ["bash", "run.sh", "package", "--help"],
+        cwd=project_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr == "unknown command: package\n"

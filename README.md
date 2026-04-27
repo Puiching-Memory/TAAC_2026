@@ -83,7 +83,10 @@ bash run.sh val --experiment config/baseline \
 
 ```bash
 # 生成线上训练上传文件
-bash run.sh package --experiment config/baseline
+uv run taac-package-train --experiment config/baseline
+
+# 生成线上推理上传文件
+uv run taac-package-infer --experiment config/baseline
 
 # 跑完整训练栈回归
 uv run pytest tests -q
@@ -103,7 +106,7 @@ uv run pytest tests -q
 | UniRec         | [config/unirec](config/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     |
 | UniScaleFormer | [config/uniscaleformer](config/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             |
 
-更详细的训练命令、线上训练打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。
+更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。
 
 ------
 

@@ -191,7 +191,7 @@ bash run.sh train --experiment config/my_experiment \
 打包 smoke：
 
 ```bash
-bash run.sh package --experiment config/my_experiment \
+uv run taac-package-train --experiment config/my_experiment \
     --output-dir outputs/training_bundles/my_experiment_training_bundle \
     --force
 

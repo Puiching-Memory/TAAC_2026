@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -31,6 +33,54 @@ from taac2026.infrastructure.pcvr.training import train_pcvr_model
 
 
 _PLUGIN_MODULE_NAMES = ("utils", "model")
+_INFER_REQUEST_DEFAULT_BATCH_SIZE = int(InferRequest.__dataclass_fields__["batch_size"].default)
+_INFER_REQUEST_DEFAULT_NUM_WORKERS = int(InferRequest.__dataclass_fields__["num_workers"].default)
+_PREDICTION_PROGRESS_LOG_EVERY_ROWS = 50_000
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_flag_value(args: tuple[str, ...], flag_names: tuple[str, ...]) -> str | None:
+    index = 0
+    while index < len(args):
+        token = args[index]
+        has_value = index + 1 < len(args) and not args[index + 1].startswith("--")
+        if token in flag_names:
+            return args[index + 1] if has_value else None
+        if token.startswith("--") and has_value:
+            index += 2
+        else:
+            index += 1
+    return None
+
+
+def _log_prediction_progress(
+    *,
+    mode: str,
+    processed_rows: int,
+    total_rows: int,
+    batch_index: int,
+    total_batches: int,
+    elapsed_seconds: float,
+) -> None:
+    progress = 100.0 * processed_rows / total_rows if total_rows > 0 else 0.0
+    logging.info(
+        "PCVR %s progress: %d/%d rows (%.1f%%), batch %d/%d, elapsed=%.1fs",
+        mode,
+        processed_rows,
+        total_rows,
+        progress,
+        batch_index,
+        total_batches,
+        elapsed_seconds,
+    )
 
 
 @dataclass(slots=True)
@@ -147,16 +197,31 @@ class PCVRExperiment:
             checkpoint = resolve_checkpoint_path(checkpoint_root)
         if checkpoint is None:
             checkpoint = resolve_checkpoint_path(Path.cwd())
+        config = self._load_train_config(checkpoint.parent)
+        effective_batch_size, batch_size_source, effective_num_workers, num_workers_source = self._resolve_infer_runtime_settings(
+            request,
+            config,
+        )
+        logging.info(
+            "Resolved PCVR inference runtime: experiment=%s, checkpoint=%s, batch_size=%d (%s), num_workers=%d (%s)",
+            self.name,
+            checkpoint,
+            effective_batch_size,
+            batch_size_source,
+            effective_num_workers,
+            num_workers_source,
+        )
 
         with self._module_context():
             evaluation = self._run_prediction_loop(
                 dataset_path=request.dataset_path,
                 schema_path=request.schema_path,
                 checkpoint_path=checkpoint,
-                batch_size=request.batch_size,
-                num_workers=request.num_workers,
+                batch_size=effective_batch_size,
+                num_workers=effective_num_workers,
                 device=request.device,
                 is_training_data=False,
+                config=config,
             )
 
         prediction_map = {
@@ -170,7 +235,60 @@ class PCVRExperiment:
             "checkpoint_path": str(checkpoint),
             "predictions_path": str(output_path),
             "prediction_count": len(prediction_map),
+            "batch_size": effective_batch_size,
+            "num_workers": effective_num_workers,
         }
+
+    def _configured_infer_runtime_value(
+        self,
+        config: dict[str, Any],
+        *,
+        config_key: str,
+        flag_names: tuple[str, ...],
+        minimum: int,
+    ) -> tuple[int | None, str | None]:
+        configured_value = _coerce_optional_int(config.get(config_key))
+        if configured_value is not None and configured_value >= minimum:
+            return configured_value, "train_config"
+
+        default_arg_value = _coerce_optional_int(_read_flag_value(self.default_train_args, flag_names))
+        if default_arg_value is not None and default_arg_value >= minimum:
+            return default_arg_value, "experiment_default_train_args"
+
+        return None, None
+
+    def _resolve_infer_runtime_settings(
+        self,
+        request: InferRequest,
+        config: dict[str, Any],
+    ) -> tuple[int, str, int, str]:
+        batch_size = int(request.batch_size)
+        batch_size_source = "request" if request.batch_size != _INFER_REQUEST_DEFAULT_BATCH_SIZE else "cli_default"
+        if batch_size_source == "cli_default":
+            configured_batch_size, configured_batch_size_source = self._configured_infer_runtime_value(
+                config,
+                config_key="batch_size",
+                flag_names=("--batch_size", "--batch-size"),
+                minimum=1,
+            )
+            if configured_batch_size is not None and configured_batch_size_source is not None:
+                batch_size = configured_batch_size
+                batch_size_source = configured_batch_size_source
+
+        num_workers = int(request.num_workers)
+        num_workers_source = "request" if request.num_workers != _INFER_REQUEST_DEFAULT_NUM_WORKERS else "cli_default"
+        if num_workers_source == "cli_default":
+            configured_num_workers, configured_num_workers_source = self._configured_infer_runtime_value(
+                config,
+                config_key="num_workers",
+                flag_names=("--num_workers", "--num-workers"),
+                minimum=0,
+            )
+            if configured_num_workers is not None and configured_num_workers_source is not None:
+                num_workers = configured_num_workers
+                num_workers_source = configured_num_workers_source
+
+        return batch_size, batch_size_source, num_workers, num_workers_source
 
     def _run_prediction_loop(
         self,
@@ -182,12 +300,13 @@ class PCVRExperiment:
         num_workers: int,
         device: str,
         is_training_data: bool,
+        config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         import model as model_module
 
         resolved_schema_path = self._resolve_schema_path(dataset_path, schema_path, checkpoint_path.parent)
-        config = self._load_train_config(checkpoint_path.parent)
-        seq_max_lens = parse_seq_max_lens(str(config.get("seq_max_lens", "")))
+        resolved_config = config if config is not None else self._load_train_config(checkpoint_path.parent)
+        seq_max_lens = parse_seq_max_lens(str(resolved_config.get("seq_max_lens", "")))
         dataset = pcvr_data.PCVRParquetDataset(
             parquet_path=str(dataset_path.expanduser().resolve()),
             schema_path=str(resolved_schema_path),
@@ -205,7 +324,7 @@ class PCVRExperiment:
             model_class_name=self.model_class_name,
             data_module=pcvr_data,
             dataset=dataset,
-            config=config,
+            config=resolved_config,
             package_dir=self.package_dir,
             checkpoint_dir=checkpoint_path.parent,
         )
@@ -215,11 +334,30 @@ class PCVRExperiment:
         model.load_state_dict(state_dict)
         model.eval()
 
+        mode = "evaluation" if is_training_data else "inference"
+        total_rows = int(getattr(dataset, "num_rows", 0))
+        total_batches = (total_rows + batch_size - 1) // batch_size if total_rows > 0 else 0
+        logging.info(
+            "PCVR %s loop starting: checkpoint=%s, rows=%d, estimated_batches=%d, batch_size=%d, num_workers=%d, device=%s",
+            mode,
+            checkpoint_path,
+            total_rows,
+            total_batches,
+            batch_size,
+            num_workers,
+            device,
+        )
+
         labels: list[float] = []
         probabilities: list[float] = []
         records: list[dict[str, Any]] = []
+        processed_rows = 0
+        batch_count = 0
+        progress_log_every_rows = max(_PREDICTION_PROGRESS_LOG_EVERY_ROWS, batch_size)
+        next_progress_log_rows = progress_log_every_rows
+        started_at = time.perf_counter()
         with torch.no_grad():
-            for batch in loader:
+            for batch_count, batch in enumerate(loader, start=1):
                 model_input = batch_to_model_input(batch, model_module.ModelInput, runtime_device)
                 logits, _embeddings = model.predict(model_input)
                 batch_probabilities = torch.sigmoid(logits.squeeze(-1)).detach().cpu().numpy()
@@ -244,6 +382,25 @@ class PCVRExperiment:
                             "timestamp": timestamp_values[row_index],
                         }
                     )
+                processed_rows += len(batch_probabilities)
+                if total_rows > 0 and processed_rows >= next_progress_log_rows:
+                    _log_prediction_progress(
+                        mode=mode,
+                        processed_rows=processed_rows,
+                        total_rows=total_rows,
+                        batch_index=batch_count,
+                        total_batches=total_batches,
+                        elapsed_seconds=time.perf_counter() - started_at,
+                    )
+                    while next_progress_log_rows <= processed_rows:
+                        next_progress_log_rows += progress_log_every_rows
+        logging.info(
+            "PCVR %s loop completed: rows=%d, batches=%d, elapsed=%.1fs",
+            mode,
+            processed_rows,
+            batch_count,
+            time.perf_counter() - started_at,
+        )
         return {"labels": labels, "probabilities": probabilities, "records": records}
 
     def _load_train_config(self, checkpoint_dir: Path) -> dict[str, Any]:

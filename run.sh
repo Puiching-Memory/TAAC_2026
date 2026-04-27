@@ -194,13 +194,17 @@ run_console_script() {
 COMMAND="train"
 if [[ $# -gt 0 ]]; then
 	case "$1" in
-		train|val|eval|infer|package)
+		train|val|eval|infer)
 			COMMAND="$1"
 			shift
 			;;
 		test)
 			echo "run.sh no longer supports 'test'; use 'uv run pytest ...' directly" >&2
 			exit 2
+			;;
+		*)
+			COMMAND="$1"
+			shift
 			;;
 	esac
 fi
@@ -261,11 +265,6 @@ case "${COMMAND}" in
 			INFER_ARGS+=(--result-dir "${RESULT_DIR}")
 		fi
 		run_console_script taac-evaluate taac2026.application.evaluation.cli "${INFER_ARGS[@]}" "${REMAINING_ARGS[@]}"
-		;;
-	package)
-		extract_cuda_profile "${SUPPORTED_CUDA_PROFILE}" "$@"
-		sync_runtime "${CUDA_PROFILE}"
-		run_console_script taac-package-train taac2026.application.maintenance.package_training "${REMAINING_ARGS[@]}"
 		;;
 	*)
 		echo "unknown command: ${COMMAND}" >&2

@@ -64,7 +64,7 @@ bash run.sh val --experiment config/symbiosis \
 ## 线上打包
 
 ```bash
-bash run.sh package --experiment config/symbiosis \
+uv run taac-package-train --experiment config/symbiosis \
     --output-dir outputs/training_bundles/symbiosis_training_bundle \
     --force
 ```

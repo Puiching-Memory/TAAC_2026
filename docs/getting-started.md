@@ -136,13 +136,13 @@ bash run.sh train --experiment config/onetrans \
 生成 baseline bundle：
 
 ```bash
-bash run.sh package --experiment config/baseline --force
+uv run taac-package-train --experiment config/baseline --force
 ```
 
 自定义输出目录：
 
 ```bash
-bash run.sh package --experiment config/interformer \
+uv run taac-package-train --experiment config/interformer \
     --output-dir outputs/training_bundles/interformer_training_bundle \
     --force
 ```
@@ -196,6 +196,6 @@ uv run --no-project --isolated --with zensical zensical build --clean
 | `bash run.sh val`           | 评估单个实验/单个 checkpoint                |
 | `bash run.sh infer`         | 生成推理结果                                |
 | `uv run pytest`            | 运行 pytest                                 |
-| `bash run.sh package`       | 生成 `run.sh` + `code_package.zip` 上传目录 |
 | `uv run taac-search`        | 记录搜索请求 JSON                           |
-| `uv run taac-package-train` | 直接调用训练打包 CLI                        |
+| `uv run taac-package-train` | 生成 `run.sh` + `code_package.zip` 上传目录 |
+| `uv run taac-package-infer` | 生成 `infer.py` + `code_package.zip` 上传目录 |

@@ -53,7 +53,7 @@ bash run.sh val --experiment config/<name> \
 ## 打包任意实验包
 
 ```bash
-bash run.sh package --experiment config/<name> \
+uv run taac-package-train --experiment config/<name> \
     --output-dir outputs/training_bundles/<name>_training_bundle \
     --force
 ```
