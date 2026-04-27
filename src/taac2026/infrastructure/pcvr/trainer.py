@@ -20,7 +20,13 @@ from tqdm import tqdm
 
 from taac2026.infrastructure.checkpoints import build_checkpoint_dir_name, write_checkpoint_sidecars
 from taac2026.infrastructure.pcvr.protocol import batch_to_model_input
-from taac2026.infrastructure.training.runtime import EarlyStopping, sigmoid_focal_loss
+from taac2026.infrastructure.training.runtime import (
+    EarlyStopping,
+    RuntimeExecutionConfig,
+    create_grad_scaler,
+    maybe_compile_callable,
+    sigmoid_focal_loss,
+)
 
 
 def _use_interactive_progress() -> bool:
@@ -69,6 +75,7 @@ class PCVRPointwiseTrainer:
         ns_groups_path: str | Path | None = None,
         eval_every_n_steps: int = 0,
         train_config: dict[str, Any] | None = None,
+        runtime_execution: RuntimeExecutionConfig | None = None,
     ) -> None:
         self.model = model
         self.model_input_type = model_input_type
@@ -119,6 +126,18 @@ class PCVRPointwiseTrainer:
         self.device = device
         self.save_dir = Path(save_dir).expanduser().resolve()
         self.early_stopping = early_stopping
+        self.runtime_execution = runtime_execution or RuntimeExecutionConfig()
+        self.forward_model = maybe_compile_callable(
+            self.model,
+            enabled=self.runtime_execution.compile,
+            label="PCVR training forward",
+        )
+        self.predict_fn = maybe_compile_callable(
+            self.model.predict,
+            enabled=self.runtime_execution.compile,
+            label="PCVR trainer predict",
+        )
+        self.grad_scaler = create_grad_scaler(self.runtime_execution, self.device)
         self.loss_type = loss_type
         self.focal_alpha = focal_alpha
         self.focal_gamma = focal_gamma
@@ -138,6 +157,7 @@ class PCVRPointwiseTrainer:
             focal_gamma,
             reinit_sparse_after_epoch,
         )
+        logging.info("PCVRPointwiseTrainer runtime: %s", self.runtime_execution.summary(self.device))
 
     def _build_step_dir_name(self, global_step: int, is_best: bool = False) -> str:
         return build_checkpoint_dir_name(global_step, self.ckpt_params, is_best=is_best)
@@ -345,18 +365,32 @@ class PCVRPointwiseTrainer:
             self.sparse_optimizer.zero_grad()
 
         model_input = self._make_model_input(device_batch)
-        logits = self.model(model_input).squeeze(-1)
+        with self.runtime_execution.autocast_context(self.device):
+            logits = self.forward_model(model_input).squeeze(-1)
 
-        if self.loss_type == "focal":
-            loss = sigmoid_focal_loss(logits, label, alpha=self.focal_alpha, gamma=self.focal_gamma)
+            if self.loss_type == "focal":
+                loss = sigmoid_focal_loss(logits, label, alpha=self.focal_alpha, gamma=self.focal_gamma)
+            else:
+                loss = F.binary_cross_entropy_with_logits(logits, label)
+
+        if self.grad_scaler is not None:
+            self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.unscale_(self.dense_optimizer)
+            if self.sparse_optimizer is not None:
+                self.grad_scaler.unscale_(self.sparse_optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, foreach=False)
+
+            self.grad_scaler.step(self.dense_optimizer)
+            if self.sparse_optimizer is not None:
+                self.grad_scaler.step(self.sparse_optimizer)
+            self.grad_scaler.update()
         else:
-            loss = F.binary_cross_entropy_with_logits(logits, label)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, foreach=False)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, foreach=False)
 
-        self.dense_optimizer.step()
-        if self.sparse_optimizer is not None:
-            self.sparse_optimizer.step()
+            self.dense_optimizer.step()
+            if self.sparse_optimizer is not None:
+                self.sparse_optimizer.step()
 
         return loss.item()
 
@@ -430,7 +464,8 @@ class PCVRPointwiseTrainer:
         label = device_batch["label"]
 
         model_input = self._make_model_input(device_batch)
-        logits, _embeddings = self.model.predict(model_input)
+        with self.runtime_execution.autocast_context(self.device):
+            logits, _embeddings = self.predict_fn(model_input)
         logits = logits.squeeze(-1)
 
         return logits, label

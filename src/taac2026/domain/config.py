@@ -27,6 +27,9 @@ class EvalRequest:
     batch_size: int = 256
     num_workers: int = 0
     device: str = "cpu"
+    amp: bool | None = None
+    amp_dtype: str | None = None
+    compile: bool | None = None
     is_training_data: bool = True
     extra_args: tuple[str, ...] = ()
 
@@ -41,6 +44,9 @@ class InferRequest:
     batch_size: int = 256
     num_workers: int = 0
     device: str = "cpu"
+    amp: bool | None = None
+    amp_dtype: str | None = None
+    compile: bool | None = None
 
 
 def experiment_slug(value: str) -> str:

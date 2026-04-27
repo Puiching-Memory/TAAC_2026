@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 import logging
 import os
 import random
@@ -15,6 +17,86 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
+_AMP_DTYPE_ALIASES = {
+    "bf16": "bfloat16",
+    "bfloat16": "bfloat16",
+    "fp16": "float16",
+    "float16": "float16",
+    "half": "float16",
+}
+
+
+def normalize_amp_dtype(value: str | None) -> str:
+    if value is None:
+        return "bfloat16"
+    normalized = str(value).strip().lower()
+    try:
+        return _AMP_DTYPE_ALIASES[normalized]
+    except KeyError as error:
+        raise ValueError(f"unsupported amp dtype: {value}") from error
+
+
+def amp_dtype_to_torch_dtype(value: str | None) -> torch.dtype:
+    normalized = normalize_amp_dtype(value)
+    if normalized == "bfloat16":
+        return torch.bfloat16
+    return torch.float16
+
+
+def _device_type(device: str | torch.device) -> str:
+    return device.type if isinstance(device, torch.device) else torch.device(device).type
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeExecutionConfig:
+    amp: bool = False
+    amp_dtype: str = "bfloat16"
+    compile: bool = False
+
+    def normalized_amp_dtype(self) -> str:
+        return normalize_amp_dtype(self.amp_dtype)
+
+    def torch_amp_dtype(self) -> torch.dtype:
+        return amp_dtype_to_torch_dtype(self.amp_dtype)
+
+    def amp_enabled_for(self, device: str | torch.device) -> bool:
+        return self.amp and _device_type(device) == "cuda" and torch.cuda.is_available()
+
+    def grad_scaler_enabled_for(self, device: str | torch.device) -> bool:
+        return self.amp_enabled_for(device) and self.torch_amp_dtype() == torch.float16
+
+    def autocast_context(self, device: str | torch.device) -> AbstractContextManager[None]:
+        if not self.amp_enabled_for(device):
+            return nullcontext()
+        return torch.autocast(device_type="cuda", dtype=self.torch_amp_dtype())
+
+    def summary(self, device: str | torch.device) -> str:
+        return (
+            f"amp={self.amp} (effective={self.amp_enabled_for(device)}), "
+            f"amp_dtype={self.normalized_amp_dtype()}, compile={self.compile}"
+        )
+
+
+def create_grad_scaler(
+    runtime_execution: RuntimeExecutionConfig,
+    device: str | torch.device,
+) -> torch.amp.GradScaler | None:
+    if not runtime_execution.grad_scaler_enabled_for(device):
+        return None
+    return torch.amp.GradScaler(device="cuda", enabled=True)
+
+
+def maybe_compile_callable(callable_obj, *, enabled: bool, label: str):
+    if not enabled:
+        return callable_obj
+    try:
+        return torch.compile(callable_obj)
+    except Exception as error:  # pragma: no cover - exercised via monkeypatched tests.
+        logging.warning("Failed to compile %s; falling back to eager execution: %s", label, error)
+        return callable_obj
 
 
 class LogFormatter(logging.Formatter):

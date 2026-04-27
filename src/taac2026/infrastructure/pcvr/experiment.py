@@ -30,6 +30,7 @@ from taac2026.infrastructure.pcvr.protocol import (
     resolve_schema_path,
 )
 from taac2026.infrastructure.pcvr.training import train_pcvr_model
+from taac2026.infrastructure.training.runtime import RuntimeExecutionConfig, maybe_compile_callable, normalize_amp_dtype
 
 
 _PLUGIN_MODULE_NAMES = ("utils", "model")
@@ -59,6 +60,20 @@ def _read_flag_value(args: tuple[str, ...], flag_names: tuple[str, ...]) -> str 
         else:
             index += 1
     return None
+
+
+def _read_bool_flag_value(
+    args: tuple[str, ...],
+    enabled_flags: tuple[str, ...],
+    disabled_flags: tuple[str, ...],
+) -> bool | None:
+    resolved: bool | None = None
+    for token in args:
+        if token in enabled_flags:
+            resolved = True
+        elif token in disabled_flags:
+            resolved = False
+    return resolved
 
 
 def _log_prediction_progress(
@@ -156,16 +171,42 @@ class PCVRExperiment:
         checkpoint = resolve_checkpoint_path(request.run_dir, request.checkpoint_path)
         output_path = request.output_path or (request.run_dir / "evaluation.json")
         predictions_path = request.predictions_path or (request.run_dir / "validation_predictions.jsonl")
+        config = self._load_train_config(checkpoint.parent)
+        effective_batch_size, batch_size_source, effective_num_workers, num_workers_source = self._resolve_prediction_runtime_settings(
+            request,
+            config,
+        )
+        runtime_execution, amp_source, amp_dtype_source, compile_source = self._resolve_prediction_runtime_execution(
+            request,
+            config,
+        )
+        logging.info(
+            "Resolved PCVR evaluation runtime: experiment=%s, checkpoint=%s, batch_size=%d (%s), num_workers=%d (%s), amp=%s (%s), amp_dtype=%s (%s), compile=%s (%s)",
+            self.name,
+            checkpoint,
+            effective_batch_size,
+            batch_size_source,
+            effective_num_workers,
+            num_workers_source,
+            runtime_execution.amp,
+            amp_source,
+            runtime_execution.normalized_amp_dtype(),
+            amp_dtype_source,
+            runtime_execution.compile,
+            compile_source,
+        )
 
         with self._module_context():
             evaluation = self._run_prediction_loop(
                 dataset_path=request.dataset_path,
                 schema_path=request.schema_path,
                 checkpoint_path=checkpoint,
-                batch_size=request.batch_size,
-                num_workers=request.num_workers,
+                batch_size=effective_batch_size,
+                num_workers=effective_num_workers,
                 device=request.device,
                 is_training_data=request.is_training_data,
+                config=config,
+                runtime_execution=runtime_execution,
             )
 
         labels = np.asarray(evaluation["labels"], dtype=np.float64)
@@ -198,18 +239,28 @@ class PCVRExperiment:
         if checkpoint is None:
             checkpoint = resolve_checkpoint_path(Path.cwd())
         config = self._load_train_config(checkpoint.parent)
-        effective_batch_size, batch_size_source, effective_num_workers, num_workers_source = self._resolve_infer_runtime_settings(
+        effective_batch_size, batch_size_source, effective_num_workers, num_workers_source = self._resolve_prediction_runtime_settings(
+            request,
+            config,
+        )
+        runtime_execution, amp_source, amp_dtype_source, compile_source = self._resolve_prediction_runtime_execution(
             request,
             config,
         )
         logging.info(
-            "Resolved PCVR inference runtime: experiment=%s, checkpoint=%s, batch_size=%d (%s), num_workers=%d (%s)",
+            "Resolved PCVR inference runtime: experiment=%s, checkpoint=%s, batch_size=%d (%s), num_workers=%d (%s), amp=%s (%s), amp_dtype=%s (%s), compile=%s (%s)",
             self.name,
             checkpoint,
             effective_batch_size,
             batch_size_source,
             effective_num_workers,
             num_workers_source,
+            runtime_execution.amp,
+            amp_source,
+            runtime_execution.normalized_amp_dtype(),
+            amp_dtype_source,
+            runtime_execution.compile,
+            compile_source,
         )
 
         with self._module_context():
@@ -222,6 +273,7 @@ class PCVRExperiment:
                 device=request.device,
                 is_training_data=False,
                 config=config,
+                runtime_execution=runtime_execution,
             )
 
         prediction_map = {
@@ -257,9 +309,9 @@ class PCVRExperiment:
 
         return None, None
 
-    def _resolve_infer_runtime_settings(
+    def _resolve_prediction_runtime_settings(
         self,
-        request: InferRequest,
+        request: EvalRequest | InferRequest,
         config: dict[str, Any],
     ) -> tuple[int, str, int, str]:
         batch_size = int(request.batch_size)
@@ -290,6 +342,88 @@ class PCVRExperiment:
 
         return batch_size, batch_size_source, num_workers, num_workers_source
 
+    def _resolve_infer_runtime_settings(
+        self,
+        request: InferRequest,
+        config: dict[str, Any],
+    ) -> tuple[int, str, int, str]:
+        return self._resolve_prediction_runtime_settings(request, config)
+
+    def _configured_runtime_flag(
+        self,
+        request_value: bool | None,
+        config: dict[str, Any],
+        *,
+        config_key: str,
+        enabled_flags: tuple[str, ...],
+        disabled_flags: tuple[str, ...],
+        default: bool,
+    ) -> tuple[bool, str]:
+        if request_value is not None:
+            return bool(request_value), "request"
+
+        configured_value = config.get(config_key)
+        if isinstance(configured_value, bool):
+            return configured_value, "train_config"
+
+        default_arg_value = _read_bool_flag_value(self.default_train_args, enabled_flags, disabled_flags)
+        if default_arg_value is not None:
+            return default_arg_value, "experiment_default_train_args"
+
+        return default, "default"
+
+    def _configured_runtime_string(
+        self,
+        request_value: str | None,
+        config: dict[str, Any],
+        *,
+        config_key: str,
+        flag_names: tuple[str, ...],
+        default: str,
+    ) -> tuple[str, str]:
+        if request_value not in (None, ""):
+            return normalize_amp_dtype(request_value), "request"
+
+        configured_value = config.get(config_key)
+        if isinstance(configured_value, str) and configured_value.strip():
+            return normalize_amp_dtype(configured_value), "train_config"
+
+        default_arg_value = _read_flag_value(self.default_train_args, flag_names)
+        if default_arg_value not in (None, ""):
+            return normalize_amp_dtype(default_arg_value), "experiment_default_train_args"
+
+        return normalize_amp_dtype(default), "default"
+
+    def _resolve_prediction_runtime_execution(
+        self,
+        request: EvalRequest | InferRequest,
+        config: dict[str, Any],
+    ) -> tuple[RuntimeExecutionConfig, str, str, str]:
+        amp, amp_source = self._configured_runtime_flag(
+            getattr(request, "amp", None),
+            config,
+            config_key="amp",
+            enabled_flags=("--amp",),
+            disabled_flags=("--no-amp",),
+            default=False,
+        )
+        amp_dtype, amp_dtype_source = self._configured_runtime_string(
+            getattr(request, "amp_dtype", None),
+            config,
+            config_key="amp_dtype",
+            flag_names=("--amp_dtype", "--amp-dtype"),
+            default="bfloat16",
+        )
+        compile_enabled, compile_source = self._configured_runtime_flag(
+            getattr(request, "compile", None),
+            config,
+            config_key="compile",
+            enabled_flags=("--compile",),
+            disabled_flags=("--no-compile",),
+            default=False,
+        )
+        return RuntimeExecutionConfig(amp=amp, amp_dtype=amp_dtype, compile=compile_enabled), amp_source, amp_dtype_source, compile_source
+
     def _run_prediction_loop(
         self,
         *,
@@ -301,6 +435,7 @@ class PCVRExperiment:
         device: str,
         is_training_data: bool,
         config: dict[str, Any] | None = None,
+        runtime_execution: RuntimeExecutionConfig | None = None,
     ) -> dict[str, Any]:
         import model as model_module
 
@@ -329,16 +464,22 @@ class PCVRExperiment:
             checkpoint_dir=checkpoint_path.parent,
         )
         runtime_device = torch.device(device)
+        resolved_runtime_execution = runtime_execution or RuntimeExecutionConfig()
         model.to(runtime_device)
         state_dict = torch.load(checkpoint_path, map_location=runtime_device)
         model.load_state_dict(state_dict)
         model.eval()
+        predict_fn = maybe_compile_callable(
+            model.predict,
+            enabled=resolved_runtime_execution.compile,
+            label=f"PCVR {'evaluation' if is_training_data else 'inference'} predict",
+        )
 
         mode = "evaluation" if is_training_data else "inference"
         total_rows = int(getattr(dataset, "num_rows", 0))
         total_batches = (total_rows + batch_size - 1) // batch_size if total_rows > 0 else 0
         logging.info(
-            "PCVR %s loop starting: checkpoint=%s, rows=%d, estimated_batches=%d, batch_size=%d, num_workers=%d, device=%s",
+            "PCVR %s loop starting: checkpoint=%s, rows=%d, estimated_batches=%d, batch_size=%d, num_workers=%d, device=%s, runtime=%s",
             mode,
             checkpoint_path,
             total_rows,
@@ -346,6 +487,7 @@ class PCVRExperiment:
             batch_size,
             num_workers,
             device,
+            resolved_runtime_execution.summary(runtime_device),
         )
 
         labels: list[float] = []
@@ -359,7 +501,8 @@ class PCVRExperiment:
         with torch.no_grad():
             for batch_count, batch in enumerate(loader, start=1):
                 model_input = batch_to_model_input(batch, model_module.ModelInput, runtime_device)
-                logits, _embeddings = model.predict(model_input)
+                with resolved_runtime_execution.autocast_context(runtime_device):
+                    logits, _embeddings = predict_fn(model_input)
                 batch_probabilities = torch.sigmoid(logits.squeeze(-1)).detach().cpu().numpy()
                 batch_labels = batch["label"].detach().cpu().numpy() if "label" in batch else np.zeros_like(batch_probabilities)
                 batch_user_ids = batch.get("user_id", list(range(len(batch_probabilities))))

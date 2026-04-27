@@ -20,7 +20,13 @@ from taac2026.infrastructure.pcvr.protocol import (
     resolve_schema_path,
 )
 from taac2026.infrastructure.pcvr.trainer import PCVRPointwiseTrainer
-from taac2026.infrastructure.training.runtime import EarlyStopping, create_logger, set_seed
+from taac2026.infrastructure.training.runtime import (
+    AMP_DTYPE_CHOICES,
+    EarlyStopping,
+    RuntimeExecutionConfig,
+    create_logger,
+    set_seed,
+)
 
 
 def parse_pcvr_train_args(
@@ -42,6 +48,15 @@ def parse_pcvr_train_args(
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--amp_dtype",
+        "--amp-dtype",
+        dest="amp_dtype",
+        default="bfloat16",
+        choices=AMP_DTYPE_CHOICES,
+    )
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=False)
 
     parser.add_argument("--num_workers", type=int, default=16)
     parser.add_argument("--buffer_batches", type=int, default=20)
@@ -125,6 +140,12 @@ def train_pcvr_model(
     create_logger(log_dir / "train.log")
     config = vars(args).copy()
     logging.info("Args: %s", config)
+    runtime_execution = RuntimeExecutionConfig(
+        amp=bool(args.amp),
+        amp_dtype=str(args.amp_dtype),
+        compile=bool(args.compile),
+    )
+    logging.info("Resolved PCVR training runtime: %s", runtime_execution.summary(args.device))
 
     from torch.utils.tensorboard import SummaryWriter
 
@@ -215,6 +236,7 @@ def train_pcvr_model(
             ns_groups_path=resolved_ns_groups_path,
             eval_every_n_steps=args.eval_every_n_steps,
             train_config=config,
+            runtime_execution=runtime_execution,
         )
         trainer.train()
     finally:

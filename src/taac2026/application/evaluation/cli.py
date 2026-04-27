@@ -11,10 +11,17 @@ import torch
 
 from taac2026.domain.config import EvalRequest, InferRequest, default_run_dir
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.training.runtime import AMP_DTYPE_CHOICES
 
 
 def _default_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _add_runtime_execution_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--amp-dtype", default=None, choices=AMP_DTYPE_CHOICES)
+    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
 
 
 def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -32,6 +39,7 @@ def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     single.add_argument("--batch-size", type=int, default=256)
     single.add_argument("--num-workers", type=int, default=0)
     single.add_argument("--device", default=_default_device())
+    _add_runtime_execution_args(single)
     single.add_argument("--json", action="store_true")
 
     infer = subparsers.add_parser("infer", help="write platform predictions.json")
@@ -43,6 +51,7 @@ def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--batch-size", type=int, default=256)
     infer.add_argument("--num-workers", type=int, default=0)
     infer.add_argument("--device", default=_default_device())
+    _add_runtime_execution_args(infer)
     infer.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
@@ -63,6 +72,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             device=args.device,
+            amp=args.amp,
+            amp_dtype=args.amp_dtype,
+            compile=args.compile,
         )
         payload = experiment.evaluate(request)
     else:
@@ -75,6 +87,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             device=args.device,
+            amp=args.amp,
+            amp_dtype=args.amp_dtype,
+            compile=args.compile,
         )
         payload = experiment.infer(request)
 
