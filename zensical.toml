@@ -36,7 +36,6 @@ nav = [
         { "EDA 报告" = "analysis/dataset-eda.md" },
         { "性能基准" = "analysis/benchmarks.md" },
         { "评估指标分析" = "analysis/evaluation.md" },
-        { "TAAC 2025 论文洞察" = "analysis/taac2025-insights.md" },
     ] },
     { "指南" = [
         { "官方平台用户指南" = "guide/official-competition-docs.md" },

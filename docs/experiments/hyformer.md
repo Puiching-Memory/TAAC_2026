@@ -1,57 +1,54 @@
 ---
-icon: lucide/flask-conical
+icon: lucide/shuffle
 ---
 
 # HyFormer
 
-**多序列分支 + Query Decode/Boost**
+HyFormer 实验包，使用 RankMixer NS Tokenizer 和多查询解码机制。
 
 ## 概述
 
-HyFormer（Hybrid Former）重新审视了 CTR 预估中序列建模与特征交互的角色定位。核心思想是将用户历史按语义分组为多条独立序列，分别编码后通过可学习 Query 进行跨序列注意力解码和逐 token 增强。
-
-→ 完整论文笔记见 [HyFormer 论文](../papers/hyformer.md)
+与 Baseline 共享 `PCVRHyFormer` 模型类，但配置差异显著：使用 RankMixer NS Tokenizer 替代 Group Tokenizer，并启用多查询解码。
 
 ## 模型架构
 
-- **SemanticGroupedNSTokenizer**：将非序列特征分为 5 个基础组 + 稠密衍生 NS token
-- **MultiSequenceEventTokenizer**：将历史行为按 `segment_count=13` 分组为 13 条独立序列
-- **SequenceEncoderLayer**：每条序列独立过 Transformer
-- **QueryGenerator**：为每条序列生成可学习 Query
-- **QueryDecodingBlock**：跨序列 Cross-Attention
-- **QueryBoosting**：逐 token FFN 增强
+- **RankMixer NS Tokenizer** -- 全部 Embedding 拼接后分组投影，参数更多但表达力更强
+- **多查询解码** -- `num_queries=2`，使用多个查询向量从序列中提取信息
+- **RankMixerBlock** -- Token 混合 + FFN
 
-当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。HyFormer 会从 TorchRec `KeyedJaggedTensor` 重建历史事件流并按语义分组拆回多条序列，而不再依赖实验包私有的 legacy collate 序列张量。
+## 与 Baseline 的区别
 
-关键特性：独立的位置编码和序列 ID 编码。
+| 维度         | Baseline  | HyFormer  |
+| ------------ | --------- | --------- |
+| NS Tokenizer | group     | rankmixer |
+| user_tokens  | 0         | 5         |
+| item_tokens  | 0         | 2         |
+| num_queries  | 1（默认） | 2         |
 
 ## 默认配置
 
-| 参数              | 值   |
-| ----------------- | ---- |
-| `embedding_dim`   | 128  |
-| `num_layers`      | 4    |
-| `num_heads`       | 4    |
-| `segment_count`   | 13   |
-| `recent_seq_len`  | 0    |
-| `epochs`          | 10   |
-| `batch_size`      | 64   |
-| `learning_rate`   | 1e-3 |
-| `pairwise_weight` | 0.0  |
+| 参数                 | 值                                         |
+| -------------------- | ------------------------------------------ |
+| 模型类               | `PCVRHyFormer`                             |
+| NS Tokenizer         | `rankmixer` (user_tokens=5, item_tokens=2) |
+| `num_queries`        | 2                                          |
+| `emb_skip_threshold` | 1,000,000                                  |
 
 ## 快速运行
 
 ```bash
-bash run.sh train --experiment config/hyformer
-bash run.sh val --experiment config/hyformer
+uv run taac-train \
+  --experiment config/hyformer \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json
 ```
 
 ## 输出目录
 
-```
-outputs/config/hyformer/
-```
+`outputs/pcvr_hyformer-<slug>/`
 
 ## 来源
 
-[论文：Revisiting the Roles of Sequence Modeling and Feature Interaction in CTR Prediction](https://arxiv.org/abs/2601.12681)（ByteDance）
+- 模型源码：`config/hyformer/model.py`
+- NS Groups：`config/hyformer/ns_groups.json`
+- HyFormer 论文解读：[papers/hyformer.md](../papers/hyformer.md)

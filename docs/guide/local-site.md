@@ -4,57 +4,49 @@ icon: lucide/hard-drive-download
 
 # 本地生成文档站点
 
-本项目使用 [zensical](https://pypi.org/project/zensical/) 构建文档站点，配置文件为仓库根目录的 `zensical.toml`。
-
 ## 前置条件
 
-- Python ≥ 3.12
-- [uv](https://docs.astral.sh/uv/) 已安装
-- 已执行 `git lfs pull`，确保提交到仓库的图表 JSON 不是 LFS pointer 文本
+安装 Zensical（MkDocs Material 封装）：
+
+```bash
+uv sync --extra dev
+```
 
 ## 构建静态站点
 
-EDA 与技术时间线图表 JSON 需要在本地生成后随代码一起提交；当前 benchmark 报告入口只写出占位 JSON。构建前建议按下面顺序执行：
-
 ```bash
-uv sync --locked --no-install-package torch --no-install-package torchrec --no-install-package fbgemm-gpu --no-install-package triton
-uv run taac-dataset-eda
-uv run taac-tech-timeline
-uv run taac-bench-report --output outputs/reports/benchmark_report.json
-uv run --no-project --isolated --with zensical zensical build --clean
+uv run zensical build
 ```
 
-如果你本地已经安装了完整训练环境，可以直接跳过上面的轻量同步命令，继续执行后续 `uv run ...` 构建步骤。
-如果需要刷新完整训练环境，请重新执行 `uv sync --locked --extra cuda126`；不要改回裸 `uv sync --locked`，否则当前 profile 依赖会被移除。
-
-其中 `uv run taac-tech-timeline` 会在仓库根目录下写入本地缓存 `.cache/taac2026/.s2_cache.json`，该文件仅用于加速 Semantic Scholar 元数据抓取，不需要提交到 Git；需要提交的是 `docs/assets/figures/papers/tech-timeline.echarts.json` 本身。
-
-如果你改了 EDA 或 timeline 相关代码，重新生成后请一并提交以下产物：
-
-- `docs/assets/figures/eda/*.echarts.json`
-- `docs/assets/figures/papers/tech-timeline.echarts.json`
-
-构建产物输出到 `site/` 目录。`--clean` 会在构建前清除旧的产物。
+输出到 `site/` 目录。
 
 ## 本地预览（开发服务器）
 
 ```bash
-uv run --no-project --isolated --with zensical zensical serve
+uv run zensical serve
 ```
 
-启动后在浏览器打开 `http://127.0.0.1:8000`，编辑 `docs/` 下的 Markdown 文件会自动热重载。
+默认在 `http://127.0.0.1:8000` 启动，支持热重载。
 
 ## 常见操作
 
-| 操作       | 说明                                                                     |
-| ---------- | ------------------------------------------------------------------------ |
-| 新增页面   | 在 `docs/` 下创建 `.md` 文件，然后在 `zensical.toml` 的 `nav` 中添加条目 |
-| 修改导航   | 编辑 `zensical.toml` 中的 `nav` 数组                                     |
-| 自定义样式 | 编辑 `docs/assets/stylesheets/extra.css`                                 |
-| 数学公式   | 使用 `$...$`（行内）或 `$$...$$`（块级），由 MathJax 渲染                |
+```bash
+# 指定端口
+uv run zensical serve --dev-addr 0.0.0.0:8080
+
+# 仅构建不预览
+uv run zensical build --strict
+
+# 清理构建产物
+rm -rf site/
+```
 
 ## 故障排查
 
-- **端口被占用**：`uv run --no-project --isolated --with zensical zensical serve --dev-addr 127.0.0.1:8001` 换一个端口。
-- **样式或脚本未生效**：加 `--clean` 重新构建，或清除浏览器缓存。
-- **导航项不显示**：检查 `zensical.toml` 中 `nav` 的路径是否与 `docs/` 下的文件路径一致。
+| 问题            | 解决方案                                                |
+| --------------- | ------------------------------------------------------- |
+| 找不到 zensical | `uv sync --extra dev` 重新安装                          |
+| 页面空白        | 检查 `zensical.toml` 中的 `nav` 配置                    |
+| 样式丢失        | 检查 `extra_css` 路径                                   |
+| 图表不显示      | 检查 ECharts JSON 文件是否存在于 `docs/assets/figures/` |
+| 热重载不工作    | 重启 `zensical serve`                                   |

@@ -1,61 +1,46 @@
 ---
-icon: lucide/flask-conical
+icon: lucide/trending-up
 ---
 
 # UniScaleFormer
 
-**缩放序列建模 + 特征融合**
+多尺度统一 Transformer，所有实验包中层数最深（4 层）。
 
 ## 概述
 
-UniScaleFormer 内置 InterFormer / OneTrans / HyFormer / base 配置对比与 scaling law 脚本，是当前实验包中正则化最强（weight_decay=0.02）、memory slots 最多（6 个）的包。
+UniScaleFormer 使用最深的 Transformer 栈（4 层），探索模型深度的上限。使用 RankMixer NS Tokenizer。
 
 ## 模型架构
 
-- 3 层 Transformer，4 头注意力
-- Embedding 维度 128
-- **feature_cross_layers = 1**：特征交叉层
-- **sequence_layers = 1** / **static_layers = 1**
-- **fusion_layers = 1**：融合层
-- **6 个 memory slots**
-- **4 个 Query**
-- 8 个行为分段
-
-当前仓库实现已经接入框架级 `sparse_features` / `sequence_features` 数据流。UniScaleFormer 会从 TorchRec `KeyedJaggedTensor` 重建历史事件流并按语义拆回多条序列，而不再依赖实验包私有的 legacy collate 序列张量。
+- 4 层 Transformer 编码器（所有实验包中最深）
+- RankMixer NS Tokenizer (user_tokens=5, item_tokens=2)
+- 多尺度特征融合
 
 ## 默认配置
 
-| 参数                   | 值   |
-| ---------------------- | ---- |
-| `embedding_dim`        | 128  |
-| `num_layers`           | 3    |
-| `num_heads`            | 4    |
-| `segment_count`        | 8    |
-| `memory_slots`         | 6    |
-| `num_queries`          | 4    |
-| `feature_cross_layers` | 1    |
-| `sequence_layers`      | 1    |
-| `static_layers`        | 1    |
-| `fusion_layers`        | 1    |
-| `epochs`               | 10   |
-| `batch_size`           | 64   |
-| `learning_rate`        | 8e-4 |
-| `weight_decay`         | 0.02 |
-| `pairwise_weight`      | 0.0  |
+| 参数           | 值                                         |
+| -------------- | ------------------------------------------ |
+| 模型类         | `PCVRUniScaleFormer`                       |
+| NS Tokenizer   | `rankmixer` (user_tokens=5, item_tokens=2) |
+| `num_blocks`   | 4                                          |
+| `num_heads`    | 4                                          |
+| `hidden_mult`  | 4                                          |
+| `dropout_rate` | 0.02                                       |
 
 ## 快速运行
 
 ```bash
-bash run.sh train --experiment config/uniscaleformer
-bash run.sh val --experiment config/uniscaleformer
+uv run taac-train \
+  --experiment config/uniscaleformer \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json
 ```
 
 ## 输出目录
 
-```
-outputs/config/uniscaleformer/
-```
+`outputs/pcvr_uniscaleformer-<slug>/`
 
 ## 来源
 
-[twx145/Unirec](https://github.com/twx145/Unirec)
+- 模型源码：`config/uniscaleformer/model.py`
+- NS Groups：`config/uniscaleformer/ns_groups.json`

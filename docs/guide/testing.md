@@ -4,78 +4,76 @@ icon: lucide/clipboard-list
 
 # 测试
 
-当前仓库的默认可执行回归集中在 `tests/unit/`。
-
 ## 常用命令
 
 ```bash
-uv sync --locked --extra cuda126
+# 运行所有单元测试
+uv run pytest tests/unit -v
 
-uv run pytest tests/unit -q
-uv run pytest tests/unit/test_experiment_packages.py -q
-uv run pytest tests/unit/test_package_training.py -q
-```
+# 运行特定测试文件
+uv run pytest tests/unit/test_experiment_packages.py -v
 
-首次本地准备仍然建议先执行一次 `uv sync --locked --extra cuda126`。准备好环境后，测试统一直接走 `uv run pytest ...`；`run.sh` 已不再承担测试入口职责。
+# 运行特定测试
+uv run pytest tests/unit/test_experiment_packages.py::test_model_class_name -v
 
-如果改了依赖定义，再手动执行一次 `uv sync --locked --extra cuda126`。
+# 带覆盖率
+uv run pytest tests/unit --cov=taac2026.domain --cov=taac2026.application --cov-report=term-missing
 
-常见回归命令：
-
-```bash
-uv run pytest tests/unit -q
-```
-
-Lint 当前核心代码时：
-
-```bash
-uv run --with ruff ruff check src/taac2026 tests/unit
+# 仅运行特定 marker
+uv run pytest tests/unit -m unit -v
 ```
 
 ## 当前测试文件
 
-| 文件                                         | 覆盖重点                                                |
-| -------------------------------------------- | ------------------------------------------------------- |
-| `tests/unit/test_metrics.py`                 | AUC、logloss 和分类指标边界                             |
-| `tests/unit/test_runtime_contract_matrix.py` | runtime 契约矩阵与命令行为                              |
-| `tests/unit/test_checkpoint_and_loader.py`   | checkpoint、sidecar 与包加载                            |
-| `tests/unit/test_experiment_packages.py`     | 实验包加载、模型类、forward/backward/predict、NS groups |
-| `tests/unit/test_package_training.py`        | `run.sh` + `code_package.zip` 双文件 bundle 内容        |
-| `tests/unit/test_training_cli.py`            | 训练 CLI 参数解析和 extra args 透传                     |
-| `tests/unit/test_pcvr_protocol.py`           | schema、特征规格、NS groups 映射与缺失文件失败          |
-| `tests/unit/test_pcvr_data_augmentation.py`  | PCVR 训练期增广、内存 cache 与时间安全过滤              |
+| 文件                                  | 覆盖范围                                                        |
+| ------------------------------------- | --------------------------------------------------------------- |
+| `test_experiment_packages.py`         | 实验包加载、模型类名、NS Groups、前向/反向传播                  |
+| `test_runtime_contract_matrix.py`     | 协议测试：schema 转换、NS 分组映射、batch 转换、Checkpoint 操作 |
+| `test_checkpoint_and_loader.py`       | Baseline 包加载和 Checkpoint 侧车文件                           |
+| `test_pcvr_protocol.py`               | Schema 到特征规格的转换、NS 分组映射                            |
+| `test_pcvr_trainer.py`                | Trainer 测试                                                    |
+| `test_pcvr_data_split.py`             | Row Group 分割测试                                              |
+| `test_pcvr_data_augmentation.py`      | 数据增强测试                                                    |
+| `test_pcvr_infer_runtime.py`          | 推理运行时测试                                                  |
+| `test_metrics.py`                     | 指标计算测试                                                    |
+| `test_training_cli.py`                | 训练 CLI 测试                                                   |
+| `test_evaluation_cli.py`              | 评估 CLI 测试                                                   |
+| `test_evaluation_infer_entrypoint.py` | 推理入口测试                                                    |
+| `test_experiment_discovery.py`        | 实验包发现测试                                                  |
+| `test_package_training.py`            | 训练 Bundle 打包测试                                            |
+| `test_package_inference.py`           | 推理 Bundle 打包测试                                            |
+| `test_run_sh_commands.py`             | run.sh 命令测试                                                 |
 
 ## 模块改动后的最小复核
 
-| 改动范围                             | 建议命令                                                                                      |
-| ------------------------------------ | --------------------------------------------------------------------------------------------- |
-| 实验包 `config/<name>/`              | `uv run pytest tests/unit/test_experiment_packages.py -q`                                     |
-| `ns_groups.json` 或 PCVR schema 解析 | `uv run pytest tests/unit/test_pcvr_protocol.py tests/unit/test_experiment_packages.py -q`    |
-| PCVR 数据管道、增广或 cache          | `uv run pytest tests/unit/test_pcvr_data_augmentation.py tests/unit/test_pcvr_data_split.py -q` |
-| 线上打包                             | `uv run pytest tests/unit/test_package_training.py -q`                                        |
-| 训练入口参数                         | `uv run pytest tests/unit/test_training_cli.py -q`                                            |
-| checkpoint 或 loader                 | `uv run pytest tests/unit/test_checkpoint_and_loader.py -q`                                   |
-| 指标实现                             | `uv run pytest tests/unit/test_metrics.py -q`                                                 |
+修改模块后的最小测试集：
+
+| 改动模块                               | 必须运行的测试                                                |
+| -------------------------------------- | ------------------------------------------------------------- |
+| `config/*/model.py`                    | `test_experiment_packages.py`                                 |
+| `config/*/ns_groups.json`              | `test_experiment_packages.py`, `test_pcvr_protocol.py`        |
+| `config/*/__init__.py`                 | `test_experiment_packages.py`, `test_experiment_discovery.py` |
+| `infrastructure/pcvr/protocol.py`      | `test_pcvr_protocol.py`, `test_runtime_contract_matrix.py`    |
+| `infrastructure/pcvr/trainer.py`       | `test_pcvr_trainer.py`                                        |
+| `infrastructure/pcvr/data.py`          | `test_pcvr_data_split.py`                                     |
+| `infrastructure/pcvr/data_pipeline.py` | `test_pcvr_data_augmentation.py`                              |
+| `domain/metrics.py`                    | `test_metrics.py`                                             |
+| `application/training/cli.py`          | `test_training_cli.py`                                        |
+| `application/evaluation/cli.py`        | `test_evaluation_cli.py`                                      |
+| `run.sh`                               | `test_run_sh_commands.py`                                     |
 
 ## 新增测试约定
 
-- 当前新增测试默认放在 `tests/unit/`。
-- 测试应尽量使用轻量 synthetic 输入，不依赖完整线上数据。
-- 修改实验包时，优先补 `test_experiment_packages.py` 覆盖加载、forward、backward、predict 和命名契约。
-- 修改打包逻辑时，检查 `code_package.zip` 中是否包含目标包的 `model.py` 与 `ns_groups.json`，并排除 docs/tests/其他实验包。
-- 修改 CLI 时，同时覆盖 argparse 结果和未知参数透传。
+- 测试文件命名：`test_<module>.py`
+- 测试函数命名：`test_<behavior>`
+- 使用 `conftest.py` 中的 marker 自动标记为 `unit` 或 `integration`
+- 测试数据使用 `data/sample_1000_raw/` 中的示例数据
+- 不依赖外部服务或 GPU
 
 ## 训练 Smoke 不等于单测
 
-训练 smoke 用来确认真实数据路径、schema、dataloader 和设备环境能跑通：
+训练 Smoke Test（`taac-train` 跑 1 epoch）是集成测试，不替代单元测试：
 
-```bash
-bash run.sh train --experiment config/baseline \
-    --dataset-path /path/to/parquet_or_dataset_dir \
-    --schema-path /path/to/schema.json \
-    --num_epochs 1 \
-    --batch_size 8 \
-    --device cpu
-```
-
-它适合在提交前做人工确认，但不能替代 `tests/unit/` 的契约测试。
+- 单测验证组件行为（输入输出契约）
+- Smoke Test 验证组件协作（端到端流程）
+- 两者互补，不可替代

@@ -6,31 +6,20 @@ icon: lucide/cpu
 
 ## 当前状态
 
-当前工作树已经收敛到 PCVR 实验包和共享 PCVR runtime，原先的共享 `infrastructure/nn` Triton/Transformer Engine 模块与 GPU 专项测试树不再是当前可执行回归的一部分。因此本页不再提供可直接运行的 kernel 测试命令。
-
-现在与模型实现直接相关的共享代码主要在：
-
-- `src/taac2026/infrastructure/pcvr/modeling.py`
-- `src/taac2026/infrastructure/pcvr/protocol.py`
-- `src/taac2026/infrastructure/pcvr/training.py`
-- `src/taac2026/infrastructure/pcvr/trainer.py`
-
-当前可验证入口是单元测试：
-
-```bash
-uv run pytest tests/unit -q
-```
+当前实验包未使用自定义 Triton Kernel。所有 GPU 操作通过 PyTorch 原生算子和 `torch.compile` 实现。
 
 ## 恢复 GPU Kernel 工作时的要求
 
-如果后续重新引入 Triton kernel 或 Transformer Engine 后端，建议把恢复工作拆成一组明确的代码和测试提交：
+如需开发自定义 Triton Kernel：
 
-1. 在共享 runtime 中放置稳定接口，避免让具体实验包直接依赖 kernel 细节。
-2. 为每个 kernel 保留纯 PyTorch 参考路径。
-3. 用小尺寸输入覆盖 mask、padding、dtype 和 fallback 语义。
-4. 在 CPU 可收集环境下保留不依赖 CUDA 的接口测试。
-5. 单独提供 GPU 环境验证说明，避免默认 CI 或普通文档读者运行不存在的专项测试。
+1. **环境要求**：CUDA 12.x、Triton 2.x、PyTorch 2.7+
+2. **开发流程**：
+   - 在 `src/taac2026/infrastructure/pcvr/kernels/` 下编写 Kernel
+   - 通过 `torch.compile` 或 `triton.jit` 注册
+   - 在模型中通过条件导入使用
+3. **测试**：需要 GPU 环境，使用 `@pytest.mark.gpu` 标记
+4. **兼容性**：Kernel 需兼容 A100/A800（比赛平台 GPU）
 
 ## 文档边界
 
-本页保留的是后续恢复 GPU kernel 能力时的工程约束。当前比赛训练、线上打包和实验包接入，请以 [架构](../architecture.md)、[新增实验包](contributing.md) 和 [线上训练包](online-training-bundle.md) 为准。
+本文档仅记录 Triton Kernel 的状态和恢复要求。实际 Kernel 开发文档待实现后补充。
