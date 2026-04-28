@@ -241,6 +241,7 @@ data/sample_1000_raw/
 3. [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026) UniRec 方案，强调 unified tokenization、混合 attention mask、scaling law 和 2 卡 DDP。  
 4. [twx145/Unirec](https://github.com/twx145/Unirec) UniScaleFormer 模板，内置 InterFormer / OneTrans / HyFormer / base 配置对比与 scaling law 脚本。  
 5. [XiaolongWang-c/tencent-ad](https://github.com/XiaolongWang-c/tencent-ad) 轻量级 TAAC 2026 备赛工程脚手架，强调统一 Sample 抽象、显式标签映射入口与验证预测产物，便于快速替换 baseline 与特征工程。  
+6. [wangjialin114/kdd-cup-2026-tencent](https://github.com/wangjialin114/kdd-cup-2026-tencent) KDD Cup 2026 Industrial Track 公开备赛仓库，README 给出数据说明、项目目录和基础环境准备指引。  
 
 **2026届：Kaggle / Notebook**  
 1. [galegale05/TAAC2026 Baseline v3 - Final](https://www.kaggle.com/code/galegale05/taac2026-baseline-v3-final/notebook) Kaggle 上公开的 HSTU 风格时间特征 baseline notebook，可作为时间 bucket、session 切分和轻量级序列建模的补充参考。  
