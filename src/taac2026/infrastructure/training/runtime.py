@@ -21,6 +21,7 @@ import torch.nn.functional as F
 
 AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
 BINARY_LOSS_TYPE_CHOICES: tuple[str, ...] = ("bce", "focal")
+DENSE_OPTIMIZER_TYPE_CHOICES: tuple[str, ...] = ("adamw", "orthogonal_adamw")
 _AMP_DTYPE_ALIASES = {
     "bf16": "bfloat16",
     "bfloat16": "bfloat16",
@@ -86,6 +87,8 @@ class BinaryClassificationLossConfig:
     loss_type: str = "bce"
     focal_alpha: float = 0.1
     focal_gamma: float = 2.0
+    pairwise_auc_weight: float = 0.0
+    pairwise_auc_temperature: float = 1.0
 
     def __post_init__(self) -> None:
         normalized_loss_type = str(self.loss_type).strip().lower()
@@ -100,9 +103,19 @@ class BinaryClassificationLossConfig:
         if focal_gamma < 0.0:
             raise ValueError(f"focal_gamma must be >= 0, got {self.focal_gamma}")
 
+        pairwise_auc_weight = float(self.pairwise_auc_weight)
+        if pairwise_auc_weight < 0.0:
+            raise ValueError(f"pairwise_auc_weight must be >= 0, got {self.pairwise_auc_weight}")
+
+        pairwise_auc_temperature = float(self.pairwise_auc_temperature)
+        if pairwise_auc_temperature <= 0.0:
+            raise ValueError(f"pairwise_auc_temperature must be > 0, got {self.pairwise_auc_temperature}")
+
         object.__setattr__(self, "loss_type", normalized_loss_type)
         object.__setattr__(self, "focal_alpha", focal_alpha)
         object.__setattr__(self, "focal_gamma", focal_gamma)
+        object.__setattr__(self, "pairwise_auc_weight", pairwise_auc_weight)
+        object.__setattr__(self, "pairwise_auc_temperature", pairwise_auc_temperature)
 
 
 DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG = BinaryClassificationLossConfig()
@@ -275,11 +288,37 @@ def compute_binary_classification_loss(
 
     resolved_loss_config = loss_config or DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG
     if resolved_loss_config.loss_type == "focal":
-        return sigmoid_focal_loss(
+        loss = sigmoid_focal_loss(
             logits,
             targets,
             alpha=resolved_loss_config.focal_alpha,
             gamma=resolved_loss_config.focal_gamma,
             reduction=reduction,
         )
-    return F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)
+    else:
+        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)
+    if reduction == "none" or resolved_loss_config.pairwise_auc_weight <= 0.0:
+        return loss
+    return loss + resolved_loss_config.pairwise_auc_weight * binary_pairwise_auc_loss(
+        logits,
+        targets,
+        temperature=resolved_loss_config.pairwise_auc_temperature,
+    )
+
+
+def binary_pairwise_auc_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    temperature: float = 1.0,
+) -> torch.Tensor:
+    """Pairwise softplus ranking loss for improving positive-negative ordering."""
+
+    flat_logits = logits.reshape(-1)
+    flat_targets = targets.reshape(-1)
+    positive_logits = flat_logits[flat_targets > 0.5]
+    negative_logits = flat_logits[flat_targets <= 0.5]
+    if positive_logits.numel() == 0 or negative_logits.numel() == 0:
+        return flat_logits.sum() * 0.0
+    pairwise_margin = (positive_logits[:, None] - negative_logits[None, :]) / float(temperature)
+    return F.softplus(-pairwise_margin).mean()

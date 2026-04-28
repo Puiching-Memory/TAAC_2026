@@ -24,6 +24,7 @@ from taac2026.infrastructure.pcvr.protocol import batch_to_model_input
 from taac2026.infrastructure.pcvr.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.training.runtime import (
     BinaryClassificationLossConfig,
+    DENSE_OPTIMIZER_TYPE_CHOICES,
     EarlyStopping,
     RuntimeExecutionConfig,
     compute_binary_classification_loss,
@@ -65,9 +66,12 @@ class PCVRPointwiseTrainer:
         device: str,
         save_dir: str | Path,
         early_stopping: EarlyStopping,
+        dense_optimizer_type: str = "adamw",
         loss_type: str = "bce",
         focal_alpha: float = 0.1,
         focal_gamma: float = 2.0,
+        pairwise_auc_weight: float = 0.0,
+        pairwise_auc_temperature: float = 1.0,
         sparse_lr: float = 0.05,
         sparse_weight_decay: float = 0.0,
         reinit_sparse_after_epoch: int = 1,
@@ -87,6 +91,10 @@ class PCVRPointwiseTrainer:
         self.writer = writer
         self.schema_path = Path(schema_path).expanduser().resolve() if schema_path else None
         self.ns_groups_path = Path(ns_groups_path).expanduser().resolve() if ns_groups_path else None
+        self.dense_optimizer_type = str(dense_optimizer_type).strip().lower()
+        if self.dense_optimizer_type not in DENSE_OPTIMIZER_TYPE_CHOICES:
+            raise ValueError(f"unsupported dense optimizer type: {dense_optimizer_type}")
+        self.dense_params: list[nn.Parameter] = []
 
         self.sparse_optimizer: torch.optim.Optimizer | None
         if hasattr(model, "get_sparse_params"):
@@ -95,10 +103,10 @@ class PCVRPointwiseTrainer:
             if not sparse_params:
                 logging.info("Model exposes get_sparse_params but has no embedding parameters; using AdamW for all params")
                 self.sparse_optimizer = None
-                self.dense_optimizer = torch.optim.AdamW(
-                    model.parameters(), lr=lr, betas=(0.9, 0.98)
-                )
+                self.dense_params = list(model.parameters())
+                self.dense_optimizer = self._build_dense_optimizer(self.dense_params, lr)
             else:
+                self.dense_params = list(dense_params)
                 sparse_param_count = sum(parameter.numel() for parameter in sparse_params)
                 dense_param_count = sum(parameter.numel() for parameter in dense_params)
                 logging.info(
@@ -116,14 +124,11 @@ class PCVRPointwiseTrainer:
                 self.sparse_optimizer = torch.optim.Adagrad(
                     sparse_params, lr=sparse_lr, weight_decay=sparse_weight_decay
                 )
-                self.dense_optimizer: torch.optim.Optimizer = torch.optim.AdamW(
-                    dense_params, lr=lr, betas=(0.9, 0.98)
-                )
+                self.dense_optimizer: torch.optim.Optimizer = self._build_dense_optimizer(self.dense_params, lr)
         else:
             self.sparse_optimizer = None
-            self.dense_optimizer = torch.optim.AdamW(
-                model.parameters(), lr=lr, betas=(0.9, 0.98)
-            )
+            self.dense_params = list(model.parameters())
+            self.dense_optimizer = self._build_dense_optimizer(self.dense_params, lr)
 
         self.num_epochs = num_epochs
         self.device = device
@@ -145,6 +150,8 @@ class PCVRPointwiseTrainer:
             loss_type=loss_type,
             focal_alpha=focal_alpha,
             focal_gamma=focal_gamma,
+            pairwise_auc_weight=pairwise_auc_weight,
+            pairwise_auc_temperature=pairwise_auc_temperature,
         )
         self.loss_type = self.loss_config.loss_type
         self.focal_alpha = self.loss_config.focal_alpha
@@ -160,13 +167,41 @@ class PCVRPointwiseTrainer:
 
         logging.info(
             "PCVRPointwiseTrainer loss_type=%s, focal_alpha=%s, focal_gamma=%s, "
-            "reinit_sparse_after_epoch=%s",
+            "pairwise_auc_weight=%s, pairwise_auc_temperature=%s, "
+            "dense_optimizer_type=%s, reinit_sparse_after_epoch=%s",
             self.loss_type,
             self.focal_alpha,
             self.focal_gamma,
+            self.loss_config.pairwise_auc_weight,
+            self.loss_config.pairwise_auc_temperature,
+            self.dense_optimizer_type,
             reinit_sparse_after_epoch,
         )
         logging.info("PCVRPointwiseTrainer runtime: %s", self.runtime_execution.summary(self.device))
+
+    def _build_dense_optimizer(self, parameters: list[nn.Parameter], lr: float) -> torch.optim.Optimizer:
+        return torch.optim.AdamW(parameters, lr=lr, betas=(0.9, 0.98))
+
+    def _orthogonalize_dense_gradients(self) -> None:
+        if self.dense_optimizer_type != "orthogonal_adamw":
+            return
+        for parameter in self.dense_params:
+            gradient = parameter.grad
+            if gradient is None or gradient.ndim < 2:
+                continue
+            with torch.no_grad():
+                original_dtype = gradient.dtype
+                original_norm = gradient.norm().clamp_min(1e-12)
+                matrix = gradient.float().reshape(gradient.shape[0], -1)
+                transposed = matrix.shape[0] > matrix.shape[1]
+                if transposed:
+                    matrix = matrix.t()
+                matrix = matrix / matrix.norm().clamp_min(1e-12)
+                for _ in range(2):
+                    matrix = 1.5 * matrix - 0.5 * matrix @ (matrix.t() @ matrix)
+                if transposed:
+                    matrix = matrix.t()
+                gradient.copy_((matrix.reshape_as(gradient) * original_norm).to(original_dtype))
 
     def _build_step_dir_name(self, global_step: int, is_best: bool = False) -> str:
         return build_checkpoint_dir_name(global_step, self.ckpt_params, is_best=is_best)
@@ -396,6 +431,7 @@ class PCVRPointwiseTrainer:
             if self.sparse_optimizer is not None:
                 self.grad_scaler.unscale_(self.sparse_optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, foreach=False)
+            self._orthogonalize_dense_gradients()
 
             self.grad_scaler.step(self.dense_optimizer)
             if self.sparse_optimizer is not None:
@@ -404,6 +440,7 @@ class PCVRPointwiseTrainer:
         else:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0, foreach=False)
+            self._orthogonalize_dense_gradients()
 
             self.dense_optimizer.step()
             if self.sparse_optimizer is not None:

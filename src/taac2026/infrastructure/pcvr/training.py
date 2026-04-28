@@ -27,6 +27,7 @@ from taac2026.infrastructure.pcvr.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.training.runtime import (
     AMP_DTYPE_CHOICES,
     BINARY_LOSS_TYPE_CHOICES,
+    DENSE_OPTIMIZER_TYPE_CHOICES,
     EarlyStopping,
     RuntimeExecutionConfig,
     create_logger,
@@ -62,6 +63,13 @@ def parse_pcvr_train_args(
         "--device",
         default=default_values["device"]
         or ("cuda" if torch.cuda.is_available() else "cpu"),
+    )
+    parser.add_argument(
+        "--dense_optimizer_type",
+        "--dense-optimizer-type",
+        dest="dense_optimizer_type",
+        default=default_values["dense_optimizer_type"],
+        choices=DENSE_OPTIMIZER_TYPE_CHOICES,
     )
     parser.add_argument(
         "--amp", action=argparse.BooleanOptionalAction, default=default_values["amp"]
@@ -148,6 +156,20 @@ def parse_pcvr_train_args(
     parser.add_argument(
         "--focal_gamma", type=float, default=default_values["focal_gamma"]
     )
+    parser.add_argument(
+        "--pairwise_auc_weight",
+        "--pairwise-auc-weight",
+        dest="pairwise_auc_weight",
+        type=float,
+        default=default_values["pairwise_auc_weight"],
+    )
+    parser.add_argument(
+        "--pairwise_auc_temperature",
+        "--pairwise-auc-temperature",
+        dest="pairwise_auc_temperature",
+        type=float,
+        default=default_values["pairwise_auc_temperature"],
+    )
 
     parser.add_argument("--sparse_lr", type=float, default=default_values["sparse_lr"])
     parser.add_argument(
@@ -215,6 +237,63 @@ def parse_pcvr_train_args(
         "--symbiosis-use-domain-gate",
         action=argparse.BooleanOptionalAction,
         default=default_values["symbiosis_use_domain_gate"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_candidate_decoder",
+        "--symbiosis-use-candidate-decoder",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_candidate_decoder"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_action_conditioning",
+        "--symbiosis-use-action-conditioning",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_action_conditioning"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_compressed_memory",
+        "--symbiosis-use-compressed-memory",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_compressed_memory"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_attention_sink",
+        "--symbiosis-use-attention-sink",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_attention_sink"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_lane_mixing",
+        "--symbiosis-use-lane-mixing",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_lane_mixing"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_semantic_id",
+        "--symbiosis-use-semantic-id",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_semantic_id"],
+    )
+    parser.add_argument(
+        "--symbiosis_memory_block_size",
+        "--symbiosis-memory-block-size",
+        dest="symbiosis_memory_block_size",
+        type=int,
+        default=default_values["symbiosis_memory_block_size"],
+    )
+    parser.add_argument(
+        "--symbiosis_memory_top_k",
+        "--symbiosis-memory-top-k",
+        dest="symbiosis_memory_top_k",
+        type=int,
+        default=default_values["symbiosis_memory_top_k"],
+    )
+    parser.add_argument(
+        "--symbiosis_recent_tokens",
+        "--symbiosis-recent-tokens",
+        dest="symbiosis_recent_tokens",
+        type=int,
+        default=default_values["symbiosis_recent_tokens"],
     )
 
     args = parser.parse_args(argv)
@@ -346,9 +425,12 @@ def train_pcvr_model(
             device=args.device,
             save_dir=ckpt_dir,
             early_stopping=early_stopping,
+            dense_optimizer_type=args.dense_optimizer_type,
             loss_type=args.loss_type,
             focal_alpha=args.focal_alpha,
             focal_gamma=args.focal_gamma,
+            pairwise_auc_weight=args.pairwise_auc_weight,
+            pairwise_auc_temperature=args.pairwise_auc_temperature,
             sparse_lr=args.sparse_lr,
             sparse_weight_decay=args.sparse_weight_decay,
             reinit_sparse_after_epoch=args.reinit_sparse_after_epoch,

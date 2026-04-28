@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from taac2026.infrastructure.training.runtime import (
     BinaryClassificationLossConfig,
+    DENSE_OPTIMIZER_TYPE_CHOICES,
     RuntimeExecutionConfig,
 )
 
@@ -16,6 +17,7 @@ RankMixerMode = Literal["full", "ffn_only", "none"]
 NSTokenizerType = Literal["group", "rankmixer"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
 PCVRDataCacheMode = Literal["none", "memory"]
+DenseOptimizerType = Literal["adamw", "orthogonal_adamw"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +133,11 @@ class PCVROptimizerConfig:
     patience: int = 5
     seed: int = 42
     device: str | None = None
+    dense_optimizer_type: DenseOptimizerType = "adamw"
+
+    def __post_init__(self) -> None:
+        if self.dense_optimizer_type not in DENSE_OPTIMIZER_TYPE_CHOICES:
+            raise ValueError(f"unsupported dense optimizer type: {self.dense_optimizer_type}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +183,16 @@ class PCVRSymbiosisConfig:
     use_fourier_time: bool = True
     use_context_exchange: bool = True
     use_multi_scale: bool = True
-    use_domain_gate: bool = False
+    use_domain_gate: bool = True
+    use_candidate_decoder: bool = True
+    use_action_conditioning: bool = True
+    use_compressed_memory: bool = True
+    use_attention_sink: bool = True
+    use_lane_mixing: bool = True
+    use_semantic_id: bool = True
+    memory_block_size: int = 16
+    memory_top_k: int = 8
+    recent_tokens: int = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,12 +228,15 @@ class PCVRTrainConfig:
             "patience": self.optimizer.patience,
             "seed": self.optimizer.seed,
             "device": self.optimizer.device,
+            "dense_optimizer_type": self.optimizer.dense_optimizer_type,
             "amp": self.runtime.amp,
             "amp_dtype": self.runtime.amp_dtype,
             "compile": self.runtime.compile,
             "loss_type": self.loss.loss_type,
             "focal_alpha": self.loss.focal_alpha,
             "focal_gamma": self.loss.focal_gamma,
+            "pairwise_auc_weight": self.loss.pairwise_auc_weight,
+            "pairwise_auc_temperature": self.loss.pairwise_auc_temperature,
             "sparse_lr": self.sparse_optimizer.sparse_lr,
             "sparse_weight_decay": self.sparse_optimizer.sparse_weight_decay,
             "reinit_sparse_after_epoch": self.sparse_optimizer.reinit_sparse_after_epoch,
@@ -248,6 +267,15 @@ class PCVRTrainConfig:
             "symbiosis_use_context_exchange": self.symbiosis.use_context_exchange,
             "symbiosis_use_multi_scale": self.symbiosis.use_multi_scale,
             "symbiosis_use_domain_gate": self.symbiosis.use_domain_gate,
+            "symbiosis_use_candidate_decoder": self.symbiosis.use_candidate_decoder,
+            "symbiosis_use_action_conditioning": self.symbiosis.use_action_conditioning,
+            "symbiosis_use_compressed_memory": self.symbiosis.use_compressed_memory,
+            "symbiosis_use_attention_sink": self.symbiosis.use_attention_sink,
+            "symbiosis_use_lane_mixing": self.symbiosis.use_lane_mixing,
+            "symbiosis_use_semantic_id": self.symbiosis.use_semantic_id,
+            "symbiosis_memory_block_size": self.symbiosis.memory_block_size,
+            "symbiosis_memory_top_k": self.symbiosis.memory_top_k,
+            "symbiosis_recent_tokens": self.symbiosis.recent_tokens,
         }
 
 

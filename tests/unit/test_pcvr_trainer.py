@@ -13,6 +13,7 @@ from taac2026.infrastructure.training.runtime import (
     BinaryClassificationLossConfig,
     EarlyStopping,
     RuntimeExecutionConfig,
+    compute_binary_classification_loss,
 )
 
 
@@ -145,6 +146,32 @@ def test_trainer_delegates_loss_to_shared_runtime(monkeypatch, tmp_path) -> None
         focal_alpha=0.25,
         focal_gamma=1.5,
     )
+
+
+def test_pairwise_auc_loss_penalizes_misordered_pairs() -> None:
+    targets = torch.tensor([1.0, 0.0])
+    good_logits = torch.tensor([2.0, -2.0])
+    bad_logits = torch.tensor([-2.0, 2.0])
+    loss_config = BinaryClassificationLossConfig(pairwise_auc_weight=1.0)
+
+    assert compute_binary_classification_loss(bad_logits, targets, loss_config) > compute_binary_classification_loss(good_logits, targets, loss_config)
+
+
+def test_trainer_accepts_orthogonal_adamw(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=object,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        num_epochs=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        dense_optimizer_type="orthogonal_adamw",
+    )
+
+    assert trainer.dense_optimizer_type == "orthogonal_adamw"
 
 
 def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:

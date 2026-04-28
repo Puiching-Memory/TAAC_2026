@@ -144,9 +144,22 @@ def build_pcvr_model(
         "symbiosis_use_context_exchange",
         "symbiosis_use_multi_scale",
         "symbiosis_use_domain_gate",
+        "symbiosis_use_candidate_decoder",
+        "symbiosis_use_action_conditioning",
+        "symbiosis_use_compressed_memory",
+        "symbiosis_use_attention_sink",
+        "symbiosis_use_lane_mixing",
+        "symbiosis_use_semantic_id",
     ):
         if key in model_signature.parameters:
             model_kwargs[key] = bool(config[key])
+    for key in (
+        "symbiosis_memory_block_size",
+        "symbiosis_memory_top_k",
+        "symbiosis_recent_tokens",
+    ):
+        if key in model_signature.parameters:
+            model_kwargs[key] = int(config[key])
     return model_class(**model_kwargs)
 
 

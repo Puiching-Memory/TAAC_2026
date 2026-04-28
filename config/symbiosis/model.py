@@ -268,6 +268,126 @@ class ContextExchangeBlock(nn.Module):
 		return context + self.ffn(self.ffn_norm(context))
 
 
+class CandidateConditionedSequenceDecoder(nn.Module):
+	def __init__(
+		self,
+		d_model: int,
+		num_heads: int,
+		hidden_mult: int,
+		dropout: float,
+		*,
+		recent_tokens: int,
+		memory_block_size: int,
+		memory_top_k: int,
+		use_compressed_memory: bool,
+		use_attention_sink: bool,
+	) -> None:
+		super().__init__()
+		self.recent_tokens = max(0, int(recent_tokens))
+		self.memory_block_size = max(1, int(memory_block_size))
+		self.memory_top_k = max(0, int(memory_top_k))
+		self.use_compressed_memory = use_compressed_memory
+		self.use_attention_sink = use_attention_sink
+		self.query_norm = RMSNorm(d_model)
+		self.memory_norm = RMSNorm(d_model)
+		self.attention = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
+		self.sink_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+		self.domain_gate = nn.Linear(d_model * 2, 1)
+		self.ffn_norm = RMSNorm(d_model)
+		self.ffn = SwiGLUFeedForward(d_model, hidden_mult, dropout)
+
+	def _compressed_blocks(self, tokens: torch.Tensor, padding_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+		batch_size, token_count, d_model = tokens.shape
+		pad_len = (-token_count) % self.memory_block_size
+		if pad_len:
+			tokens = F.pad(tokens, (0, 0, 0, pad_len))
+			padding_mask = F.pad(padding_mask, (0, pad_len), value=True)
+		blocks = tokens.view(batch_size, -1, self.memory_block_size, d_model)
+		block_mask = padding_mask.view(batch_size, -1, self.memory_block_size)
+		valid = (~block_mask).to(tokens.dtype).unsqueeze(-1)
+		block_tokens = (blocks * valid).sum(dim=2) / valid.sum(dim=2).clamp_min(1.0)
+		return block_tokens, block_mask.all(dim=2)
+
+	def _select_topk_blocks(
+		self,
+		query: torch.Tensor,
+		blocks: torch.Tensor,
+		block_mask: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		block_count = blocks.shape[1]
+		if self.memory_top_k <= 0 or block_count <= self.memory_top_k:
+			return blocks, block_mask
+		scores = (self.memory_norm(blocks) * self.query_norm(query).unsqueeze(1)).sum(dim=-1)
+		scores = scores.masked_fill(block_mask, torch.finfo(scores.dtype).min)
+		indices = torch.topk(scores, k=self.memory_top_k, dim=1).indices
+		gather_index = indices.unsqueeze(-1).expand(-1, -1, blocks.shape[-1])
+		return blocks.gather(1, gather_index), block_mask.gather(1, indices)
+
+	def _build_memory(
+		self,
+		query: torch.Tensor,
+		tokens: torch.Tensor,
+		padding_mask: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		memory_parts: list[torch.Tensor] = []
+		mask_parts: list[torch.Tensor] = []
+		if self.use_attention_sink:
+			memory_parts.append(self.sink_token.expand(tokens.shape[0], -1, -1).to(dtype=tokens.dtype))
+			mask_parts.append(torch.zeros(tokens.shape[0], 1, dtype=torch.bool, device=tokens.device))
+		if self.recent_tokens > 0:
+			recent_count = min(self.recent_tokens, tokens.shape[1])
+			memory_parts.append(tokens[:, -recent_count:, :])
+			mask_parts.append(padding_mask[:, -recent_count:])
+		if self.use_compressed_memory:
+			blocks, block_mask = self._compressed_blocks(tokens, padding_mask)
+			blocks, block_mask = self._select_topk_blocks(query, blocks, block_mask)
+			memory_parts.append(blocks)
+			mask_parts.append(block_mask)
+		global_token = masked_mean(tokens, padding_mask).unsqueeze(1)
+		global_mask = padding_mask.all(dim=1, keepdim=True)
+		memory_parts.append(global_token)
+		mask_parts.append(global_mask)
+		return torch.cat(memory_parts, dim=1), torch.cat(mask_parts, dim=1)
+
+	def forward(self, query: torch.Tensor, sequences: list[torch.Tensor], masks: list[torch.Tensor]) -> torch.Tensor:
+		if not sequences:
+			return query.new_zeros(query.shape)
+		updates: list[torch.Tensor] = []
+		scores: list[torch.Tensor] = []
+		normalized_query = self.query_norm(query).unsqueeze(1)
+		for sequence_tokens, sequence_mask in zip(sequences, masks, strict=True):
+			memory, memory_mask = self._build_memory(query, sequence_tokens, sequence_mask)
+			attended, _weights = self.attention(
+				normalized_query,
+				self.memory_norm(memory),
+				self.memory_norm(memory),
+				key_padding_mask=safe_key_padding_mask(memory_mask),
+				need_weights=False,
+			)
+			attended = attended.squeeze(1)
+			valid_rows = (~sequence_mask).any(dim=1).to(attended.dtype).unsqueeze(-1)
+			attended = (attended + self.ffn(self.ffn_norm(attended))) * valid_rows
+			updates.append(attended)
+			domain_score = self.domain_gate(torch.cat([query, attended], dim=-1))
+			domain_score = domain_score.masked_fill(valid_rows <= 0, torch.finfo(domain_score.dtype).min)
+			scores.append(domain_score)
+		weights = torch.softmax(torch.stack(scores, dim=1), dim=1)
+		return (torch.stack(updates, dim=1) * weights).sum(dim=1)
+
+
+class MultiLaneFusion(nn.Module):
+	def __init__(self, d_model: int, lane_count: int) -> None:
+		super().__init__()
+		self.norm = RMSNorm(d_model * lane_count)
+		self.weight_projection = nn.Linear(d_model * lane_count, lane_count)
+
+	def forward(self, lanes: list[torch.Tensor]) -> torch.Tensor:
+		stacked = torch.stack(lanes, dim=1)
+		joined = torch.cat(lanes, dim=-1)
+		weights = torch.softmax(self.weight_projection(self.norm(joined)), dim=-1)
+		return (stacked * weights.unsqueeze(-1)).sum(dim=1)
+
+
 class ActionConditionedHead(nn.Module):
 	def __init__(self, d_model: int, action_num: int, hidden_mult: int, dropout: float) -> None:
 		super().__init__()
@@ -317,7 +437,16 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		symbiosis_use_fourier_time: bool = True,
 		symbiosis_use_context_exchange: bool = True,
 		symbiosis_use_multi_scale: bool = True,
-		symbiosis_use_domain_gate: bool = False,
+		symbiosis_use_domain_gate: bool = True,
+		symbiosis_use_candidate_decoder: bool = True,
+		symbiosis_use_action_conditioning: bool = True,
+		symbiosis_use_compressed_memory: bool = True,
+		symbiosis_use_attention_sink: bool = True,
+		symbiosis_use_lane_mixing: bool = True,
+		symbiosis_use_semantic_id: bool = True,
+		symbiosis_memory_block_size: int = 16,
+		symbiosis_memory_top_k: int = 8,
+		symbiosis_recent_tokens: int = 64,
 	) -> None:
 		super().__init__()
 		del seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, seq_id_threshold
@@ -331,18 +460,28 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		self.symbiosis_use_context_exchange = symbiosis_use_context_exchange
 		self.symbiosis_use_multi_scale = symbiosis_use_multi_scale
 		self.symbiosis_use_domain_gate = symbiosis_use_domain_gate
+		self.symbiosis_use_candidate_decoder = symbiosis_use_candidate_decoder
+		self.symbiosis_use_action_conditioning = symbiosis_use_action_conditioning
+		self.symbiosis_use_compressed_memory = symbiosis_use_compressed_memory
+		self.symbiosis_use_attention_sink = symbiosis_use_attention_sink
+		self.symbiosis_use_lane_mixing = symbiosis_use_lane_mixing
+		self.symbiosis_use_semantic_id = symbiosis_use_semantic_id
 		force_auto_split = ns_tokenizer_type == "rankmixer"
 		self.user_tokenizer = NonSequentialTokenizer(user_int_feature_specs, user_ns_groups, emb_dim, d_model, user_ns_tokens, emb_skip_threshold, force_auto_split=force_auto_split)
 		self.item_tokenizer = NonSequentialTokenizer(item_int_feature_specs, item_ns_groups, emb_dim, d_model, item_ns_tokens, emb_skip_threshold, force_auto_split=force_auto_split)
 		self.user_dense = DenseTokenProjector(user_dense_dim, d_model)
 		self.item_dense = DenseTokenProjector(item_dense_dim, d_model)
+		self.semantic_projection = nn.Sequential(RMSNorm(d_model), nn.Linear(d_model, d_model), nn.SiLU()) if symbiosis_use_semantic_id else None
 		self.sequence_tokenizers = nn.ModuleDict(
 			{domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model, num_time_buckets, emb_skip_threshold) for domain, vocab_sizes in seq_vocab_sizes.items()}
 		)
 		self.time_encoders = nn.ModuleDict({domain: FourierTimeEncoder(d_model) for domain in self.seq_domains})
 		self.num_ns = self.user_tokenizer.num_tokens + self.item_tokenizer.num_tokens
 		self.num_ns += int(user_dense_dim > 0) + int(item_dense_dim > 0)
+		self.num_ns += int(symbiosis_use_semantic_id)
 		self.action_prompts = nn.Parameter(torch.randn(self.num_prompt_tokens, d_model) * 0.02)
+		self.target_action_token = nn.Parameter(torch.randn(1, d_model) * 0.02)
+		self.action_query_projection = nn.Sequential(RMSNorm(d_model), nn.Linear(d_model, d_model), nn.SiLU())
 		self.graph_blocks = nn.ModuleList(
 			UserItemGraphBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks)) if symbiosis_use_user_item_graph
 		)
@@ -361,10 +500,27 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		self.context_blocks = nn.ModuleList(
 			ContextExchangeBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks)) if symbiosis_use_context_exchange
 		)
+		self.candidate_query_projection = nn.Sequential(RMSNorm(d_model * 4), nn.Linear(d_model * 4, d_model), nn.SiLU())
+		self.candidate_decoder = (
+			CandidateConditionedSequenceDecoder(
+				d_model,
+				num_heads,
+				hidden_mult,
+				dropout_rate,
+				recent_tokens=symbiosis_recent_tokens,
+				memory_block_size=symbiosis_memory_block_size,
+				memory_top_k=symbiosis_memory_top_k,
+				use_compressed_memory=symbiosis_use_compressed_memory,
+				use_attention_sink=symbiosis_use_attention_sink,
+			)
+			if symbiosis_use_candidate_decoder
+			else None
+		)
+		self.lane_mixer = MultiLaneFusion(d_model, 5) if symbiosis_use_lane_mixing else None
 		self.unified_gate = nn.Sequential(nn.Linear(d_model * 2, d_model), nn.Sigmoid())
 		self.scale_projection = nn.Sequential(RMSNorm(d_model * 3), nn.Linear(d_model * 3, d_model), nn.SiLU())
-		self.fusion_projection = nn.Sequential(RMSNorm(d_model * 4), nn.Linear(d_model * 4, d_model), nn.SiLU())
-		self.fusion_gate = nn.Sequential(nn.Linear(d_model * 4, d_model), nn.Sigmoid())
+		self.fusion_projection = nn.Sequential(RMSNorm(d_model * 5), nn.Linear(d_model * 5, d_model), nn.SiLU())
+		self.fusion_gate = nn.Sequential(nn.Linear(d_model * 5, d_model), nn.Sigmoid())
 		self.out_norm = RMSNorm(d_model)
 		self.classifier = ActionConditionedHead(d_model, action_num, hidden_mult, dropout_rate)
 
@@ -377,7 +533,12 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		item_dense = self.item_dense(inputs.item_dense_feats)
 		if item_dense is not None:
 			item_parts.append(item_dense)
-		return torch.cat(user_parts, dim=1), torch.cat(item_parts, dim=1)
+		user_tokens = torch.cat(user_parts, dim=1)
+		item_tokens = torch.cat(item_parts, dim=1)
+		if self.semantic_projection is not None:
+			semantic_token = self.semantic_projection(masked_mean(item_tokens)).unsqueeze(1)
+			item_tokens = torch.cat([item_tokens, semantic_token], dim=1)
+		return user_tokens, item_tokens
 
 	def _encode_non_sequence(self, inputs: ModelInput) -> torch.Tensor:
 		user_tokens, item_tokens = self._encode_non_sequence_parts(inputs)
@@ -419,20 +580,45 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		).mean(dim=1)
 		return self.scale_projection(torch.cat([means, recents, lasts], dim=-1))
 
+	def _action_context(self, batch_size: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+		if not self.symbiosis_use_action_conditioning:
+			return torch.zeros(batch_size, self.d_model, device=device, dtype=dtype)
+		action_token = self.target_action_token.to(device=device, dtype=dtype).expand(batch_size, -1)
+		return self.action_query_projection(action_token)
+
+	def _candidate_query(
+		self,
+		user_context: torch.Tensor,
+		item_context: torch.Tensor,
+		graph_context: torch.Tensor,
+		action_context: torch.Tensor,
+	) -> torch.Tensor:
+		return self.candidate_query_projection(torch.cat([user_context, item_context, graph_context, action_context], dim=-1))
+
 	def _embed(self, inputs: ModelInput) -> torch.Tensor:
 		user_tokens, item_tokens = self._encode_non_sequence_parts(inputs)
 		for block in self.graph_blocks:
 			user_tokens, item_tokens = block(user_tokens, item_tokens)
 		ns_tokens = torch.cat([user_tokens, item_tokens], dim=1)
+		user_context = masked_mean(user_tokens)
+		item_context = masked_mean(item_tokens)
 		graph_context = masked_mean(ns_tokens)
 		sequences, masks, lengths = self._encode_sequences(inputs)
+		action_context = self._action_context(ns_tokens.shape[0], ns_tokens.device, ns_tokens.dtype)
+		candidate_query = self._candidate_query(user_context, item_context, graph_context, action_context)
+		if self.candidate_decoder is not None:
+			candidate_sequence_context = self.candidate_decoder(candidate_query, sequences, masks)
+		else:
+			candidate_sequence_context = torch.zeros_like(graph_context)
 		ns_mask = torch.zeros(ns_tokens.shape[0], ns_tokens.shape[1], dtype=torch.bool, device=ns_tokens.device)
 		prompt_tokens = self.action_prompts.unsqueeze(0).expand(ns_tokens.shape[0], -1, -1)
+		if self.symbiosis_use_action_conditioning:
+			prompt_tokens = prompt_tokens + action_context.unsqueeze(1)
 		prompt_mask = torch.zeros(prompt_tokens.shape[0], prompt_tokens.shape[1], dtype=torch.bool, device=ns_tokens.device)
 		unified_tokens = torch.cat([prompt_tokens, ns_tokens], dim=1)
 		unified_mask = torch.cat([prompt_mask, ns_mask], dim=1)
 		for block in self.unified_blocks:
-			unified_tokens = block(unified_tokens, unified_mask, sequences, masks, graph_context)
+			unified_tokens = block(unified_tokens, unified_mask, sequences, masks, candidate_query)
 		prompt_context = masked_mean(unified_tokens[:, : self.num_prompt_tokens, :])
 		token_context = masked_mean(unified_tokens[:, self.num_prompt_tokens :, :], unified_mask[:, self.num_prompt_tokens :])
 		unified_gate = self.unified_gate(torch.cat([prompt_context, token_context], dim=-1))
@@ -444,9 +630,13 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 			scale_context = self._multi_scale_context(sequences, masks, lengths, ns_tokens)
 		else:
 			scale_context = torch.zeros_like(graph_context)
-		joined = torch.cat([unified_context, context, scale_context, graph_context], dim=-1)
+		lanes = [unified_context, context, scale_context, graph_context, candidate_sequence_context]
+		joined = torch.cat(lanes, dim=-1)
 		candidate = self.fusion_projection(joined)
-		blended = (unified_context + context + scale_context + graph_context) * 0.25
+		if self.lane_mixer is not None:
+			blended = self.lane_mixer(lanes)
+		else:
+			blended = torch.stack(lanes, dim=0).mean(dim=0)
 		gate = self.fusion_gate(joined)
 		return self.out_norm(gate * candidate + (1.0 - gate) * blended)
 

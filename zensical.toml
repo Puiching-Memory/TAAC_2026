@@ -56,7 +56,6 @@ nav = [
         { "特征Token化·长序列注意力·辅助Loss" = "ideas/posts/001-rec-model-work-summary.md" },
         { "腾讯广告算法大赛 2025 官方论文解读：全模态生成式推荐" = "ideas/posts/002-taac2025-competition-paper.md" },
         { "Learning Mechanics 分析方法：从缩放律、学习量子到低秩动力学" = "ideas/posts/003-learning-mechanics-analysis.md" },
-        { "Symbiosis V2 改造与实验验证计划" = "ideas/posts/004-symbiosis-v2-experiment-plan.md" },
     ] },
     { "论文" = [
         { "技术发展时间线" = "papers/index.md" },

@@ -123,6 +123,14 @@ def test_symbiosis_enables_amp_and_compile_by_default() -> None:
     assert train_defaults["amp"] is True
     assert train_defaults["amp_dtype"] == "bfloat16"
     assert train_defaults["compile"] is True
+    assert train_defaults["pairwise_auc_weight"] == pytest.approx(0.05)
+    assert train_defaults["dense_optimizer_type"] == "orthogonal_adamw"
+    assert train_defaults["symbiosis_use_candidate_decoder"] is True
+    assert train_defaults["symbiosis_use_action_conditioning"] is True
+    assert train_defaults["symbiosis_use_compressed_memory"] is True
+    assert train_defaults["symbiosis_use_attention_sink"] is True
+    assert train_defaults["symbiosis_use_lane_mixing"] is True
+    assert train_defaults["symbiosis_use_semantic_id"] is True
 
 
 def test_symbiosis_keeps_sequence_width_stable_for_compile() -> None:
@@ -254,6 +262,12 @@ def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
             "symbiosis_use_context_exchange": False,
             "symbiosis_use_multi_scale": False,
             "symbiosis_use_domain_gate": True,
+            "symbiosis_use_candidate_decoder": False,
+            "symbiosis_use_action_conditioning": False,
+            "symbiosis_use_compressed_memory": False,
+            "symbiosis_use_attention_sink": False,
+            "symbiosis_use_lane_mixing": False,
+            "symbiosis_use_semantic_id": False,
         },
     )
     model_input = _sample_model_input(model_module)
@@ -262,6 +276,9 @@ def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
     assert len(model.context_blocks) == 0
     assert model.symbiosis_use_fourier_time is False
     assert model.symbiosis_use_multi_scale is False
+    assert model.candidate_decoder is None
+    assert model.lane_mixer is None
+    assert model.semantic_projection is None
     assert all(block.use_domain_gate for block in model.unified_blocks)
 
     logits = model(model_input)

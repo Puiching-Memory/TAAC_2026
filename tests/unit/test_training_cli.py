@@ -55,6 +55,18 @@ def test_parse_pcvr_train_args_accepts_symbiosis_ablation_flags(tmp_path: Path) 
             "--no-symbiosis-use-context-exchange",
             "--no-symbiosis-use-multi-scale",
             "--symbiosis-use-domain-gate",
+            "--no-symbiosis-use-candidate-decoder",
+            "--no-symbiosis-use-action-conditioning",
+            "--no-symbiosis-use-compressed-memory",
+            "--no-symbiosis-use-attention-sink",
+            "--no-symbiosis-use-lane-mixing",
+            "--no-symbiosis-use-semantic-id",
+            "--symbiosis-memory-block-size",
+            "32",
+            "--symbiosis-memory-top-k",
+            "4",
+            "--symbiosis-recent-tokens",
+            "16",
         ],
         package_dir=tmp_path,
     )
@@ -64,6 +76,33 @@ def test_parse_pcvr_train_args_accepts_symbiosis_ablation_flags(tmp_path: Path) 
     assert args.symbiosis_use_context_exchange is False
     assert args.symbiosis_use_multi_scale is False
     assert args.symbiosis_use_domain_gate is True
+    assert args.symbiosis_use_candidate_decoder is False
+    assert args.symbiosis_use_action_conditioning is False
+    assert args.symbiosis_use_compressed_memory is False
+    assert args.symbiosis_use_attention_sink is False
+    assert args.symbiosis_use_lane_mixing is False
+    assert args.symbiosis_use_semantic_id is False
+    assert args.symbiosis_memory_block_size == 32
+    assert args.symbiosis_memory_top_k == 4
+    assert args.symbiosis_recent_tokens == 16
+
+
+def test_parse_pcvr_train_args_accepts_auc_and_optimizer_flags(tmp_path: Path) -> None:
+    args = parse_pcvr_train_args(
+        [
+            "--pairwise-auc-weight",
+            "0.2",
+            "--pairwise-auc-temperature",
+            "0.5",
+            "--dense-optimizer-type",
+            "orthogonal_adamw",
+        ],
+        package_dir=tmp_path,
+    )
+
+    assert args.pairwise_auc_weight == pytest.approx(0.2)
+    assert args.pairwise_auc_temperature == pytest.approx(0.5)
+    assert args.dense_optimizer_type == "orthogonal_adamw"
 
 
 def test_parse_pcvr_train_args_rejects_data_pipeline_flags(tmp_path: Path) -> None:
