@@ -2,7 +2,7 @@ name: taac2026
 
 x-gpu-build: &gpu-build
   context: .
-  dockerfile: Dockerfile
+  dockerfile: docker/Dockerfile
   target: app
   args:
     BASE_IMAGE: ${BASE_IMAGE:-nvidia/cuda:12.6.0-devel-ubuntu22.04}
