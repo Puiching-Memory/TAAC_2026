@@ -18,3 +18,4 @@ icon: lucide/lightbulb
 | 2026-04-12 | [从直播推荐实战看特征 Token 化、长序列注意力与辅助 Loss 设计](posts/001-rec-model-work-summary.md) | RankMixer, STCA, 行为序列融合, MoE, 生成式辅助 loss   |
 | 2026-04-14 | [腾讯广告算法大赛 2025 官方论文解读：全模态生成式推荐](posts/002-taac2025-competition-paper.md)    | 生成式推荐, 多模态, Semantic ID, InfoNCE, Scaling Law |
 | 2026-04-26 | [Learning Mechanics 分析方法：从缩放律、学习量子到低秩动力学](posts/003-learning-mechanics-analysis.md) | 学习力学, Scaling Law, Quanta, 低秩更新, 谱分析       |
+| 2026-04-28 | [统一理解生成启发：Thinking + 混合模态的 TAAC 2026 生成式推荐模型](posts/004-unified-thinking-multimodal-generative-rec.md) | Thinking, 混合模态, 统一生成式推荐, Semantic ID, Latent Reasoning |
