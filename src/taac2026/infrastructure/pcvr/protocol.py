@@ -2,38 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from taac2026.infrastructure.io.files import read_json
-
-
-DEFAULT_PCVR_MODEL_CONFIG: dict[str, Any] = {
-    "d_model": 64,
-    "emb_dim": 64,
-    "num_queries": 2,
-    "num_blocks": 2,
-    "num_heads": 4,
-    "seq_encoder_type": "transformer",
-    "hidden_mult": 4,
-    "dropout_rate": 0.01,
-    "seq_top_k": 50,
-    "seq_causal": False,
-    "action_num": 1,
-    "use_time_buckets": True,
-    "rank_mixer_mode": "full",
-    "use_rope": False,
-    "rope_base": 10000.0,
-    "emb_skip_threshold": 1000000,
-    "seq_id_threshold": 10000,
-    "ns_tokenizer_type": "rankmixer",
-    "user_ns_tokens": 5,
-    "item_ns_tokens": 2,
-    "seq_max_lens": "seq_a:256,seq_b:256,seq_c:512,seq_d:512",
-    "ns_groups_json": "ns_groups.json",
-}
 
 
 def parse_seq_max_lens(value: str) -> dict[str, int]:
@@ -89,7 +64,7 @@ def resolve_ns_groups_path(value: str, package_dir: Path, checkpoint_dir: Path) 
 
 
 def load_ns_groups(dataset: Any, config: dict[str, Any], package_dir: Path, checkpoint_dir: Path) -> tuple[list[list[int]], list[list[int]]]:
-    ns_groups_path = resolve_ns_groups_path(str(config.get("ns_groups_json", "")), package_dir, checkpoint_dir)
+    ns_groups_path = resolve_ns_groups_path(str(config["ns_groups_json"]), package_dir, checkpoint_dir)
     if ns_groups_path is None:
         return (
             [[index] for index in range(len(dataset.user_int_schema.entries))],
@@ -114,7 +89,7 @@ def load_ns_groups(dataset: Any, config: dict[str, Any], package_dir: Path, chec
 
 
 def num_time_buckets(config: dict[str, Any], data_module: Any) -> int:
-    if not bool(config.get("use_time_buckets", True)):
+    if not bool(config["use_time_buckets"]):
         return 0
     return int(data_module.NUM_TIME_BUCKETS)
 
@@ -133,7 +108,7 @@ def build_pcvr_model(
     user_int_feature_specs = build_feature_specs(dataset.user_int_schema, dataset.user_int_vocab_sizes)
     item_int_feature_specs = build_feature_specs(dataset.item_int_schema, dataset.item_int_vocab_sizes)
     model_class = getattr(model_module, model_class_name)
-    return model_class(
+    model_kwargs = dict(
         user_int_feature_specs=user_int_feature_specs,
         item_int_feature_specs=item_int_feature_specs,
         user_dense_dim=dataset.user_dense_schema.total_dim,
@@ -162,6 +137,17 @@ def build_pcvr_model(
         user_ns_tokens=int(config["user_ns_tokens"]),
         item_ns_tokens=int(config["item_ns_tokens"]),
     )
+    model_signature = inspect.signature(model_class)
+    for key in (
+        "symbiosis_use_user_item_graph",
+        "symbiosis_use_fourier_time",
+        "symbiosis_use_context_exchange",
+        "symbiosis_use_multi_scale",
+        "symbiosis_use_domain_gate",
+    ):
+        if key in model_signature.parameters:
+            model_kwargs[key] = bool(config[key])
+    return model_class(**model_kwargs)
 
 
 def batch_to_model_input(batch: dict[str, Any], model_input_type: Any, device: torch.device) -> Any:

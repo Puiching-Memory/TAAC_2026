@@ -9,7 +9,7 @@ import sys
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +18,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from taac2026.domain.config import EvalRequest, InferRequest, TrainRequest
-from taac2026.domain.metrics import binary_auc, binary_logloss
+from taac2026.domain.metrics import compute_classification_metrics
 from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
 import taac2026.infrastructure.pcvr.data as pcvr_data
+from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, REQUIRED_PCVR_TRAIN_CONFIG_KEYS
 from taac2026.infrastructure.pcvr.protocol import (
-    DEFAULT_PCVR_MODEL_CONFIG,
     batch_to_model_input,
     build_pcvr_model,
     parse_seq_max_lens,
@@ -38,6 +38,7 @@ _PLUGIN_MODULE_NAMES = ("utils", "model")
 _INFER_REQUEST_DEFAULT_BATCH_SIZE = int(InferRequest.__dataclass_fields__["batch_size"].default)
 _INFER_REQUEST_DEFAULT_NUM_WORKERS = int(InferRequest.__dataclass_fields__["num_workers"].default)
 _PREDICTION_PROGRESS_LOG_EVERY_ROWS = 50_000
+_EVAL_AUC_BOOTSTRAP_SAMPLES = 200
 
 
 def _coerce_optional_int(value: Any) -> int | None:
@@ -49,32 +50,11 @@ def _coerce_optional_int(value: Any) -> int | None:
         return None
 
 
-def _read_flag_value(args: tuple[str, ...], flag_names: tuple[str, ...]) -> str | None:
-    index = 0
-    while index < len(args):
-        token = args[index]
-        has_value = index + 1 < len(args) and not args[index + 1].startswith("--")
-        if token in flag_names:
-            return args[index + 1] if has_value else None
-        if token.startswith("--") and has_value:
-            index += 2
-        else:
-            index += 1
-    return None
-
-
-def _read_bool_flag_value(
-    args: tuple[str, ...],
-    enabled_flags: tuple[str, ...],
-    disabled_flags: tuple[str, ...],
-) -> bool | None:
-    resolved: bool | None = None
-    for token in args:
-        if token in enabled_flags:
-            resolved = True
-        elif token in disabled_flags:
-            resolved = False
-    return resolved
+def _required_config_value(config: dict[str, Any], config_key: str) -> Any:
+    try:
+        return config[config_key]
+    except KeyError as error:
+        raise KeyError(f"PCVR train_config is missing required key: {config_key}") from error
 
 
 def _log_prediction_progress(
@@ -104,7 +84,7 @@ class PCVRExperiment:
     name: str
     package_dir: Path
     model_class_name: str
-    default_train_args: tuple[str, ...] = ()
+    train_defaults: PCVRTrainConfig = field(default_factory=PCVRTrainConfig)
 
     @property
     def metadata(self) -> dict[str, str]:
@@ -146,7 +126,6 @@ class PCVRExperiment:
             str(train_log_dir),
             "--tf_events_dir",
             str(tensorboard_dir),
-            *self.default_train_args,
         ]
         if request.schema_path is not None:
             forwarded_args.extend(["--schema_path", str(request.schema_path.expanduser().resolve())])
@@ -159,6 +138,7 @@ class PCVRExperiment:
                 model_module=model_module,
                 model_class_name=self.model_class_name,
                 package_dir=self.package_dir,
+                defaults=self.train_defaults,
                 argv=forwarded_args,
             )
 
@@ -212,11 +192,11 @@ class PCVRExperiment:
 
         labels = np.asarray(evaluation["labels"], dtype=np.float64)
         probabilities = np.asarray(evaluation["probabilities"], dtype=np.float64)
-        metrics = {
-            "auc": binary_auc(labels, probabilities),
-            "logloss": binary_logloss(labels, probabilities),
-            "sample_count": int(labels.size),
-        }
+        metrics = compute_classification_metrics(
+            labels,
+            probabilities,
+            auc_bootstrap_samples=_EVAL_AUC_BOOTSTRAP_SAMPLES,
+        )
         rows = [
             json.dumps(record, ensure_ascii=False)
             for record in evaluation["records"]
@@ -227,10 +207,48 @@ class PCVRExperiment:
             "experiment_name": self.name,
             "checkpoint_path": str(checkpoint),
             "metrics": metrics,
+            "data_diagnostics": self._build_evaluation_data_diagnostics(request.dataset_path),
             "validation_predictions_path": str(predictions_path),
         }
         write_json(output_path, payload)
         return payload
+
+    def _build_evaluation_data_diagnostics(self, dataset_path: Path) -> dict[str, Any]:
+        resolved_dataset_path = dataset_path.expanduser()
+        warnings: list[str] = []
+        try:
+            rg_info = pcvr_data.collect_pcvr_row_groups(resolved_dataset_path)
+            split_plan = pcvr_data.plan_pcvr_row_group_split(rg_info)
+        except (FileNotFoundError, OSError, ValueError) as error:
+            return {
+                "dataset_path": str(resolved_dataset_path),
+                "warnings": [f"row group diagnostics unavailable: {error}"],
+            }
+
+        files = sorted({path for path, _index, _rows in rg_info})
+        if split_plan.reuse_train_for_valid:
+            warnings.append("single Row Group dataset would reuse train rows for validation; treat as L0 smoke only")
+        if not split_plan.is_l1_ready:
+            warnings.append("row group split is not suitable for L1 model comparison")
+
+        return {
+            "dataset_path": str(resolved_dataset_path.resolve()),
+            "file_count": len(files),
+            "total_row_groups": split_plan.total_row_groups,
+            "total_rows": int(sum(rows for _path, _index, rows in rg_info)),
+            "row_group_split": {
+                "train_row_groups": split_plan.train_row_groups,
+                "valid_row_groups": split_plan.valid_row_groups,
+                "train_row_group_range": list(split_plan.train_row_group_range),
+                "valid_row_group_range": list(split_plan.valid_row_group_range),
+                "train_rows": split_plan.train_rows,
+                "valid_rows": split_plan.valid_rows,
+                "reuse_train_for_valid": split_plan.reuse_train_for_valid,
+                "is_disjoint": split_plan.is_disjoint,
+                "is_l1_ready": split_plan.is_l1_ready,
+            },
+            "warnings": warnings,
+        }
 
     def infer(self, request: InferRequest) -> Mapping[str, Any]:
         checkpoint_root = Path(os.environ.get("MODEL_OUTPUT_PATH", "")).expanduser()
@@ -297,18 +315,12 @@ class PCVRExperiment:
         config: dict[str, Any],
         *,
         config_key: str,
-        flag_names: tuple[str, ...],
         minimum: int,
-    ) -> tuple[int | None, str | None]:
-        configured_value = _coerce_optional_int(config.get(config_key))
-        if configured_value is not None and configured_value >= minimum:
-            return configured_value, "train_config"
-
-        default_arg_value = _coerce_optional_int(_read_flag_value(self.default_train_args, flag_names))
-        if default_arg_value is not None and default_arg_value >= minimum:
-            return default_arg_value, "experiment_default_train_args"
-
-        return None, None
+    ) -> tuple[int, str]:
+        configured_value = _coerce_optional_int(_required_config_value(config, config_key))
+        if configured_value is None or configured_value < minimum:
+            raise ValueError(f"PCVR train_config key {config_key!r} must be >= {minimum}, got {config.get(config_key)!r}")
+        return configured_value, "train_config"
 
     def _resolve_prediction_runtime_settings(
         self,
@@ -321,12 +333,10 @@ class PCVRExperiment:
             configured_batch_size, configured_batch_size_source = self._configured_infer_runtime_value(
                 config,
                 config_key="batch_size",
-                flag_names=("--batch_size", "--batch-size"),
                 minimum=1,
             )
-            if configured_batch_size is not None and configured_batch_size_source is not None:
-                batch_size = configured_batch_size
-                batch_size_source = configured_batch_size_source
+            batch_size = configured_batch_size
+            batch_size_source = configured_batch_size_source
 
         num_workers = int(request.num_workers)
         num_workers_source = "request" if request.num_workers != _INFER_REQUEST_DEFAULT_NUM_WORKERS else "cli_default"
@@ -334,12 +344,10 @@ class PCVRExperiment:
             configured_num_workers, configured_num_workers_source = self._configured_infer_runtime_value(
                 config,
                 config_key="num_workers",
-                flag_names=("--num_workers", "--num-workers"),
                 minimum=0,
             )
-            if configured_num_workers is not None and configured_num_workers_source is not None:
-                num_workers = configured_num_workers
-                num_workers_source = configured_num_workers_source
+            num_workers = configured_num_workers
+            num_workers_source = configured_num_workers_source
 
         return batch_size, batch_size_source, num_workers, num_workers_source
 
@@ -350,28 +358,20 @@ class PCVRExperiment:
     ) -> tuple[int, str, int, str]:
         return self._resolve_prediction_runtime_settings(request, config)
 
-    def _configured_runtime_flag(
+    def _configured_runtime_bool(
         self,
         request_value: bool | None,
         config: dict[str, Any],
         *,
         config_key: str,
-        enabled_flags: tuple[str, ...],
-        disabled_flags: tuple[str, ...],
-        default: bool,
     ) -> tuple[bool, str]:
         if request_value is not None:
             return bool(request_value), "request"
 
-        configured_value = config.get(config_key)
-        if isinstance(configured_value, bool):
-            return configured_value, "train_config"
-
-        default_arg_value = _read_bool_flag_value(self.default_train_args, enabled_flags, disabled_flags)
-        if default_arg_value is not None:
-            return default_arg_value, "experiment_default_train_args"
-
-        return default, "default"
+        configured_value = _required_config_value(config, config_key)
+        if not isinstance(configured_value, bool):
+            raise TypeError(f"PCVR train_config key {config_key!r} must be bool, got {type(configured_value).__name__}")
+        return configured_value, "train_config"
 
     def _configured_runtime_string(
         self,
@@ -379,49 +379,34 @@ class PCVRExperiment:
         config: dict[str, Any],
         *,
         config_key: str,
-        flag_names: tuple[str, ...],
-        default: str,
     ) -> tuple[str, str]:
         if request_value not in (None, ""):
             return normalize_amp_dtype(request_value), "request"
 
-        configured_value = config.get(config_key)
-        if isinstance(configured_value, str) and configured_value.strip():
-            return normalize_amp_dtype(configured_value), "train_config"
-
-        default_arg_value = _read_flag_value(self.default_train_args, flag_names)
-        if default_arg_value not in (None, ""):
-            return normalize_amp_dtype(default_arg_value), "experiment_default_train_args"
-
-        return normalize_amp_dtype(default), "default"
+        configured_value = _required_config_value(config, config_key)
+        if not isinstance(configured_value, str) or not configured_value.strip():
+            raise TypeError(f"PCVR train_config key {config_key!r} must be a non-empty string")
+        return normalize_amp_dtype(configured_value), "train_config"
 
     def _resolve_prediction_runtime_execution(
         self,
         request: EvalRequest | InferRequest,
         config: dict[str, Any],
     ) -> tuple[RuntimeExecutionConfig, str, str, str]:
-        amp, amp_source = self._configured_runtime_flag(
+        amp, amp_source = self._configured_runtime_bool(
             getattr(request, "amp", None),
             config,
             config_key="amp",
-            enabled_flags=("--amp",),
-            disabled_flags=("--no-amp",),
-            default=False,
         )
         amp_dtype, amp_dtype_source = self._configured_runtime_string(
             getattr(request, "amp_dtype", None),
             config,
             config_key="amp_dtype",
-            flag_names=("--amp_dtype", "--amp-dtype"),
-            default="bfloat16",
         )
-        compile_enabled, compile_source = self._configured_runtime_flag(
+        compile_enabled, compile_source = self._configured_runtime_bool(
             getattr(request, "compile", None),
             config,
             config_key="compile",
-            enabled_flags=("--compile",),
-            disabled_flags=("--no-compile",),
-            default=False,
         )
         return RuntimeExecutionConfig(amp=amp, amp_dtype=amp_dtype, compile=compile_enabled), amp_source, amp_dtype_source, compile_source
 
@@ -442,7 +427,7 @@ class PCVRExperiment:
 
         resolved_schema_path = self._resolve_schema_path(dataset_path, schema_path, checkpoint_path.parent)
         resolved_config = config if config is not None else self._load_train_config(checkpoint_path.parent)
-        seq_max_lens = parse_seq_max_lens(str(resolved_config.get("seq_max_lens", "")))
+        seq_max_lens = parse_seq_max_lens(str(resolved_config["seq_max_lens"]))
         dataset = pcvr_data.PCVRParquetDataset(
             parquet_path=str(dataset_path.expanduser().resolve()),
             schema_path=str(resolved_schema_path),
@@ -548,11 +533,14 @@ class PCVRExperiment:
         return {"labels": labels, "probabilities": probabilities, "records": records}
 
     def _load_train_config(self, checkpoint_dir: Path) -> dict[str, Any]:
-        config = dict(DEFAULT_PCVR_MODEL_CONFIG)
         config_path = checkpoint_dir / "train_config.json"
-        if config_path.exists():
-            stored_config = read_json(config_path)
-            config.update(stored_config)
+        if not config_path.exists():
+            raise FileNotFoundError(f"PCVR train_config.json not found in checkpoint directory: {checkpoint_dir}")
+        config = read_json(config_path)
+        missing_keys = sorted(REQUIRED_PCVR_TRAIN_CONFIG_KEYS - set(config))
+        if missing_keys:
+            joined = ", ".join(missing_keys)
+            raise KeyError(f"PCVR train_config.json is missing required key(s): {joined}")
         return config
 
     def _resolve_schema_path(self, dataset_path: Path, schema_path: Path | None, checkpoint_dir: Path) -> Path:

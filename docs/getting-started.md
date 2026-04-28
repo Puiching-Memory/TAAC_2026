@@ -99,7 +99,7 @@ bash run.sh val --experiment config/baseline \
     --device cpu
 ```
 
-当前 PCVR 评估报告输出 `auc`、`logloss` 和 `sample_count`，并写出 `evaluation.json` 与 `validation_predictions.jsonl`。运行参数以当前 `taac-evaluate single` parser 为准。
+当前 PCVR 评估报告会在 `auc` 旁边自动输出 `auc_ci`、`logloss`、`brier`、`score_diagnostics` 和 `sample_count`，并在顶层写出 `data_diagnostics` 说明 Row Group 切分是否适合 L1 比较。评估同时写出 `evaluation.json` 与 `validation_predictions.jsonl`。运行参数以当前 `taac-evaluate single` parser 为准。
 
 ## 运行其他实验包
 

@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 
 AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
+BINARY_LOSS_TYPE_CHOICES: tuple[str, ...] = ("bce", "focal")
 _AMP_DTYPE_ALIASES = {
     "bf16": "bfloat16",
     "bfloat16": "bfloat16",
@@ -78,6 +79,33 @@ class RuntimeExecutionConfig:
             f"amp={self.amp} (effective={self.amp_enabled_for(device)}), "
             f"amp_dtype={self.normalized_amp_dtype()}, compile={self.compile}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryClassificationLossConfig:
+    loss_type: str = "bce"
+    focal_alpha: float = 0.1
+    focal_gamma: float = 2.0
+
+    def __post_init__(self) -> None:
+        normalized_loss_type = str(self.loss_type).strip().lower()
+        if normalized_loss_type not in BINARY_LOSS_TYPE_CHOICES:
+            raise ValueError(f"unsupported loss_type: {self.loss_type}")
+
+        focal_alpha = float(self.focal_alpha)
+        if not 0.0 <= focal_alpha <= 1.0:
+            raise ValueError(f"focal_alpha must be between 0 and 1, got {self.focal_alpha}")
+
+        focal_gamma = float(self.focal_gamma)
+        if focal_gamma < 0.0:
+            raise ValueError(f"focal_gamma must be >= 0, got {self.focal_gamma}")
+
+        object.__setattr__(self, "loss_type", normalized_loss_type)
+        object.__setattr__(self, "focal_alpha", focal_alpha)
+        object.__setattr__(self, "focal_gamma", focal_gamma)
+
+
+DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG = BinaryClassificationLossConfig()
 
 
 def create_grad_scaler(
@@ -235,3 +263,23 @@ def sigmoid_focal_loss(
     if reduction == "sum":
         return loss.sum()
     return loss
+
+
+def compute_binary_classification_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    loss_config: BinaryClassificationLossConfig | None = None,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute the shared binary classification loss from raw logits."""
+
+    resolved_loss_config = loss_config or DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG
+    if resolved_loss_config.loss_type == "focal":
+        return sigmoid_focal_loss(
+            logits,
+            targets,
+            alpha=resolved_loss_config.focal_alpha,
+            gamma=resolved_loss_config.focal_gamma,
+            reduction=reduction,
+        )
+    return F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)

@@ -12,6 +12,10 @@ from typing import Any
 import torch
 
 import taac2026.infrastructure.pcvr.data as pcvr_data
+from taac2026.infrastructure.pcvr.config import (
+    DEFAULT_PCVR_TRAIN_CONFIG,
+    PCVRTrainConfig,
+)
 from taac2026.infrastructure.pcvr.protocol import (
     build_pcvr_model,
     load_ns_groups,
@@ -22,6 +26,7 @@ from taac2026.infrastructure.pcvr.protocol import (
 from taac2026.infrastructure.pcvr.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.training.runtime import (
     AMP_DTYPE_CHOICES,
+    BINARY_LOSS_TYPE_CHOICES,
     EarlyStopping,
     RuntimeExecutionConfig,
     create_logger,
@@ -33,76 +38,184 @@ def parse_pcvr_train_args(
     argv: Sequence[str] | None = None,
     *,
     package_dir: Path,
+    defaults: PCVRTrainConfig = DEFAULT_PCVR_TRAIN_CONFIG,
 ) -> argparse.Namespace:
+    default_values = defaults.to_flat_dict()
     parser = argparse.ArgumentParser(description="Train a PCVR experiment")
 
     parser.add_argument("--data_dir", "--data-dir", dest="data_dir", default=None)
-    parser.add_argument("--schema_path", "--schema-path", dest="schema_path", default=None)
+    parser.add_argument(
+        "--schema_path", "--schema-path", dest="schema_path", default=None
+    )
     parser.add_argument("--ckpt_dir", "--ckpt-dir", dest="ckpt_dir", default=None)
     parser.add_argument("--log_dir", "--log-dir", dest="log_dir", default=None)
-    parser.add_argument("--tf_events_dir", "--tf-events-dir", dest="tf_events_dir", default=None)
+    parser.add_argument(
+        "--tf_events_dir", "--tf-events-dir", dest="tf_events_dir", default=None
+    )
 
-    parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--num_epochs", type=int, default=999)
-    parser.add_argument("--patience", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--batch_size", type=int, default=default_values["batch_size"])
+    parser.add_argument("--lr", type=float, default=default_values["lr"])
+    parser.add_argument("--num_epochs", type=int, default=default_values["num_epochs"])
+    parser.add_argument("--patience", type=int, default=default_values["patience"])
+    parser.add_argument("--seed", type=int, default=default_values["seed"])
+    parser.add_argument(
+        "--device",
+        default=default_values["device"]
+        or ("cuda" if torch.cuda.is_available() else "cpu"),
+    )
+    parser.add_argument(
+        "--amp", action=argparse.BooleanOptionalAction, default=default_values["amp"]
+    )
     parser.add_argument(
         "--amp_dtype",
         "--amp-dtype",
         dest="amp_dtype",
-        default="bfloat16",
+        default=default_values["amp_dtype"],
         choices=AMP_DTYPE_CHOICES,
     )
-    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["compile"],
+    )
 
-    parser.add_argument("--num_workers", type=int, default=16)
-    parser.add_argument("--buffer_batches", type=int, default=20)
-    parser.add_argument("--train_ratio", type=float, default=1.0)
-    parser.add_argument("--valid_ratio", type=float, default=0.1)
-    parser.add_argument("--eval_every_n_steps", type=int, default=0)
-    parser.add_argument("--seq_max_lens", default="seq_a:256,seq_b:256,seq_c:512,seq_d:512")
+    parser.add_argument(
+        "--num_workers", type=int, default=default_values["num_workers"]
+    )
+    parser.add_argument(
+        "--buffer_batches", type=int, default=default_values["buffer_batches"]
+    )
+    parser.add_argument(
+        "--train_ratio", type=float, default=default_values["train_ratio"]
+    )
+    parser.add_argument(
+        "--valid_ratio", type=float, default=default_values["valid_ratio"]
+    )
+    parser.add_argument(
+        "--eval_every_n_steps", type=int, default=default_values["eval_every_n_steps"]
+    )
+    parser.add_argument("--seq_max_lens", default=default_values["seq_max_lens"])
 
-    parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--emb_dim", type=int, default=64)
-    parser.add_argument("--num_queries", type=int, default=1)
-    parser.add_argument("--num_blocks", type=int, default=2)
-    parser.add_argument("--num_heads", type=int, default=4)
+    parser.add_argument("--d_model", type=int, default=default_values["d_model"])
+    parser.add_argument("--emb_dim", type=int, default=default_values["emb_dim"])
+    parser.add_argument(
+        "--num_queries", type=int, default=default_values["num_queries"]
+    )
+    parser.add_argument("--num_blocks", type=int, default=default_values["num_blocks"])
+    parser.add_argument("--num_heads", type=int, default=default_values["num_heads"])
     parser.add_argument(
         "--seq_encoder_type",
-        default="transformer",
+        default=default_values["seq_encoder_type"],
         choices=["swiglu", "transformer", "longer"],
     )
-    parser.add_argument("--hidden_mult", type=int, default=4)
-    parser.add_argument("--dropout_rate", type=float, default=0.01)
-    parser.add_argument("--seq_top_k", type=int, default=50)
-    parser.add_argument("--seq_causal", action="store_true", default=False)
-    parser.add_argument("--action_num", type=int, default=1)
-    parser.add_argument("--use_time_buckets", action="store_true", default=True)
-    parser.add_argument("--no_time_buckets", dest="use_time_buckets", action="store_false")
-    parser.add_argument("--rank_mixer_mode", default="full", choices=["full", "ffn_only", "none"])
-    parser.add_argument("--use_rope", action="store_true", default=False)
-    parser.add_argument("--rope_base", type=float, default=10000.0)
+    parser.add_argument(
+        "--hidden_mult", type=int, default=default_values["hidden_mult"]
+    )
+    parser.add_argument(
+        "--dropout_rate", type=float, default=default_values["dropout_rate"]
+    )
+    parser.add_argument("--seq_top_k", type=int, default=default_values["seq_top_k"])
+    parser.add_argument(
+        "--seq_causal", action="store_true", default=default_values["seq_causal"]
+    )
+    parser.add_argument("--action_num", type=int, default=default_values["action_num"])
+    parser.add_argument(
+        "--use_time_buckets",
+        action="store_true",
+        default=default_values["use_time_buckets"],
+    )
+    parser.add_argument(
+        "--no_time_buckets", dest="use_time_buckets", action="store_false"
+    )
+    parser.add_argument(
+        "--rank_mixer_mode",
+        default=default_values["rank_mixer_mode"],
+        choices=["full", "ffn_only", "none"],
+    )
+    parser.add_argument(
+        "--use_rope", action="store_true", default=default_values["use_rope"]
+    )
+    parser.add_argument("--rope_base", type=float, default=default_values["rope_base"])
 
-    parser.add_argument("--loss_type", default="bce", choices=["bce", "focal"])
-    parser.add_argument("--focal_alpha", type=float, default=0.1)
-    parser.add_argument("--focal_gamma", type=float, default=2.0)
+    parser.add_argument(
+        "--loss_type",
+        default=default_values["loss_type"],
+        choices=BINARY_LOSS_TYPE_CHOICES,
+    )
+    parser.add_argument(
+        "--focal_alpha", type=float, default=default_values["focal_alpha"]
+    )
+    parser.add_argument(
+        "--focal_gamma", type=float, default=default_values["focal_gamma"]
+    )
 
-    parser.add_argument("--sparse_lr", type=float, default=0.05)
-    parser.add_argument("--sparse_weight_decay", type=float, default=0.0)
-    parser.add_argument("--reinit_sparse_after_epoch", type=int, default=1)
-    parser.add_argument("--reinit_cardinality_threshold", type=int, default=0)
+    parser.add_argument("--sparse_lr", type=float, default=default_values["sparse_lr"])
+    parser.add_argument(
+        "--sparse_weight_decay",
+        type=float,
+        default=default_values["sparse_weight_decay"],
+    )
+    parser.add_argument(
+        "--reinit_sparse_after_epoch",
+        type=int,
+        default=default_values["reinit_sparse_after_epoch"],
+    )
+    parser.add_argument(
+        "--reinit_cardinality_threshold",
+        type=int,
+        default=default_values["reinit_cardinality_threshold"],
+    )
 
-    parser.add_argument("--emb_skip_threshold", type=int, default=0)
-    parser.add_argument("--seq_id_threshold", type=int, default=10000)
+    parser.add_argument(
+        "--emb_skip_threshold", type=int, default=default_values["emb_skip_threshold"]
+    )
+    parser.add_argument(
+        "--seq_id_threshold", type=int, default=default_values["seq_id_threshold"]
+    )
 
-    default_ns_groups = package_dir / "ns_groups.json"
-    parser.add_argument("--ns_groups_json", default=str(default_ns_groups))
-    parser.add_argument("--ns_tokenizer_type", default="rankmixer", choices=["group", "rankmixer"])
-    parser.add_argument("--user_ns_tokens", type=int, default=0)
-    parser.add_argument("--item_ns_tokens", type=int, default=0)
+    parser.add_argument("--ns_groups_json", default=default_values["ns_groups_json"])
+    parser.add_argument(
+        "--ns_tokenizer_type",
+        default=default_values["ns_tokenizer_type"],
+        choices=["group", "rankmixer"],
+    )
+    parser.add_argument(
+        "--user_ns_tokens", type=int, default=default_values["user_ns_tokens"]
+    )
+    parser.add_argument(
+        "--item_ns_tokens", type=int, default=default_values["item_ns_tokens"]
+    )
+
+    parser.add_argument(
+        "--symbiosis_use_user_item_graph",
+        "--symbiosis-use-user-item-graph",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_user_item_graph"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_fourier_time",
+        "--symbiosis-use-fourier-time",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_fourier_time"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_context_exchange",
+        "--symbiosis-use-context-exchange",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_context_exchange"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_multi_scale",
+        "--symbiosis-use-multi-scale",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_multi_scale"],
+    )
+    parser.add_argument(
+        "--symbiosis_use_domain_gate",
+        "--symbiosis-use-domain-gate",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["symbiosis_use_domain_gate"],
+    )
 
     args = parser.parse_args(argv)
     args.data_dir = os.environ.get("TRAIN_DATA_PATH", args.data_dir)
@@ -124,9 +237,10 @@ def train_pcvr_model(
     model_module: Any,
     model_class_name: str,
     package_dir: Path,
+    defaults: PCVRTrainConfig = DEFAULT_PCVR_TRAIN_CONFIG,
     argv: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    args = parse_pcvr_train_args(argv, package_dir=package_dir)
+    args = parse_pcvr_train_args(argv, package_dir=package_dir, defaults=defaults)
     data_dir = _required_path(args.data_dir, "data_dir")
     ckpt_dir = _required_path(args.ckpt_dir, "ckpt_dir")
     log_dir = _required_path(args.log_dir, "log_dir")
@@ -139,13 +253,17 @@ def train_pcvr_model(
     set_seed(args.seed)
     create_logger(log_dir / "train.log")
     config = vars(args).copy()
+    data_pipeline_config = defaults.data_pipeline
+    config.update(data_pipeline_config.to_flat_dict())
     logging.info("Args: %s", config)
     runtime_execution = RuntimeExecutionConfig(
         amp=bool(args.amp),
         amp_dtype=str(args.amp_dtype),
         compile=bool(args.compile),
     )
-    logging.info("Resolved PCVR training runtime: %s", runtime_execution.summary(args.device))
+    logging.info(
+        "Resolved PCVR training runtime: %s", runtime_execution.summary(args.device)
+    )
 
     from torch.utils.tensorboard import SummaryWriter
 
@@ -172,9 +290,12 @@ def train_pcvr_model(
             buffer_batches=args.buffer_batches,
             seed=args.seed,
             seq_max_lens=seq_max_lens,
+            data_pipeline_config=data_pipeline_config,
         )
 
-        user_ns_groups, item_ns_groups = load_ns_groups(pcvr_dataset, config, package_dir, ckpt_dir)
+        user_ns_groups, item_ns_groups = load_ns_groups(
+            pcvr_dataset, config, package_dir, ckpt_dir
+        )
         logging.info("User NS groups: %s", user_ns_groups)
         logging.info("Item NS groups: %s", item_ns_groups)
 
@@ -212,7 +333,9 @@ def train_pcvr_model(
             "head": args.num_heads,
             "hidden": args.d_model,
         }
-        resolved_ns_groups_path = resolve_ns_groups_path(str(args.ns_groups_json), package_dir, ckpt_dir)
+        resolved_ns_groups_path = resolve_ns_groups_path(
+            str(args.ns_groups_json), package_dir, ckpt_dir
+        )
         trainer = PCVRPointwiseTrainer(
             model=model,
             model_input_type=model_module.ModelInput,

@@ -12,9 +12,10 @@ def _write_minimal_pcvr_experiment(package_dir: Path, *, experiment_name: str, m
     (package_dir / "__init__.py").write_text(
         "from pathlib import Path\n"
         "\n"
+        "from taac2026.infrastructure.pcvr.config import PCVRNSConfig, PCVRTrainConfig\n"
         "from taac2026.infrastructure.pcvr.experiment import PCVRExperiment\n"
         "\n"
-        f"EXPERIMENT = PCVRExperiment(name={experiment_name!r}, package_dir=Path(__file__).resolve().parent, model_class_name={model_class_name!r}, default_train_args=(\"--ns_groups_json\", \"ns_groups.json\"))\n",
+        f"EXPERIMENT = PCVRExperiment(name={experiment_name!r}, package_dir=Path(__file__).resolve().parent, model_class_name={model_class_name!r}, train_defaults=PCVRTrainConfig(ns=PCVRNSConfig(groups_json=\"ns_groups.json\")))\n",
         encoding="utf-8",
     )
     (package_dir / "model.py").write_text(

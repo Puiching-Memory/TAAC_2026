@@ -42,6 +42,7 @@ nav = [
         { "官方平台用户指南" = "guide/official-competition-docs.md" },
         { "线上训练打包" = "guide/online-training-bundle.md" },
         { "比赛线上服务器设备信息" = "guide/competition-online-server.md" },
+        { "PCVR 数据管道" = "guide/pcvr-data-pipeline.md" },
         { "超参数搜索" = "guide/search.md" },
         { "测试" = "guide/testing.md" },
         { "Triton Kernel 开发" = "guide/triton-kernels.md" },
@@ -55,6 +56,7 @@ nav = [
         { "特征Token化·长序列注意力·辅助Loss" = "ideas/posts/001-rec-model-work-summary.md" },
         { "腾讯广告算法大赛 2025 官方论文解读：全模态生成式推荐" = "ideas/posts/002-taac2025-competition-paper.md" },
         { "Learning Mechanics 分析方法：从缩放律、学习量子到低秩动力学" = "ideas/posts/003-learning-mechanics-analysis.md" },
+        { "Symbiosis V2 改造与实验验证计划" = "ideas/posts/004-symbiosis-v2-experiment-plan.md" },
     ] },
     { "论文" = [
         { "技术发展时间线" = "papers/index.md" },

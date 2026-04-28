@@ -43,6 +43,7 @@ uv run --with ruff ruff check src/taac2026 tests/unit
 | `tests/unit/test_package_training.py`        | `run.sh` + `code_package.zip` 双文件 bundle 内容        |
 | `tests/unit/test_training_cli.py`            | 训练 CLI 参数解析和 extra args 透传                     |
 | `tests/unit/test_pcvr_protocol.py`           | schema、特征规格、NS groups 映射与缺失文件失败          |
+| `tests/unit/test_pcvr_data_augmentation.py`  | PCVR 训练期增广、内存 cache 与时间安全过滤              |
 
 ## 模块改动后的最小复核
 
@@ -50,6 +51,7 @@ uv run --with ruff ruff check src/taac2026 tests/unit
 | ------------------------------------ | --------------------------------------------------------------------------------------------- |
 | 实验包 `config/<name>/`              | `uv run pytest tests/unit/test_experiment_packages.py -q`                                     |
 | `ns_groups.json` 或 PCVR schema 解析 | `uv run pytest tests/unit/test_pcvr_protocol.py tests/unit/test_experiment_packages.py -q`    |
+| PCVR 数据管道、增广或 cache          | `uv run pytest tests/unit/test_pcvr_data_augmentation.py tests/unit/test_pcvr_data_split.py -q` |
 | 线上打包                             | `uv run pytest tests/unit/test_package_training.py -q`                                        |
 | 训练入口参数                         | `uv run pytest tests/unit/test_training_cli.py -q`                                            |
 | checkpoint 或 loader                 | `uv run pytest tests/unit/test_checkpoint_and_loader.py -q`                                   |

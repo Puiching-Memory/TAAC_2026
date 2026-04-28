@@ -4,11 +4,16 @@ from contextlib import contextmanager
 import logging
 import math
 
+import pytest
 import torch
 
 import taac2026.infrastructure.pcvr.trainer as trainer_module
 from taac2026.infrastructure.pcvr.trainer import PCVRPointwiseTrainer
-from taac2026.infrastructure.training.runtime import EarlyStopping, RuntimeExecutionConfig
+from taac2026.infrastructure.training.runtime import (
+    BinaryClassificationLossConfig,
+    EarlyStopping,
+    RuntimeExecutionConfig,
+)
 
 
 class _DummyModel(torch.nn.Module):
@@ -101,6 +106,47 @@ def test_trainer_runtime_execution_wraps_train_and_predict(monkeypatch, tmp_path
     assert autocast_devices == ["cpu", "cpu"]
 
 
+def test_trainer_delegates_loss_to_shared_runtime(monkeypatch, tmp_path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_compute_binary_classification_loss(logits, targets, loss_config, reduction="mean"):
+        captured["logits_shape"] = tuple(logits.shape)
+        captured["targets"] = targets.detach().clone()
+        captured["loss_config"] = loss_config
+        captured["reduction"] = reduction
+        return logits.mean() * 0 + 0.25
+
+    monkeypatch.setattr(trainer_module, "compute_binary_classification_loss", fake_compute_binary_classification_loss)
+
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=object,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        num_epochs=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        loss_type="FOCAL",
+        focal_alpha=0.25,
+        focal_gamma=1.5,
+    )
+    monkeypatch.setattr(trainer, "_make_model_input", lambda batch: object())
+
+    train_loss = trainer._train_step({"label": torch.tensor([1.0])})
+
+    assert train_loss == pytest.approx(0.25)
+    assert captured["logits_shape"] == (1,)
+    assert torch.equal(captured["targets"], torch.tensor([1.0]))
+    assert captured["reduction"] == "mean"
+    assert captured["loss_config"] == BinaryClassificationLossConfig(
+        loss_type="focal",
+        focal_alpha=0.25,
+        focal_gamma=1.5,
+    )
+
+
 def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:
     trainer = PCVRPointwiseTrainer(
         model=_DummyModel(),
@@ -125,3 +171,37 @@ def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:
 
     assert auc == 1.0
     assert math.isfinite(logloss)
+
+
+def test_evaluate_records_score_diagnostics(tmp_path, caplog) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=object,
+        train_loader=[],
+        valid_loader=[
+            {"label": torch.tensor([0.0, 1.0])},
+            {"label": torch.tensor([1.0, 0.0])},
+        ],
+        lr=1e-3,
+        num_epochs=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+    )
+    logits = iter(
+        (
+            torch.tensor([-2.0, 2.0]),
+            torch.tensor([1.0, -1.0]),
+        )
+    )
+    trainer._evaluate_step = lambda batch: (next(logits), batch["label"])
+
+    with caplog.at_level(logging.INFO):
+        auc, logloss = trainer.evaluate(epoch=1)
+
+    assert auc == 1.0
+    assert math.isfinite(logloss)
+    assert trainer.last_eval_diagnostics["positive_count"] == 2
+    assert trainer.last_eval_diagnostics["negative_count"] == 2
+    assert trainer.last_eval_diagnostics["positive_score_mean"] > trainer.last_eval_diagnostics["negative_score_mean"]
+    assert "Validation score diagnostics" in caplog.text

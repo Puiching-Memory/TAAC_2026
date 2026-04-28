@@ -167,14 +167,26 @@ class UserItemGraphBlock(nn.Module):
 
 
 class UnifiedBlock(nn.Module):
-	def __init__(self, d_model: int, num_heads: int, hidden_mult: int, dropout: float, *, use_rope: bool, rope_base: float) -> None:
+	def __init__(
+		self,
+		d_model: int,
+		num_heads: int,
+		hidden_mult: int,
+		dropout: float,
+		*,
+		use_rope: bool,
+		rope_base: float,
+		use_domain_gate: bool,
+	) -> None:
 		super().__init__()
+		self.use_domain_gate = use_domain_gate
 		self.attn_norm = RMSNorm(d_model)
 		self.attention = RotarySelfAttention(d_model, num_heads, dropout, use_rope=use_rope, rope_base=rope_base)
 		self.film = nn.Linear(d_model, d_model * 2)
 		self.sequence_query_norm = RMSNorm(d_model)
 		self.sequence_norm = RMSNorm(d_model)
 		self.sequence_attention = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
+		self.domain_gate = nn.Linear(d_model * 2, 1)
 		self.sequence_gate = nn.Linear(d_model * 2, d_model)
 		self.ffn_norm = RMSNorm(d_model)
 		self.ffn = SwiGLUFeedForward(d_model, hidden_mult, dropout)
@@ -184,6 +196,7 @@ class UnifiedBlock(nn.Module):
 			return tokens.new_zeros(tokens.shape)
 		query = self.sequence_query_norm(tokens)
 		updates: list[torch.Tensor] = []
+		scores: list[torch.Tensor] = []
 		for sequence_tokens, sequence_mask in zip(sequences, masks, strict=True):
 			if sequence_tokens.shape[1] == 0:
 				continue
@@ -196,8 +209,15 @@ class UnifiedBlock(nn.Module):
 			)
 			valid_rows = (~sequence_mask).any(dim=1).to(attended.dtype).view(-1, 1, 1)
 			updates.append(attended * valid_rows)
+			if self.use_domain_gate:
+				domain_score = self.domain_gate(torch.cat([tokens, attended], dim=-1))
+				domain_score = domain_score.masked_fill(valid_rows <= 0, torch.finfo(domain_score.dtype).min)
+				scores.append(domain_score)
 		if not updates:
 			return tokens.new_zeros(tokens.shape)
+		if self.use_domain_gate:
+			weights = torch.softmax(torch.stack(scores, dim=0), dim=0)
+			return (torch.stack(updates, dim=0) * weights).sum(dim=0)
 		return torch.stack(updates, dim=0).mean(dim=0)
 
 	def forward(
@@ -293,6 +313,11 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		ns_tokenizer_type: str = "rankmixer",
 		user_ns_tokens: int = 5,
 		item_ns_tokens: int = 2,
+		symbiosis_use_user_item_graph: bool = True,
+		symbiosis_use_fourier_time: bool = True,
+		symbiosis_use_context_exchange: bool = True,
+		symbiosis_use_multi_scale: bool = True,
+		symbiosis_use_domain_gate: bool = False,
 	) -> None:
 		super().__init__()
 		del seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, seq_id_threshold
@@ -301,6 +326,11 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		self.action_num = action_num
 		self.num_prompt_tokens = max(1, action_num, num_queries)
 		self.seq_domains = sorted(seq_vocab_sizes)
+		self.symbiosis_use_user_item_graph = symbiosis_use_user_item_graph
+		self.symbiosis_use_fourier_time = symbiosis_use_fourier_time
+		self.symbiosis_use_context_exchange = symbiosis_use_context_exchange
+		self.symbiosis_use_multi_scale = symbiosis_use_multi_scale
+		self.symbiosis_use_domain_gate = symbiosis_use_domain_gate
 		force_auto_split = ns_tokenizer_type == "rankmixer"
 		self.user_tokenizer = NonSequentialTokenizer(user_int_feature_specs, user_ns_groups, emb_dim, d_model, user_ns_tokens, emb_skip_threshold, force_auto_split=force_auto_split)
 		self.item_tokenizer = NonSequentialTokenizer(item_int_feature_specs, item_ns_groups, emb_dim, d_model, item_ns_tokens, emb_skip_threshold, force_auto_split=force_auto_split)
@@ -313,11 +343,24 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		self.num_ns = self.user_tokenizer.num_tokens + self.item_tokenizer.num_tokens
 		self.num_ns += int(user_dense_dim > 0) + int(item_dense_dim > 0)
 		self.action_prompts = nn.Parameter(torch.randn(self.num_prompt_tokens, d_model) * 0.02)
-		self.graph_blocks = nn.ModuleList(UserItemGraphBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks)))
-		self.unified_blocks = nn.ModuleList(
-			UnifiedBlock(d_model, num_heads, hidden_mult, dropout_rate, use_rope=use_rope, rope_base=rope_base) for _ in range(max(1, num_blocks))
+		self.graph_blocks = nn.ModuleList(
+			UserItemGraphBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks)) if symbiosis_use_user_item_graph
 		)
-		self.context_blocks = nn.ModuleList(ContextExchangeBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks)))
+		self.unified_blocks = nn.ModuleList(
+			UnifiedBlock(
+				d_model,
+				num_heads,
+				hidden_mult,
+				dropout_rate,
+				use_rope=use_rope,
+				rope_base=rope_base,
+				use_domain_gate=symbiosis_use_domain_gate,
+			)
+			for _ in range(max(1, num_blocks))
+		)
+		self.context_blocks = nn.ModuleList(
+			ContextExchangeBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks)) if symbiosis_use_context_exchange
+		)
 		self.unified_gate = nn.Sequential(nn.Linear(d_model * 2, d_model), nn.Sigmoid())
 		self.scale_projection = nn.Sequential(RMSNorm(d_model * 3), nn.Linear(d_model * 3, d_model), nn.SiLU())
 		self.fusion_projection = nn.Sequential(RMSNorm(d_model * 4), nn.Linear(d_model * 4, d_model), nn.SiLU())
@@ -350,9 +393,10 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 			time_buckets = inputs.seq_time_buckets.get(domain)
 			tokens = self.sequence_tokenizers[domain](raw_sequence, time_buckets)
 			tokens = tokens + sinusoidal_positions(tokens.shape[1], self.d_model, tokens.device).unsqueeze(0)
-			time_tokens = self.time_encoders[domain](time_buckets, dtype=tokens.dtype)
-			if time_tokens is not None:
-				tokens = tokens + time_tokens
+			if self.symbiosis_use_fourier_time:
+				time_tokens = self.time_encoders[domain](time_buckets, dtype=tokens.dtype)
+				if time_tokens is not None:
+					tokens = tokens + time_tokens
 			sequences.append(tokens)
 			masks.append(make_padding_mask(seq_len, raw_sequence.shape[2]))
 			lengths.append(seq_len)
@@ -396,7 +440,10 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
 		context = graph_context
 		for block in self.context_blocks:
 			context = block(context, sequences, masks)
-		scale_context = self._multi_scale_context(sequences, masks, lengths, ns_tokens)
+		if self.symbiosis_use_multi_scale:
+			scale_context = self._multi_scale_context(sequences, masks, lengths, ns_tokens)
+		else:
+			scale_context = torch.zeros_like(graph_context)
 		joined = torch.cat([unified_context, context, scale_context, graph_context], dim=-1)
 		candidate = self.fusion_projection(joined)
 		blended = (unified_context + context + scale_context + graph_context) * 0.25

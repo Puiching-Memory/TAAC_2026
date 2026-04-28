@@ -23,7 +23,7 @@ def _coerce_experiment(value: object, source: str) -> ExperimentSpec:
             train_fn=value.train,
             evaluate_fn=value.evaluate,
             infer_fn=value.infer,
-            default_train_args=tuple(getattr(value, "default_train_args", ())),
+            train_defaults=getattr(value, "train_defaults", None),
             metadata=dict(getattr(value, "metadata", {})),
         )
     raise TypeError(f"EXPERIMENT in {source} is not a supported experiment object")

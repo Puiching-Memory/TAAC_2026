@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
 
 
@@ -33,13 +34,9 @@ EXPERIMENT = PCVRExperiment(
     name="pcvr_my_experiment",
     package_dir=Path(__file__).resolve().parent,
     model_class_name="PCVRMyExperiment",
-    default_train_args=(
-        "--ns_groups_json",
-        "ns_groups.json",
-        "--num_blocks",
-        "2",
-        "--num_heads",
-        "4",
+    train_defaults=PCVRTrainConfig(
+        model=PCVRModelConfig(num_blocks=2, num_heads=4),
+        ns=PCVRNSConfig(groups_json="ns_groups.json"),
     ),
 )
 
@@ -50,8 +47,8 @@ __all__ = ["EXPERIMENT"]
 
 - `model_class_name` 必须与 `model.py` 中导出的类名一致。
 - 非 baseline 实验使用自己的类名，例如 `PCVRInterFormer`、`PCVROneTrans` 或 `PCVRMyExperiment`。
-- `default_train_args` 里显式启用包内 `ns_groups.json`。
-- 新参数优先使用共享 PCVR parser 已支持的名字，例如 `--num_blocks`、`--d_model`、`--batch_size`。
+- `train_defaults` 里用 `PCVRNSConfig(groups_json="ns_groups.json")` 显式启用包内 `ns_groups.json`。
+- 新参数优先放进 `PCVRTrainConfig` 下已有的 typed 子配置，例如 `PCVRModelConfig.num_blocks`、`PCVRModelConfig.d_model`、`PCVRDataConfig.batch_size`。
 
 ## model.py
 
@@ -208,7 +205,7 @@ uv run pytest tests/unit -q
 
 - `model_class_name` 与 `model.py` 导出的类一致。
 - 非 baseline 包没有暴露 `PCVRHyFormer`。
-- `ns_groups.json` 存在，并在默认训练参数中启用。
+- `ns_groups.json` 存在，并在 `train_defaults` 中启用。
 - 模型能完成 forward、backward 和 predict。
 - Bundle 包含目标实验包的 `model.py` 和 `ns_groups.json`。
 - 文档中的命令都显式给出数据路径，且只使用当前 CLI 支持的参数。

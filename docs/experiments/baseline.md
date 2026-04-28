@@ -61,7 +61,7 @@ checkpoint 目录名以 `global_step` 开头，并可带 `layer`、`head`、`hid
 - `train_config.json`：模型结构与数据加载超参数的单一来源。
 - `ns_groups.json`：如果训练启用了 NS 分组，则复制到 checkpoint 目录内。
 
-评分 baseline 会优先使用 checkpoint 内的 `schema.json` 和 `train_config.json` 重建模型；如果缺少 `train_config.json`，只会退回硬编码默认值，非默认训练很容易发生 shape mismatch。因此当前共享 runtime 也把 checkpoint 侧车文件视为训练与推理一致性的核心契约。
+评分 baseline 会使用 checkpoint 内的 `schema.json` 和 `train_config.json` 重建模型；如果缺少 `train_config.json` 或其中缺少必要字段，当前共享 runtime 会直接失败，避免用隐式默认值重建出与训练不一致的模型。
 
 ## 评分输出
 

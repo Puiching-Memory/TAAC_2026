@@ -102,6 +102,8 @@ def _build_profile_components(
     experiment = load_experiment_package(experiment_path)
     if experiment.package_dir is None:
         raise ValueError(f"experiment {experiment_path!r} does not declare package_dir")
+    if experiment.train_defaults is None:
+        raise ValueError(f"experiment {experiment_path!r} does not declare typed train_defaults")
 
     model_module = _load_model_module(experiment_path)
     forwarded_args = [
@@ -115,10 +117,9 @@ def _build_profile_components(
         str(run_dir / "logs"),
         "--tf_events_dir",
         str(run_dir / "tensorboard"),
-        *experiment.default_train_args,
         *override_args,
     ]
-    parsed_args = parse_pcvr_train_args(forwarded_args, package_dir=experiment.package_dir)
+    parsed_args = parse_pcvr_train_args(forwarded_args, package_dir=experiment.package_dir, defaults=experiment.train_defaults)
     config = vars(parsed_args).copy()
     seq_max_lens = parse_seq_max_lens(str(parsed_args.seq_max_lens))
     train_loader, _valid_loader, dataset = pcvr_data.get_pcvr_data(

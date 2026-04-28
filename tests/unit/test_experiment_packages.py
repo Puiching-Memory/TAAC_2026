@@ -42,7 +42,7 @@ def _sample_model_input(model_module):
     )
 
 
-def _make_model(experiment_case, model_module):
+def _make_model(experiment_case, model_module, overrides=None):
     model_class = getattr(model_module, experiment_case.model_class)
     model_kwargs = dict(
         user_int_feature_specs=[(8, 0, 1), (7, 1, 2)],
@@ -64,6 +64,8 @@ def _make_model(experiment_case, model_module):
         user_ns_tokens=2,
         item_ns_tokens=1,
     )
+    if overrides:
+        model_kwargs.update(overrides)
     try:
         return model_class(**model_kwargs)
     except ValueError as error:
@@ -77,16 +79,16 @@ def _make_model(experiment_case, model_module):
 @pytest.mark.parametrize("experiment_case", EXPERIMENT_CASES, ids=lambda case: case.path)
 def test_discovered_experiment_packages_load(experiment_case) -> None:
     experiment = load_experiment_package(experiment_case.path)
+    train_defaults = experiment.train_defaults.to_flat_dict()
 
     assert experiment.name == experiment_case.name
     assert experiment.package_dir == experiment_case.package_dir
-    assert experiment.default_train_args
+    assert experiment.train_defaults is not None
     assert experiment.metadata["kind"] == "pcvr"
     assert experiment.metadata["model_class"] == experiment_case.model_class
     assert (experiment.package_dir / "ns_groups.json").exists()
-    assert "--ns_groups_json" in experiment.default_train_args
-    assert "ns_groups.json" in experiment.default_train_args
-    assert "--num_hyformer_blocks" not in experiment.default_train_args
+    assert train_defaults["ns_groups_json"] == "ns_groups.json"
+    assert "num_hyformer_blocks" not in train_defaults
 
 
 @pytest.mark.parametrize("experiment_case", EXPERIMENT_CASES, ids=lambda case: case.path)
@@ -116,11 +118,11 @@ def test_discovered_experiment_models_forward_and_predict(experiment_case) -> No
 
 def test_symbiosis_enables_amp_and_compile_by_default() -> None:
     experiment = load_experiment_package("config/symbiosis")
+    train_defaults = experiment.train_defaults.to_flat_dict()
 
-    assert "--amp" in experiment.default_train_args
-    assert "--amp-dtype" in experiment.default_train_args
-    assert "bfloat16" in experiment.default_train_args
-    assert "--compile" in experiment.default_train_args
+    assert train_defaults["amp"] is True
+    assert train_defaults["amp_dtype"] == "bfloat16"
+    assert train_defaults["compile"] is True
 
 
 def test_symbiosis_keeps_sequence_width_stable_for_compile() -> None:
@@ -238,3 +240,34 @@ def test_symbiosis_unified_attention_uses_context_bottleneck() -> None:
     assert logits.shape == (2, 1)
     assert observed_self_attention_lengths == [context_token_count]
     assert context_token_count < context_token_count + sequence_token_count
+
+
+def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
+    experiment_case = get_experiment_case("config/symbiosis")
+    model_module = load_model_module(experiment_case)
+    model = _make_model(
+        experiment_case,
+        model_module,
+        overrides={
+            "symbiosis_use_user_item_graph": False,
+            "symbiosis_use_fourier_time": False,
+            "symbiosis_use_context_exchange": False,
+            "symbiosis_use_multi_scale": False,
+            "symbiosis_use_domain_gate": True,
+        },
+    )
+    model_input = _sample_model_input(model_module)
+
+    assert len(model.graph_blocks) == 0
+    assert len(model.context_blocks) == 0
+    assert model.symbiosis_use_fourier_time is False
+    assert model.symbiosis_use_multi_scale is False
+    assert all(block.use_domain_gate for block in model.unified_blocks)
+
+    logits = model(model_input)
+    predicted_logits, embeddings = model.predict(model_input)
+
+    assert logits.shape == (2, 1)
+    assert predicted_logits.shape == (2, 1)
+    assert embeddings.shape == (2, model.d_model)
+    assert torch.isfinite(logits).all()

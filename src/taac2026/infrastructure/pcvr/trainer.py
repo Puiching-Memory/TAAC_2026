@@ -18,15 +18,17 @@ from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from taac2026.domain.metrics import binary_score_diagnostics
 from taac2026.infrastructure.checkpoints import build_checkpoint_dir_name, write_checkpoint_sidecars
 from taac2026.infrastructure.pcvr.protocol import batch_to_model_input
 from taac2026.infrastructure.pcvr.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.training.runtime import (
+    BinaryClassificationLossConfig,
     EarlyStopping,
     RuntimeExecutionConfig,
+    compute_binary_classification_loss,
     create_grad_scaler,
     maybe_compile_callable,
-    sigmoid_focal_loss,
 )
 
 
@@ -139,9 +141,14 @@ class PCVRPointwiseTrainer:
             label="PCVR trainer predict",
         )
         self.grad_scaler = create_grad_scaler(self.runtime_execution, self.device)
-        self.loss_type = loss_type
-        self.focal_alpha = focal_alpha
-        self.focal_gamma = focal_gamma
+        self.loss_config = BinaryClassificationLossConfig(
+            loss_type=loss_type,
+            focal_alpha=focal_alpha,
+            focal_gamma=focal_gamma,
+        )
+        self.loss_type = self.loss_config.loss_type
+        self.focal_alpha = self.loss_config.focal_alpha
+        self.focal_gamma = self.loss_config.focal_gamma
         self.reinit_sparse_after_epoch = reinit_sparse_after_epoch
         self.reinit_cardinality_threshold = reinit_cardinality_threshold
         self.sparse_lr = sparse_lr
@@ -149,13 +156,14 @@ class PCVRPointwiseTrainer:
         self.ckpt_params = ckpt_params or {}
         self.eval_every_n_steps = eval_every_n_steps
         self.train_config = train_config
+        self.last_eval_diagnostics: dict[str, float | int] = {}
 
         logging.info(
             "PCVRPointwiseTrainer loss_type=%s, focal_alpha=%s, focal_gamma=%s, "
             "reinit_sparse_after_epoch=%s",
-            loss_type,
-            focal_alpha,
-            focal_gamma,
+            self.loss_type,
+            self.focal_alpha,
+            self.focal_gamma,
             reinit_sparse_after_epoch,
         )
         logging.info("PCVRPointwiseTrainer runtime: %s", self.runtime_execution.summary(self.device))
@@ -214,6 +222,7 @@ class PCVRPointwiseTrainer:
             self.early_stopping(val_auc, self.model, {
                 "best_val_AUC": val_auc,
                 "best_val_logloss": val_logloss,
+                "best_val_score_diagnostics": self.last_eval_diagnostics,
             })
             return
 
@@ -224,6 +233,7 @@ class PCVRPointwiseTrainer:
         self.early_stopping(val_auc, self.model, {
             "best_val_AUC": val_auc,
             "best_val_logloss": val_logloss,
+            "best_val_score_diagnostics": self.last_eval_diagnostics,
         })
 
         if self.early_stopping.best_score != old_best and Path(self.early_stopping.checkpoint_path).exists():
@@ -251,6 +261,14 @@ class PCVRPointwiseTrainer:
         if loss is not None:
             message = f"{message} | loss={loss:.4f}"
         logging.info(message)
+
+    def _write_eval_diagnostics(self, total_step: int) -> None:
+        if self.writer is None:
+            return
+        for name, value in self.last_eval_diagnostics.items():
+            numeric_value = float(value)
+            if np.isfinite(numeric_value):
+                self.writer.add_scalar(f"Diagnostics/valid/{name}", numeric_value, total_step)
 
     def train(self) -> None:
         print("Start training (PCVR pointwise)")
@@ -302,6 +320,7 @@ class PCVRPointwiseTrainer:
                     if self.writer:
                         self.writer.add_scalar("AUC/valid", val_auc, total_step)
                         self.writer.add_scalar("LogLoss/valid", val_logloss, total_step)
+                        self._write_eval_diagnostics(total_step)
 
                     self._handle_validation_result(total_step, val_auc, val_logloss)
 
@@ -323,6 +342,7 @@ class PCVRPointwiseTrainer:
             if self.writer:
                 self.writer.add_scalar("AUC/valid", val_auc, total_step)
                 self.writer.add_scalar("LogLoss/valid", val_logloss, total_step)
+                self._write_eval_diagnostics(total_step)
 
             self._handle_validation_result(total_step, val_auc, val_logloss)
 
@@ -368,11 +388,7 @@ class PCVRPointwiseTrainer:
         model_input = self._make_model_input(device_batch)
         with self.runtime_execution.autocast_context(self.device):
             logits = self.forward_model(model_input).squeeze(-1)
-
-            if self.loss_type == "focal":
-                loss = sigmoid_focal_loss(logits, label, alpha=self.focal_alpha, gamma=self.focal_gamma)
-            else:
-                loss = F.binary_cross_entropy_with_logits(logits, label)
+            loss = compute_binary_classification_loss(logits, label, self.loss_config)
 
         if self.grad_scaler is not None:
             self.grad_scaler.scale(loss).backward()
@@ -457,6 +473,17 @@ class PCVRPointwiseTrainer:
             logloss = F.binary_cross_entropy_with_logits(valid_logits, valid_labels.float()).item()
         else:
             logloss = float("inf")
+
+        self.last_eval_diagnostics = binary_score_diagnostics(labels_np, probabilities)
+        logging.info(
+            "Validation score diagnostics | pos=%s neg=%s pos_mean=%.6f neg_mean=%.6f margin=%.6f score_std=%.6f",
+            self.last_eval_diagnostics["positive_count"],
+            self.last_eval_diagnostics["negative_count"],
+            self.last_eval_diagnostics["positive_score_mean"],
+            self.last_eval_diagnostics["negative_score_mean"],
+            self.last_eval_diagnostics["score_margin_mean"],
+            self.last_eval_diagnostics["score_std"],
+        )
 
         return auc, logloss
 

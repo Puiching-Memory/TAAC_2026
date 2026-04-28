@@ -76,6 +76,20 @@ def test_load_ns_groups_rejects_missing_explicit_file(tmp_path) -> None:
         load_ns_groups(dataset, {"ns_groups_json": "missing.json"}, tmp_path, tmp_path)
 
 
+def test_load_ns_groups_requires_explicit_config_key(tmp_path) -> None:
+    dataset = type(
+        "Dataset",
+        (),
+        {
+            "user_int_schema": type("Schema", (), {"entries": [(10, 0, 1)]})(),
+            "item_int_schema": type("Schema", (), {"entries": [(7, 0, 1)]})(),
+        },
+    )()
+
+    with pytest.raises(KeyError, match="ns_groups_json"):
+        load_ns_groups(dataset, {}, tmp_path, tmp_path)
+
+
 def test_batch_to_model_input_uses_zero_time_buckets_when_missing() -> None:
     batch = {
         "user_int_feats": torch.ones(2, 1, dtype=torch.long),

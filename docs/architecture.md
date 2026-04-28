@@ -55,6 +55,7 @@ TAAC_2026/
 ```python
 from pathlib import Path
 
+from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
 
 
@@ -62,11 +63,9 @@ EXPERIMENT = PCVRExperiment(
     name="pcvr_example",
     package_dir=Path(__file__).resolve().parent,
     model_class_name="PCVRExampleModel",
-    default_train_args=(
-        "--ns_groups_json",
-        "ns_groups.json",
-        "--num_blocks",
-        "2",
+    train_defaults=PCVRTrainConfig(
+        model=PCVRModelConfig(num_blocks=2),
+        ns=PCVRNSConfig(groups_json="ns_groups.json"),
     ),
 )
 ```
@@ -118,10 +117,10 @@ ModelInput
 
 ## NS Groups
 
-每个 PCVR 实验包都应包含 `ns_groups.json`，并在默认训练参数中传入：
+每个 PCVR 实验包都应包含 `ns_groups.json`，并在 typed 默认训练配置中传入：
 
 ```python
-default_train_args=("--ns_groups_json", "ns_groups.json", ...)
+train_defaults=PCVRTrainConfig(ns=PCVRNSConfig(groups_json="ns_groups.json"))
 ```
 
 runtime 会把 JSON 中的 fid 分组映射到当前 schema 的特征索引。显式配置的 NS groups 文件缺失时会直接失败，避免悄悄退化为 singleton 分组。checkpoint 会复制训练使用的 `ns_groups.json`，让评估和推理复用同一套分组。

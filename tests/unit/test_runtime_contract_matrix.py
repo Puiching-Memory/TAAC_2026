@@ -330,7 +330,6 @@ def test_load_ns_groups_raises_for_unknown_feature_ids(
 @pytest.mark.parametrize(
     ("config", "bucket_count", "expected"),
     [
-        ({}, 65, 65),
         ({"use_time_buckets": True}, 7, 7),
         ({"use_time_buckets": False}, 9, 0),
         ({"use_time_buckets": 0}, 11, 0),
@@ -340,6 +339,11 @@ def test_num_time_buckets_cases(config: dict[str, object], bucket_count: int, ex
     data_module = SimpleNamespace(NUM_TIME_BUCKETS=bucket_count)
 
     assert num_time_buckets(config, data_module) == expected
+
+
+def test_num_time_buckets_requires_explicit_config() -> None:
+    with pytest.raises(KeyError, match="use_time_buckets"):
+        num_time_buckets({}, SimpleNamespace(NUM_TIME_BUCKETS=65))
 
 
 @pytest.mark.parametrize(
@@ -649,14 +653,15 @@ def test_load_experiment_package_accepts_path_and_module_identifiers(
 
 
 def test_experiment_package_contracts(loaded_experiment, experiment_case: ExperimentCase) -> None:
+    train_defaults = loaded_experiment.train_defaults.to_flat_dict()
+
     assert loaded_experiment.name == experiment_case.name
     assert loaded_experiment.package_dir == (REPO_ROOT / experiment_case.path).resolve()
-    assert loaded_experiment.default_train_args
+    assert loaded_experiment.train_defaults is not None
     assert loaded_experiment.metadata["kind"] == "pcvr"
     assert loaded_experiment.metadata["model_class"] == experiment_case.model_class
-    assert "--ns_groups_json" in loaded_experiment.default_train_args
-    assert "ns_groups.json" in loaded_experiment.default_train_args
-    assert "--num_hyformer_blocks" not in loaded_experiment.default_train_args
+    assert train_defaults["ns_groups_json"] == "ns_groups.json"
+    assert "num_hyformer_blocks" not in train_defaults
 
 
 def test_model_module_contracts(loaded_model_module, experiment_case: ExperimentCase) -> None:

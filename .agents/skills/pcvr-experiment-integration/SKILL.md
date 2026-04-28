@@ -31,6 +31,7 @@ Example:
 ```python
 from pathlib import Path
 
+from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
 
 
@@ -38,11 +39,9 @@ EXPERIMENT = PCVRExperiment(
     name="pcvr_example",
     package_dir=Path(__file__).resolve().parent,
     model_class_name="PCVRExampleModel",
-    default_train_args=(
-        "--ns_groups_json",
-        "ns_groups.json",
-        "--num_blocks",
-        "2",
+    train_defaults=PCVRTrainConfig(
+        model=PCVRModelConfig(num_blocks=2),
+        ns=PCVRNSConfig(groups_json="ns_groups.json"),
     ),
 )
 ```
@@ -108,8 +107,8 @@ Every PCVR experiment package must include a package-local `ns_groups.json`.
 
 Rules:
 
-- Default train args should include `--ns_groups_json ns_groups.json`.
-- Shared config in `DEFAULT_PCVR_MODEL_CONFIG` defaults to `ns_groups.json`.
+- `train_defaults` should include `PCVRNSConfig(groups_json="ns_groups.json")`.
+- Evaluation and inference must read a complete checkpoint-side `train_config.json`; missing config keys should fail instead of falling back to experiment defaults.
 - If an explicitly configured NS groups file is missing, fail fast with `FileNotFoundError`; do not silently fall back to singleton groups.
 - Checkpoints copy the resolved NS groups file as `ns_groups.json`, so evaluation and inference reuse the training grouping.
 - Keep metadata keys prefixed with `_`; the runtime only consumes `user_ns_groups` and `item_ns_groups`.

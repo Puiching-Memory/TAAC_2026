@@ -22,7 +22,7 @@ class ExperimentSpec:
     train_fn: TrainFn | None = None
     evaluate_fn: EvalFn | None = None
     infer_fn: InferFn | None = None
-    default_train_args: tuple[str, ...] = ()
+    train_defaults: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def train(self, request: TrainRequest) -> Mapping[str, Any] | None:

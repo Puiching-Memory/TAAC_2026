@@ -15,18 +15,12 @@ config/symbiosis/
 └── ns_groups.json
 ```
 
-`__init__.py` 中的默认训练参数包括：
+`__init__.py` 中的 `train_defaults` 包括：
 
-- `--ns_tokenizer_type rankmixer`
-- `--user_ns_tokens 5`
-- `--item_ns_tokens 2`
-- `--ns_groups_json ns_groups.json`
-- `--num_blocks 3`
-- `--num_heads 4`
-- `--use_rope`
-- `--rope_base 1000000.0`
-- `--hidden_mult 4`
-- `--dropout_rate 0.02`
+- `PCVRNSConfig(tokenizer_type="rankmixer", user_tokens=5, item_tokens=2, groups_json="ns_groups.json")`
+- `PCVRModelConfig(num_blocks=3, num_heads=4, use_rope=True, rope_base=1000000.0, hidden_mult=4, dropout_rate=0.02)`
+- `PCVRDataConfig(batch_size=128, num_workers=8)`
+- `RuntimeExecutionConfig(amp=True, amp_dtype="bfloat16", compile=True)`
 
 ## 模型思路
 
@@ -49,6 +43,29 @@ bash run.sh train --experiment config/symbiosis \
     --num_epochs 1 \
     --batch_size 8 \
     --device cpu
+```
+
+## 消融开关
+
+Symbiosis 支持一组实验开关，用于按计划验证现有模块是否真正贡献 AUC。默认值保持当前模型行为不变。
+
+| 参数 | 默认 | 作用 |
+| --- | --- | --- |
+| `--symbiosis-use-user-item-graph` / `--no-symbiosis-use-user-item-graph` | 开启 | 启停 `UserItemGraphBlock` |
+| `--symbiosis-use-fourier-time` / `--no-symbiosis-use-fourier-time` | 开启 | 启停额外 Fourier time encoder |
+| `--symbiosis-use-context-exchange` / `--no-symbiosis-use-context-exchange` | 开启 | 启停 `ContextExchangeBlock` |
+| `--symbiosis-use-multi-scale` / `--no-symbiosis-use-multi-scale` | 开启 | 启停 mean / recent / last 多尺度序列摘要 |
+| `--symbiosis-use-domain-gate` / `--no-symbiosis-use-domain-gate` | 关闭 | 在 `UnifiedBlock` 序列读取中用可学习 domain gate 替代简单 domain mean |
+
+示例：
+
+```bash
+bash run.sh train --experiment config/symbiosis \
+    --dataset-path /path/to/parquet_or_dataset_dir \
+    --schema-path /path/to/schema.json \
+    --no-symbiosis-use-user-item-graph \
+    --no-symbiosis-use-context-exchange \
+    --symbiosis-use-domain-gate
 ```
 
 ## 评估
