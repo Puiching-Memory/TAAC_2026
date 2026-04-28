@@ -92,31 +92,6 @@ uv run taac-package-infer --experiment config/baseline
 uv run pytest tests -q
 ```
 
-## Docker Compose
-
-仓库提供基于 `uv.lock` 的 GPU 容器工作流，固定使用 CUDA 12.6、Python 3.10.20 和 `cuda126` extra。宿主机需要安装 NVIDIA Container Toolkit，并提前准备可被容器访问的 parquet 数据和 `schema.json`。
-
-```bash
-# GPU 开发容器
-docker compose --profile dev up -d --build
-docker compose --profile dev exec dev bash
-
-# 训练 baseline
-TAAC_DATASET_PATH=/path/to/dataset_dir \
-TAAC_SCHEMA_PATH=/path/to/dataset_dir/schema.json \
-docker compose --profile train up --build
-
-# 评估训练输出
-TAAC_DATASET_PATH=/path/to/dataset_dir \
-TAAC_SCHEMA_PATH=/path/to/dataset_dir/schema.json \
-docker compose --profile evaluate up --build
-
-# 记录一次搜索请求
-TRIALS=50 EXPERIMENT=interformer docker compose --profile search up --build
-```
-
-常用环境变量：`EXPERIMENT` 选择 `config/<name>` 下的实验包，`TRAIN_ARGS` / `EVAL_ARGS` / `SEARCH_ARGS` 追加对应命令参数，`AUTO_SYNC=0` 可跳过容器入口的自动 `uv sync`。训练、评估和搜索输出会写入 `taac2026-train-outputs` 命名卷；HuggingFace 与 uv 缓存分别保存在 `taac2026-hf-cache`、`taac2026-uv-cache`。
-
 ## 当前支持实验包
 
 | 实验包         | 目录                                           | 公开来源                                                                                                                                      |
