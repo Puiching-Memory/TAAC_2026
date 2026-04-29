@@ -499,7 +499,7 @@ def collect_host_device_info(config: HostDeviceInfoConfig) -> dict[str, object]:
         _log_command(sink, "disk usage", ["df", "-h", str(config.repo_root), "/tmp"])
         _log_network_info(sink)
         _log_device_nodes(sink, pattern="dev/nvidia*", title="nvidia device nodes", missing_message="nvidia device nodes: none")
-        _log_device_nodes(sink, pattern="dev/dri*", title="/dev/dri", missing_message="/dev/dri: none")
+        _log_device_nodes(sink, pattern="dev/dri/*", title="/dev/dri", missing_message="/dev/dri: none")
         _log_command(sink, "nvidia-smi list", ["nvidia-smi", "-L"])
         _log_command(sink, "nvidia-smi", ["nvidia-smi"])
         _log_command(sink, "nvcc", ["nvcc", "--version"])
