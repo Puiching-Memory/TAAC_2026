@@ -15,7 +15,7 @@ icon: lucide/chart-column
 
 ## 当前状态
 
-- 性能基准图表已生成（`docs/assets/figures/benchmarks/`，6 个 ECharts JSON）
+- 性能基准文档已整理，图表资源当前未随仓库检入
 - 评估指标文档覆盖 AUC 优化策略和诊断维度
 
 ## 快速背景
