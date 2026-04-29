@@ -90,7 +90,7 @@ class LogSink:
         return None
 
     def log(self, message: str) -> None:
-        line = f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S%z')}] {message}"
+        line = f"[{datetime.now().astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')}] {message}"
         print(line)
 
 
