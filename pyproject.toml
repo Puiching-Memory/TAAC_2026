@@ -15,15 +15,15 @@ dependencies = [
 	"datasets==2.14.7",
 	"hypothesis==6.151.12",
 	"matplotlib==3.10.8",
-	"numpy==2.2.6",
+	"numpy==2.2.5",
 	"pyarrow==23.0.1",
 	"pytest==9.0.3",
 	"pytest-benchmark==5.2.3",
 	"rich==14.3.3",
 	"scikit-learn==1.7.2",
-	"tensorboard==2.20.0",
+	"tensorboard==2.19.0",
 	"tomli==2.4.0",
-	"tqdm==4.67.1",
+	"tqdm==4.67.3",
 	"triton==3.3.1",
 ]
 
