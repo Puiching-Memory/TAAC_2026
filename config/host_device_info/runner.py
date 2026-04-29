@@ -12,7 +12,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from importlib import metadata
@@ -476,6 +476,17 @@ def _log_build_tools(sink: LogSink) -> None:
             sink.log(f"{tool_name} --version failed with exit code {return_code}")
 
 
+def _run_diagnostic_step(sink: LogSink, label: str, step: Callable[[], None], *, detail_limit: int) -> None:
+    try:
+        step()
+    except Exception as error:
+        sink.log(f"---- {label} failed ----")
+        sink.log(f"{label}_failure_class={type(error).__name__}")
+        detail = _compact_detail(str(error), detail_limit)
+        if detail:
+            sink.log(f"{label}_failure_detail={detail}")
+
+
 def collect_host_device_info(config: HostDeviceInfoConfig) -> dict[str, object]:
     sink = LogSink()
     try:
@@ -488,29 +499,47 @@ def collect_host_device_info(config: HostDeviceInfoConfig) -> dict[str, object]:
         sink.log(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}")
         sink.log(f"NVIDIA_VISIBLE_DEVICES={os.environ.get('NVIDIA_VISIBLE_DEVICES', '<unset>')}")
 
-        _log_os_release(sink)
-        _log_proxy_environment(sink)
-        _log_command(sink, "hostname", ["hostname"])
-        _log_command(sink, "uptime", ["uptime"])
-        _log_command(sink, "kernel", ["uname", "-a"])
-        _log_command(sink, "cpu", ["lscpu"])
-        _log_command(sink, "memory", ["free", "-h"])
-        _log_command(sink, "block devices", ["lsblk", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,MODEL"])
-        _log_command(sink, "disk usage", ["df", "-h", str(config.repo_root), "/tmp"])
-        _log_network_info(sink)
-        _log_device_nodes(sink, pattern="dev/nvidia*", title="nvidia device nodes", missing_message="nvidia device nodes: none")
-        _log_device_nodes(sink, pattern="dev/dri/*", title="/dev/dri", missing_message="/dev/dri: none")
-        _log_command(sink, "nvidia-smi list", ["nvidia-smi", "-L"])
-        _log_command(sink, "nvidia-smi", ["nvidia-smi"])
-        _log_command(sink, "nvcc", ["nvcc", "--version"])
-        _log_uv_bootstrap_status(sink, config)
-        _log_dependency_index_status(sink, config)
-        _log_connectivity_matrix(sink, config)
-        _log_pip_download_probes(sink, config)
-        _log_conda_search_probes(sink, config)
-        _log_build_tools(sink)
-        _log_python_info(sink)
-        _log_python_packages(sink)
+        steps: tuple[tuple[str, Callable[[], None]], ...] = (
+            ("os_release", lambda: _log_os_release(sink)),
+            ("proxy_environment", lambda: _log_proxy_environment(sink)),
+            ("hostname", lambda: _log_command(sink, "hostname", ["hostname"])),
+            ("uptime", lambda: _log_command(sink, "uptime", ["uptime"])),
+            ("kernel", lambda: _log_command(sink, "kernel", ["uname", "-a"])),
+            ("cpu", lambda: _log_command(sink, "cpu", ["lscpu"])),
+            ("memory", lambda: _log_command(sink, "memory", ["free", "-h"])),
+            (
+                "block_devices",
+                lambda: _log_command(sink, "block devices", ["lsblk", "-o", "NAME,SIZE,TYPE,MOUNTPOINT,MODEL"]),
+            ),
+            ("disk_usage", lambda: _log_command(sink, "disk usage", ["df", "-h", str(config.repo_root), "/tmp"])),
+            ("network", lambda: _log_network_info(sink)),
+            (
+                "nvidia_device_nodes",
+                lambda: _log_device_nodes(
+                    sink,
+                    pattern="dev/nvidia*",
+                    title="nvidia device nodes",
+                    missing_message="nvidia device nodes: none",
+                ),
+            ),
+            (
+                "dri_device_nodes",
+                lambda: _log_device_nodes(sink, pattern="dev/dri/*", title="/dev/dri", missing_message="/dev/dri: none"),
+            ),
+            ("nvidia_smi_list", lambda: _log_command(sink, "nvidia-smi list", ["nvidia-smi", "-L"])),
+            ("nvidia_smi", lambda: _log_command(sink, "nvidia-smi", ["nvidia-smi"])),
+            ("nvcc", lambda: _log_command(sink, "nvcc", ["nvcc", "--version"])),
+            ("uv_bootstrap", lambda: _log_uv_bootstrap_status(sink, config)),
+            ("dependency_indexes", lambda: _log_dependency_index_status(sink, config)),
+            ("connectivity_matrix", lambda: _log_connectivity_matrix(sink, config)),
+            ("pip_download_probes", lambda: _log_pip_download_probes(sink, config)),
+            ("conda_search_probes", lambda: _log_conda_search_probes(sink, config)),
+            ("build_tools", lambda: _log_build_tools(sink)),
+            ("python_info", lambda: _log_python_info(sink)),
+            ("python_packages", lambda: _log_python_packages(sink)),
+        )
+        for label, step in steps:
+            _run_diagnostic_step(sink, label, step, detail_limit=config.probe_detail_limit)
     finally:
         sink.close()
     return {
