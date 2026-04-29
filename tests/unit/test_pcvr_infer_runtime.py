@@ -230,6 +230,12 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     assert saved_payload["metrics"]["score_diagnostics"] == diagnostics
     assert saved_payload["data_diagnostics"] == payload["data_diagnostics"]
     assert saved_payload["schema"] == schema_payload
+    predictions_payload = (tmp_path / "predictions.jsonl").read_bytes()
+    assert predictions_payload.endswith(b"\n")
+    assert [loads(line) for line in predictions_payload.splitlines()] == [
+        {"user_id": "u0", "score": 0.1, "target": 0.0, "timestamp": None},
+        {"user_id": "u1", "score": 0.9, "target": 1.0, "timestamp": None},
+    ]
 
 
 def test_infer_request_runtime_settings_override_train_config(tmp_path: Path) -> None:

@@ -205,9 +205,11 @@ class PCVRExperiment:
             probabilities,
             auc_bootstrap_samples=_EVAL_AUC_BOOTSTRAP_SAMPLES,
         )
-        rows = [dump_bytes(record) for record in evaluation["records"]]
         predictions_path.parent.mkdir(parents=True, exist_ok=True)
-        predictions_path.write_bytes(b"\n".join(rows) + (b"\n" if rows else b""))
+        with predictions_path.open("wb") as handle:
+            for record in evaluation["records"]:
+                handle.write(dump_bytes(record))
+                handle.write(b"\n")
         payload = {
             "experiment_name": self.name,
             "checkpoint_path": str(checkpoint),
