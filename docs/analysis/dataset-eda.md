@@ -6,7 +6,7 @@ icon: lucide/bar-chart-3
 
 > 本报告由 `uv run taac-dataset-eda` 自动生成的 ECharts JSON 驱动。
 > 如需更新，请在本地重新运行 CLI，并把 `docs/assets/figures/eda/` 下刷新后的图表数据一并提交。
-> 本页对应带标签的 sample/test 数据集；线上正式数据集请改用 `bash tools/run_online_dataset_eda.sh`。运行前直接编辑脚本顶部的 `ONLINE_EDA_*` 常量即可，输出会写到 `outputs/reports/online_dataset_eda.json` 与同目录图表文件夹。该单文件工具默认按小 batch 做全量流式扫描；如果只想快速抽样，请直接修改 `ONLINE_EDA_MAX_ROWS` 或 `ONLINE_EDA_SAMPLE_PERCENT`。
+> 本页对应带标签的 sample/test 数据集；线上正式数据集现在统一走 `config/online_dataset_eda` 实验包。本地可执行 `bash run.sh train --experiment config/online_dataset_eda --dataset-path <parquet-or-dir> --schema-path <schema.json>`，线上可先 `uv run taac-package-train --experiment config/online_dataset_eda --output-dir outputs/training_bundles/online_dataset_eda_bundle`，再上传生成的 `run.sh` 和 `code_package.zip`。该实验包只把摘要打印到标准输出，不生成 JSON 或图表文件；如需采样或调整扫描参数，请直接编辑 [config/online_dataset_eda/__init__.py](config/online_dataset_eda/__init__.py) 中的 `ONLINE_DATASET_EDA_CONFIG`。
 
 ---
 

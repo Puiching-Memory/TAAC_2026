@@ -9,7 +9,7 @@ from pathlib import Path
 @dataclass(slots=True)
 class TrainRequest:
     experiment: str
-    dataset_path: Path
+    dataset_path: Path | None
     schema_path: Path | None
     run_dir: Path
     extra_args: tuple[str, ...] = ()

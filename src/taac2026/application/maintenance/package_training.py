@@ -94,9 +94,6 @@ def _write_code_package(
             source = root / filename
             if source.exists():
                 _add_file_to_zip(archive, source, f"project/{filename}")
-        tool_logger = root / "tools" / "log_host_device_info.sh"
-        if tool_logger.exists():
-            _add_file_to_zip(archive, tool_logger, "project/tools/log_host_device_info.sh")
         config_init = root / "config" / "__init__.py"
         if config_init.exists():
             _add_file_to_zip(archive, config_init, "project/config/__init__.py")

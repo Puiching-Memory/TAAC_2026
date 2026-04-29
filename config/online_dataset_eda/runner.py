@@ -1,50 +1,3 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export TAAC_ONLINE_EDA_ROOT_DIR="${ROOT_DIR}"
-
-# Edit these values directly before uploading/running the script.
-ONLINE_EDA_DATASET_PATH=""
-ONLINE_EDA_SCHEMA_PATH=""
-ONLINE_EDA_OUTPUT_PATH=""
-ONLINE_EDA_CHART_DIR=""
-ONLINE_EDA_DISABLE_CHARTS="0"
-ONLINE_EDA_BATCH_ROWS="128"
-ONLINE_EDA_CARDINALITY_SKETCH_K="4096"
-ONLINE_EDA_USER_SAMPLE_LIMIT="50000"
-ONLINE_EDA_SEQUENCE_SAMPLE_SIZE="16384"
-ONLINE_EDA_MAX_ROWS=""
-ONLINE_EDA_SAMPLE_PERCENT=""
-ONLINE_EDA_PROGRESS_STEP_PERCENT="10"
-
-export TAAC_ONLINE_EDA_CONFIG_DATASET_PATH="${ONLINE_EDA_DATASET_PATH}"
-export TAAC_ONLINE_EDA_CONFIG_SCHEMA_PATH="${ONLINE_EDA_SCHEMA_PATH}"
-export TAAC_ONLINE_EDA_CONFIG_OUTPUT_PATH="${ONLINE_EDA_OUTPUT_PATH}"
-export TAAC_ONLINE_EDA_CONFIG_CHART_DIR="${ONLINE_EDA_CHART_DIR}"
-export TAAC_ONLINE_EDA_CONFIG_DISABLE_CHARTS="${ONLINE_EDA_DISABLE_CHARTS}"
-export TAAC_ONLINE_EDA_CONFIG_BATCH_ROWS="${ONLINE_EDA_BATCH_ROWS}"
-export TAAC_ONLINE_EDA_CONFIG_CARDINALITY_SKETCH_K="${ONLINE_EDA_CARDINALITY_SKETCH_K}"
-export TAAC_ONLINE_EDA_CONFIG_USER_SAMPLE_LIMIT="${ONLINE_EDA_USER_SAMPLE_LIMIT}"
-export TAAC_ONLINE_EDA_CONFIG_SEQUENCE_SAMPLE_SIZE="${ONLINE_EDA_SEQUENCE_SAMPLE_SIZE}"
-export TAAC_ONLINE_EDA_CONFIG_MAX_ROWS="${ONLINE_EDA_MAX_ROWS}"
-export TAAC_ONLINE_EDA_CONFIG_SAMPLE_PERCENT="${ONLINE_EDA_SAMPLE_PERCENT}"
-export TAAC_ONLINE_EDA_CONFIG_PROGRESS_STEP_PERCENT="${ONLINE_EDA_PROGRESS_STEP_PERCENT}"
-
-if [[ -n "${TAAC_PYTHON:-}" ]]; then
-  PYTHON_BIN="${TAAC_PYTHON}"
-elif [[ -x "${ROOT_DIR}/.venv/bin/python" ]]; then
-  PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
-elif command -v python >/dev/null 2>&1; then
-  PYTHON_BIN="$(command -v python)"
-elif command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN="$(command -v python3)"
-else
-  echo "python interpreter not found; set TAAC_PYTHON explicitly" >&2
-  exit 127
-fi
-
-exec "${PYTHON_BIN}" - <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -66,30 +19,26 @@ except ImportError as exc:  # pragma: no cover - runtime guard
   raise SystemExit("pyarrow is required for online dataset EDA") from exc
 
 
-ROOT_DIR = Path(os.environ["TAAC_ONLINE_EDA_ROOT_DIR"]).resolve()
-DEFAULT_REPORT_BASE = (
-  Path(os.environ["TRAIN_CKPT_PATH"]).expanduser().resolve()
-  if os.environ.get("TRAIN_CKPT_PATH")
-  else ROOT_DIR / "outputs/reports"
-)
-DEFAULT_OUTPUT = DEFAULT_REPORT_BASE / "online_dataset_eda.json"
-DEFAULT_CHART_DIR = DEFAULT_REPORT_BASE / "online_dataset_eda_charts"
-CONFIG_DATASET_PATH = os.environ.get("TAAC_ONLINE_EDA_CONFIG_DATASET_PATH") or None
-CONFIG_SCHEMA_PATH = os.environ.get("TAAC_ONLINE_EDA_CONFIG_SCHEMA_PATH") or None
-CONFIG_OUTPUT_PATH = os.environ.get("TAAC_ONLINE_EDA_CONFIG_OUTPUT_PATH") or None
-CONFIG_CHART_DIR = os.environ.get("TAAC_ONLINE_EDA_CONFIG_CHART_DIR") or None
-CONFIG_DISABLE_CHARTS = os.environ.get("TAAC_ONLINE_EDA_CONFIG_DISABLE_CHARTS", "0") == "1"
-BATCH_ROWS = int(os.environ.get("TAAC_ONLINE_EDA_CONFIG_BATCH_ROWS", "128"))
-CARDINALITY_SKETCH_K = int(os.environ.get("TAAC_ONLINE_EDA_CONFIG_CARDINALITY_SKETCH_K", "4096"))
-USER_SAMPLE_LIMIT = int(os.environ.get("TAAC_ONLINE_EDA_CONFIG_USER_SAMPLE_LIMIT", "50000"))
-SEQUENCE_SAMPLE_SIZE = int(os.environ.get("TAAC_ONLINE_EDA_CONFIG_SEQUENCE_SAMPLE_SIZE", "16384"))
-CONFIG_MAX_ROWS_RAW = os.environ.get("TAAC_ONLINE_EDA_CONFIG_MAX_ROWS", "").strip()
-CONFIG_MAX_ROWS = int(CONFIG_MAX_ROWS_RAW) if CONFIG_MAX_ROWS_RAW else None
-CONFIG_SAMPLE_PERCENT_RAW = os.environ.get("TAAC_ONLINE_EDA_CONFIG_SAMPLE_PERCENT", "").strip()
-CONFIG_SAMPLE_PERCENT = float(CONFIG_SAMPLE_PERCENT_RAW) if CONFIG_SAMPLE_PERCENT_RAW else None
-PROGRESS_STEP_PERCENT = max(float(os.environ.get("TAAC_ONLINE_EDA_CONFIG_PROGRESS_STEP_PERCENT", "10")), 0.1)
+DEFAULT_BATCH_ROWS = 128
+DEFAULT_CARDINALITY_SKETCH_K = 4096
+DEFAULT_USER_SAMPLE_LIMIT = 50000
+DEFAULT_SEQUENCE_SAMPLE_SIZE = 16384
+DEFAULT_PROGRESS_STEP_PERCENT = 10.0
 SKIPPED_CHARTS = ["label_distribution", "feature_auc", "null_rate_by_label"]
 UINT64_MASK = (1 << 64) - 1
+
+
+@dataclass(slots=True)
+class OnlineDatasetEDAConfig:
+  dataset_path: Path | None = None
+  schema_path: Path | None = None
+  batch_rows: int = DEFAULT_BATCH_ROWS
+  cardinality_sketch_k: int = DEFAULT_CARDINALITY_SKETCH_K
+  user_sample_limit: int = DEFAULT_USER_SAMPLE_LIMIT
+  sequence_sample_size: int = DEFAULT_SEQUENCE_SAMPLE_SIZE
+  max_rows: int | None = None
+  sample_percent: float | None = None
+  progress_step_percent: float = DEFAULT_PROGRESS_STEP_PERCENT
 
 
 def mix_uint64(value: int) -> int:
@@ -257,7 +206,7 @@ class KMVSketch:
     if threshold <= 0:
       return len(self._values)
     estimate = (self.limit - 1) / threshold
-    return int(round(estimate))
+    return round(estimate)
 
 
 class BottomKUserSampler:
@@ -363,12 +312,13 @@ class SecondPassResult:
 
 
 class ProgressTracker:
-  def __init__(self, label: str, total_rows: int) -> None:
+  def __init__(self, label: str, total_rows: int, *, step_percent: float) -> None:
     self.label = label
     self.total_rows = max(total_rows, 0)
     self._started = False
     self._last_reported_rows = -1
-    self._next_percent = PROGRESS_STEP_PERCENT
+    self._step_percent = max(step_percent, 0.1)
+    self._next_percent = self._step_percent
 
   def _emit(self, scanned_rows: int) -> None:
     if self.total_rows <= 0:
@@ -396,7 +346,7 @@ class ProgressTracker:
     if scanned_rows >= self.total_rows or percent + 1e-9 >= self._next_percent:
       self._emit(scanned_rows)
       while self._next_percent <= percent + 1e-9:
-        self._next_percent += PROGRESS_STEP_PERCENT
+        self._next_percent += self._step_percent
 
   def finish(self, scanned_rows: int) -> None:
     if not self._started:
@@ -416,17 +366,10 @@ def dedupe_preserve_order(values: list[str]) -> list[str]:
   return result
 
 
-def resolve_dataset_path(raw_value: str | None) -> Path:
-  candidate = raw_value or os.environ.get("TAAC_DATASET_PATH") or os.environ.get("TRAIN_DATA_PATH")
-  if not candidate:
-    raise SystemExit("dataset path is required; use --dataset-path or TAAC_DATASET_PATH")
-  return Path(candidate).expanduser().resolve()
-
-
-def resolve_schema_path(dataset_path: Path, raw_value: str | None) -> Path:
+def resolve_schema_path(dataset_path: Path, raw_value: Path | None) -> Path:
   candidates: list[Path] = []
   if raw_value:
-    candidates.append(Path(raw_value))
+    candidates.append(raw_value)
   env_schema = os.environ.get("TAAC_SCHEMA_PATH") or os.environ.get("TRAIN_SCHEMA_PATH")
   if env_schema:
     candidates.append(Path(env_schema))
@@ -441,16 +384,6 @@ def resolve_schema_path(dataset_path: Path, raw_value: str | None) -> Path:
   raise SystemExit("schema.json not found; use --schema-path or place it beside the parquet data")
 
 
-def resolve_output_path(raw_value: str | None) -> Path:
-  return Path(raw_value or os.environ.get("TAAC_ONLINE_EDA_OUTPUT") or DEFAULT_OUTPUT).expanduser().resolve()
-
-
-def resolve_chart_dir(raw_value: str | None, no_charts: bool) -> Path | None:
-  if no_charts:
-    return None
-  return Path(raw_value or os.environ.get("TAAC_ONLINE_EDA_CHART_DIR") or DEFAULT_CHART_DIR).expanduser().resolve()
-
-
 def resolve_scan_row_limit(total_rows: int, max_rows: int | None, sample_percent: float | None) -> int | None:
   if sample_percent is not None:
     if total_rows <= 0:
@@ -461,12 +394,14 @@ def resolve_scan_row_limit(total_rows: int, max_rows: int | None, sample_percent
   return min(total_rows, max_rows)
 
 
-def validate_config() -> None:
-  if CONFIG_MAX_ROWS is not None and CONFIG_MAX_ROWS <= 0:
+def validate_config(config: OnlineDatasetEDAConfig) -> None:
+  if config.dataset_path is None:
+    raise SystemExit("dataset path is required")
+  if config.max_rows is not None and config.max_rows <= 0:
     raise SystemExit("ONLINE_EDA_MAX_ROWS must be positive when set")
-  if CONFIG_SAMPLE_PERCENT is not None and not (0.0 < CONFIG_SAMPLE_PERCENT <= 100.0):
+  if config.sample_percent is not None and not (0.0 < config.sample_percent <= 100.0):
     raise SystemExit("ONLINE_EDA_SAMPLE_PERCENT must be in (0, 100] when set")
-  if CONFIG_MAX_ROWS is not None and CONFIG_SAMPLE_PERCENT is not None:
+  if config.max_rows is not None and config.sample_percent is not None:
     raise SystemExit("ONLINE_EDA_MAX_ROWS and ONLINE_EDA_SAMPLE_PERCENT are mutually exclusive")
 
 
@@ -494,11 +429,11 @@ def build_dataset_info(dataset_path: Path) -> DatasetInfo:
   )
 
 
-def iter_batches(dataset: DatasetInfo, *, columns: list[str], max_rows: int | None):
+def iter_batches(dataset: DatasetInfo, *, columns: list[str], max_rows: int | None, batch_rows: int):
   remaining = max_rows
   for file_path in dataset.files:
     parquet_file = pq.ParquetFile(file_path)
-    for batch in parquet_file.iter_batches(batch_size=BATCH_ROWS, columns=columns):
+    for batch in parquet_file.iter_batches(batch_size=batch_rows, columns=columns):
       if remaining is not None:
         if remaining <= 0:
           return
@@ -582,11 +517,6 @@ def quantile(sorted_values: list[float], quant: float) -> float:
 
 def chart_title(text: str, subtitle: str) -> dict[str, str]:
   return {"text": text, "subtext": subtitle}
-
-
-def write_json(path: Path, payload: Any) -> None:
-  path.parent.mkdir(parents=True, exist_ok=True)
-  path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def series_bar(names: list[str], values: list[float], *, title: str, subtitle: str, series_name: str, horizontal: bool = False) -> dict[str, Any]:
@@ -847,25 +777,39 @@ def build_overlap_rows(sampled_user_domains: dict[Any, set[str]], domain_names: 
   return rows
 
 
-def run_first_pass(dataset: DatasetInfo, layout: SchemaLayout, *, feature_columns: list[str], sparse_columns: list[str], dense_columns: list[str], user_key_column: str | None, max_rows: int | None) -> FirstPassResult:
+def run_first_pass(
+  dataset: DatasetInfo,
+  layout: SchemaLayout,
+  *,
+  feature_columns: list[str],
+  sparse_columns: list[str],
+  dense_columns: list[str],
+  user_key_column: str | None,
+  row_limit: int | None,
+  config: OnlineDatasetEDAConfig,
+) -> FirstPassResult:
   null_counts = {column: 0 for column in feature_columns}
-  sparse_sketches = {column: KMVSketch(CARDINALITY_SKETCH_K) for column in sparse_columns}
+  sparse_sketches = {column: KMVSketch(config.cardinality_sketch_k) for column in sparse_columns}
   dense_stats = {column: DenseStats() for column in dense_columns}
   sequence_stats = {
     domain.name: SequenceStats(
       domain=domain.name,
-      sampler=ReservoirSampler(SEQUENCE_SAMPLE_SIZE, seed=stable_hash(domain.name) & 0xFFFFFFFF),
+      sampler=ReservoirSampler(config.sequence_sample_size, seed=stable_hash(domain.name) & 0xFFFFFFFF),
     )
     for domain in layout.sequence_domains
     if domain.length_column in dataset.available_columns
   }
-  user_sampler = BottomKUserSampler(USER_SAMPLE_LIMIT)
+  user_sampler = BottomKUserSampler(config.user_sample_limit)
   scanned_rows = 0
-  progress = ProgressTracker("first-pass", max_rows if max_rows is not None else dataset.total_rows)
+  progress = ProgressTracker(
+    "first-pass",
+    row_limit if row_limit is not None else dataset.total_rows,
+    step_percent=config.progress_step_percent,
+  )
 
   iter_columns = dedupe_preserve_order(feature_columns + ([user_key_column] if user_key_column else []))
   progress.start()
-  for batch in iter_batches(dataset, columns=iter_columns, max_rows=max_rows):
+  for batch in iter_batches(dataset, columns=iter_columns, max_rows=row_limit, batch_rows=config.batch_rows):
     scanned_rows += batch.num_rows
     cache: dict[str, list[Any]] = {}
     for column in feature_columns:
@@ -926,7 +870,8 @@ def run_second_pass(
   user_key_column: str | None,
   co_missing_columns: list[str],
   sampled_users: set[Any],
-  max_rows: int | None,
+  row_limit: int | None,
+  config: OnlineDatasetEDAConfig,
 ) -> SecondPassResult:
   matrix_size = len(co_missing_columns)
   co_missing_counts = [[0 for _ in range(matrix_size)] for _ in range(matrix_size)]
@@ -940,10 +885,14 @@ def run_second_pass(
     if domain.length_column is not None and domain.length_column in dataset.available_columns
   ]
   iter_columns = dedupe_preserve_order(co_missing_columns + ([user_key_column] if user_key_column else []) + domain_length_columns)
-  progress = ProgressTracker("second-pass", max_rows if max_rows is not None else dataset.total_rows)
+  progress = ProgressTracker(
+    "second-pass",
+    row_limit if row_limit is not None else dataset.total_rows,
+    step_percent=config.progress_step_percent,
+  )
 
   progress.start()
-  for batch in iter_batches(dataset, columns=iter_columns, max_rows=max_rows):
+  for batch in iter_batches(dataset, columns=iter_columns, max_rows=row_limit, batch_rows=config.batch_rows):
     scanned_rows += batch.num_rows
     cache: dict[str, list[Any]] = {}
     missing_flags = {column: [is_missing(value) for value in get_batch_values(batch, cache, column)] for column in co_missing_columns}
@@ -989,10 +938,8 @@ def run_second_pass(
 def build_report(
   dataset: DatasetInfo,
   schema_path: Path,
-  output_path: Path,
-  chart_dir: Path | None,
-  max_rows: int | None,
-  sample_percent: float | None,
+  row_limit: int | None,
+  config: OnlineDatasetEDAConfig,
 ) -> dict[str, Any]:
   layout = SchemaLayout.from_path(schema_path)
   user_key_column = "user_id" if "user_id" in dataset.available_columns else layout.primary_user_id_column
@@ -1007,11 +954,11 @@ def build_report(
     sparse_columns=sparse_columns,
     dense_columns=dense_columns,
     user_key_column=user_key_column,
-    max_rows=max_rows,
+    row_limit=row_limit,
+    config=config,
   )
 
   row_count = first_pass.scanned_rows
-  subtitle = base_subtitle(row_count, dataset.total_rows)
   null_rows = build_null_rows(feature_columns, first_pass.null_counts, row_count)
   cardinality_rows = build_cardinality_rows(sparse_columns, first_pass.sparse_sketches)
   sequence_rows = build_sequence_rows(layout, first_pass.sequence_stats)
@@ -1026,7 +973,8 @@ def build_report(
     user_key_column=user_key_column,
     co_missing_columns=co_missing_names,
     sampled_users=first_pass.user_sampler.tokens(),
-    max_rows=max_rows,
+    row_limit=row_limit,
+    config=config,
   )
 
   activity_rows = build_user_activity_rows(second_pass.sampled_user_activity)
@@ -1034,13 +982,6 @@ def build_report(
   if not overlap_domain_names:
     overlap_domain_names = [domain.name for domain in layout.sequence_domains if domain.length_column in dataset.available_columns]
   overlap_rows = build_overlap_rows(second_pass.sampled_user_domains, overlap_domain_names)
-  co_missing_matrix = []
-  denominator = float(row_count) if row_count else 1.0
-  for y_index, _left_name in enumerate(co_missing_names):
-    for x_index, _right_name in enumerate(co_missing_names):
-      co_missing_matrix.append([x_index, y_index, round(second_pass.co_missing_counts[y_index][x_index] / denominator, 6)])
-
-  group_map = layout.group_by_column
   scalar_columns = sorted(column for column in dataset.available_columns if column not in set(layout.feature_columns))
   layout_counts = {
     "scalar": len(scalar_columns),
@@ -1050,113 +991,7 @@ def build_report(
     "sequence": len(layout.sequence_columns),
   }
   domain_counts = {domain.name: len(domain.all_columns) for domain in layout.sequence_domains}
-  coverage_x = [row["name"] for row in null_rows]
-  coverage_y = sorted({group_map.get(name, "scalar") for name in coverage_x})
-  y_index = {name: index for index, name in enumerate(coverage_y)}
-  coverage_matrix = [
-    [index, y_index[group_map.get(row["name"], "scalar")], round(1.0 - float(row["null_rate"]), 6)]
-    for index, row in enumerate(null_rows)
-  ]
-
-  charts: dict[str, dict[str, Any]] = {
-    "column_layout": column_layout_chart(layout_counts, domain_counts, subtitle),
-    "null_rates": series_bar(
-      [row["name"] for row in null_rows[:30]],
-      [row["null_rate"] for row in null_rows[:30]],
-      title="特征缺失率",
-      subtitle=subtitle,
-      series_name="null_rate",
-      horizontal=True,
-    ),
-    "cardinality": series_bar(
-      [row["name"] for row in cardinality_rows[:20]],
-      [row["cardinality"] for row in cardinality_rows[:20]],
-      title="稀疏特征基数",
-      subtitle=subtitle,
-      series_name="cardinality",
-      horizontal=True,
-    ),
-    "coverage_heatmap": heatmap_chart(
-      title="特征覆盖率热力图",
-      subtitle=subtitle,
-      x_labels=coverage_x,
-      y_labels=coverage_y,
-      data=coverage_matrix,
-      value_name="coverage",
-    ),
-    "sequence_lengths": boxplot_chart(
-      [row["domain"] for row in sequence_rows],
-      [[row["min"], row["q1"], row["median"], row["q3"], row["max"]] for row in sequence_rows],
-      subtitle,
-    ),
-    "seq_length_summary": sequence_summary_chart(
-      [row["domain"] for row in sequence_rows],
-      [row["mean"] for row in sequence_rows],
-      [row["p95"] for row in sequence_rows],
-      [row["empty_rate"] for row in sequence_rows],
-      subtitle,
-    ),
-    "user_activity": series_bar(
-      [row["bucket"] for row in activity_rows],
-      [row["user_count"] for row in activity_rows],
-      title="用户活跃度分布",
-      subtitle=subtitle,
-      series_name="sampled_user_count",
-    ),
-    "cross_domain_overlap": heatmap_chart(
-      title="跨域用户重叠",
-      subtitle=subtitle,
-      x_labels=overlap_domain_names,
-      y_labels=overlap_domain_names,
-      data=[
-        [overlap_domain_names.index(row["right"]), overlap_domain_names.index(row["left"]), row["overlap"]]
-        for row in overlap_rows
-      ],
-      value_name="jaccard",
-    ),
-    "co_missing": heatmap_chart(
-      title="特征共缺失模式",
-      subtitle=subtitle,
-      x_labels=co_missing_names,
-      y_labels=co_missing_names,
-      data=co_missing_matrix,
-      value_name="co_missing",
-    ),
-    "dense_distributions": scatter_chart(
-      title="稠密特征分布摘要",
-      subtitle=subtitle,
-      points=[
-        {
-          "name": row["name"],
-          "value": [row["mean"], row["std"], max(12, int(16 + row["zero_frac"] * 28))],
-          "symbolSize": max(12, int(16 + row["zero_frac"] * 28)),
-        }
-        for row in dense_rows
-      ],
-    ),
-    "cardinality_bins": series_bar(
-      [row["name"] for row in cardinality_bin_rows],
-      [row["count"] for row in cardinality_bin_rows],
-      title="特征基数区间分布",
-      subtitle=subtitle,
-      series_name="feature_count",
-    ),
-    "seq_repeat_rate": series_bar(
-      [row["domain"] for row in repeat_rows],
-      [row["repeat_rate"] for row in repeat_rows],
-      title="序列内物品重复率",
-      subtitle=subtitle,
-      series_name="repeat_rate",
-    ),
-  }
-
   chart_manifest: dict[str, str] = {}
-  if chart_dir is not None:
-    chart_dir.mkdir(parents=True, exist_ok=True)
-    for chart_name, option in charts.items():
-      chart_path = chart_dir / f"{chart_name}.echarts.json"
-      write_json(chart_path, option)
-      chart_manifest[chart_name] = str(chart_path)
 
   report = {
     "report": "dataset_eda",
@@ -1164,22 +999,22 @@ def build_report(
     "schema_path": str(schema_path),
     "dataset_role": "online",
     "streaming": True,
-    "batch_rows": BATCH_ROWS,
+    "batch_rows": config.batch_rows,
     "label_columns": [name for name in ("label_type", "label_action_type") if name in dataset.available_columns],
     "label_dependent_analyses_enabled": False,
     "row_count": row_count,
     "total_rows": dataset.total_rows,
     "sampled": row_count != dataset.total_rows,
-    "max_rows": max_rows,
-    "sample_percent": sample_percent,
-    "chart_dir": str(chart_dir) if chart_dir is not None else None,
+    "max_rows": row_limit,
+    "sample_percent": config.sample_percent,
+    "chart_dir": None,
     "generated_charts": chart_manifest,
     "skipped_charts": SKIPPED_CHARTS,
     "approximation": {
-      "cardinality": {"method": "kmv", "k": CARDINALITY_SKETCH_K},
-      "user_activity": {"method": "bottom_k_users", "limit": USER_SAMPLE_LIMIT},
-      "cross_domain_overlap": {"method": "bottom_k_users", "limit": USER_SAMPLE_LIMIT},
-      "sequence_quantiles": {"method": "reservoir_sample", "size": SEQUENCE_SAMPLE_SIZE},
+      "cardinality": {"method": "kmv", "k": config.cardinality_sketch_k},
+      "user_activity": {"method": "bottom_k_users", "limit": config.user_sample_limit},
+      "cross_domain_overlap": {"method": "bottom_k_users", "limit": config.user_sample_limit},
+      "sequence_quantiles": {"method": "reservoir_sample", "size": config.sequence_sample_size},
     },
     "stats": {
       "column_layout": {"counts": layout_counts, "domain_counts": domain_counts, "scalar_columns": scalar_columns},
@@ -1197,7 +1032,6 @@ def build_report(
       "label_distribution": {},
     },
   }
-  write_json(output_path, report)
   return report
 
 
@@ -1262,38 +1096,26 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"{key}: " + ", ".join(f"{inner_key}={inner_value}" for inner_key, inner_value in value.items()))
 
 
-def main() -> int:
-  validate_config()
-  dataset_path = resolve_dataset_path(CONFIG_DATASET_PATH)
-  schema_path = resolve_schema_path(dataset_path, CONFIG_SCHEMA_PATH)
+def run_online_dataset_eda(config: OnlineDatasetEDAConfig) -> dict[str, Any]:
+  validate_config(config)
+  dataset_path = config.dataset_path.expanduser().resolve()
+  schema_path = resolve_schema_path(dataset_path, config.schema_path)
   dataset = build_dataset_info(dataset_path)
-  effective_max_rows = resolve_scan_row_limit(dataset.total_rows, CONFIG_MAX_ROWS, CONFIG_SAMPLE_PERCENT)
-  output_path = resolve_output_path(CONFIG_OUTPUT_PATH)
-  chart_dir = resolve_chart_dir(CONFIG_CHART_DIR, CONFIG_DISABLE_CHARTS)
+  effective_max_rows = resolve_scan_row_limit(dataset.total_rows, config.max_rows, config.sample_percent)
   print(f"[online-eda] dataset={dataset_path}", flush=True)
   print(f"[online-eda] schema={schema_path}", flush=True)
-  print(f"[online-eda] output={output_path}", flush=True)
-  if chart_dir is not None:
-    print(f"[online-eda] charts={chart_dir}", flush=True)
-  if CONFIG_SAMPLE_PERCENT is not None:
+  print("[online-eda] sink=stdout", flush=True)
+  if config.sample_percent is not None:
     print(
-      f"[online-eda] scan=streaming sample_percent={CONFIG_SAMPLE_PERCENT:.1f} max_rows={effective_max_rows} batch_rows={BATCH_ROWS}",
+      f"[online-eda] scan=streaming sample_percent={config.sample_percent:.1f} max_rows={effective_max_rows} batch_rows={config.batch_rows}",
       flush=True,
     )
   elif effective_max_rows is None:
-    print(f"[online-eda] scan=streaming full batch_rows={BATCH_ROWS}", flush=True)
+    print(f"[online-eda] scan=streaming full batch_rows={config.batch_rows}", flush=True)
   else:
-    print(f"[online-eda] scan=streaming max_rows={effective_max_rows} batch_rows={BATCH_ROWS}", flush=True)
+    print(f"[online-eda] scan=streaming max_rows={effective_max_rows} batch_rows={config.batch_rows}", flush=True)
   sys.stdout.flush()
-  report = build_report(dataset, schema_path, output_path, chart_dir, effective_max_rows, CONFIG_SAMPLE_PERCENT)
+  report = build_report(dataset, schema_path, effective_max_rows, config)
   print_report(report)
-  print(output_path)
-  if chart_dir is not None:
-    print(chart_dir)
   print("skipped:", ", ".join(report["skipped_charts"]))
-  return 0
-
-
-if __name__ == "__main__":
-  raise SystemExit(main())
-PY
+  return report
