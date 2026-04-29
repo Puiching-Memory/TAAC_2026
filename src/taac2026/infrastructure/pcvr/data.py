@@ -12,7 +12,6 @@ Optimizations:
 """
 
 import gc
-import json
 import logging
 import random
 import zlib
@@ -29,6 +28,7 @@ import torch.multiprocessing
 from numpy.typing import NDArray
 from torch.utils.data import IterableDataset, DataLoader
 
+from taac2026.infrastructure.io.json_utils import read_path
 from taac2026.infrastructure.pcvr.config import PCVRDataPipelineConfig
 from taac2026.infrastructure.pcvr.data_pipeline import (
     PCVRBatchTransform,
@@ -454,8 +454,7 @@ class PCVRParquetDataset(IterableDataset):
 
     def _load_schema(self, schema_path: str, seq_max_lens: dict[str, int]) -> None:
         """Populate per-group schema information from ``schema_path``."""
-        with Path(schema_path).open(encoding="utf-8") as f:
-            raw = json.load(f)
+        raw = read_path(Path(schema_path))
 
         # ---- user_int: [[fid, vocab_size, dim], ...] ----
         self._user_int_cols: list[list[int]] = raw["user_int"]

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -26,6 +25,7 @@ from taac2026.domain.config import EvalRequest, TrainRequest
 from taac2026.infrastructure.experiments.discovery import discover_experiment_paths
 from taac2026.infrastructure.experiments.loader import load_experiment_package
 from taac2026.infrastructure.io.files import repo_root
+from taac2026.infrastructure.io.json_utils import dumps, write_path
 from taac2026.infrastructure.pcvr.protocol import batch_to_model_input, build_pcvr_model, parse_seq_max_lens, resolve_schema_path
 from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args
 
@@ -393,7 +393,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_path(report_path, report_payload, indent=2, trailing_newline=True)
 
     subtitle = _subtitle(dataset_path, args.num_epochs)
     footer = _footer()
@@ -419,12 +419,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         xscale="log",
     )
 
-    print(json.dumps({
-        "report": str(report_path),
-        "size_figure": str(Path(args.size_output)),
-        "compute_figure": str(Path(args.compute_output)),
-        "experiments": experiment_paths,
-    }, ensure_ascii=False, indent=2))
+    print(
+        dumps(
+            {
+                "report": str(report_path),
+                "size_figure": str(Path(args.size_output)),
+                "compute_figure": str(Path(args.compute_output)),
+                "experiments": experiment_paths,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

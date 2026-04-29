@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
 
 from taac2026.domain.config import TrainRequest, default_run_dir
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.io.json_utils import dumps
 
 
-def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, tuple[str, ...]]:
+def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Train a TAAC 2026 experiment package")
     parser.add_argument("--experiment", default="config/baseline", help="experiment package path or module")
     parser.add_argument("--dataset-path", default=None, help="parquet file or parquet directory; required for data-driven experiments")
     parser.add_argument("--schema-path", default=None, help="schema.json path; defaults to the dataset directory")
     parser.add_argument("--run-dir", default=None, help="checkpoint/output directory")
-    parser.add_argument("--json", action="store_true", help="print the training summary as JSON")
     return parser.parse_known_args(argv)
 
 
@@ -43,8 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         extra_args=tuple(extra_args),
     )
     summary = experiment.train(request) or {"run_dir": str(run_dir)}
-    if args.json:
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    print(dumps(summary))
     return 0
 
 

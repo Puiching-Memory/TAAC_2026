@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -21,6 +20,7 @@ from taac2026.domain.config import EvalRequest, InferRequest, TrainRequest
 from taac2026.domain.metrics import compute_classification_metrics
 from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
+from taac2026.infrastructure.io.json_utils import dump_bytes
 import taac2026.infrastructure.pcvr.data as pcvr_data
 from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, REQUIRED_PCVR_TRAIN_CONFIG_KEYS
 from taac2026.infrastructure.pcvr.protocol import (
@@ -205,12 +205,11 @@ class PCVRExperiment:
             probabilities,
             auc_bootstrap_samples=_EVAL_AUC_BOOTSTRAP_SAMPLES,
         )
-        rows = [
-            json.dumps(record, ensure_ascii=False)
-            for record in evaluation["records"]
-        ]
         predictions_path.parent.mkdir(parents=True, exist_ok=True)
-        predictions_path.write_text("\n".join(rows) + ("\n" if rows else ""), encoding="utf-8")
+        with predictions_path.open("wb") as handle:
+            for record in evaluation["records"]:
+                handle.write(dump_bytes(record))
+                handle.write(b"\n")
         payload = {
             "experiment_name": self.name,
             "checkpoint_path": str(checkpoint),

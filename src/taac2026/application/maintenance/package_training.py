@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import zipfile
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from pathlib import Path
 
 from taac2026.infrastructure.experiments.loader import load_experiment_package
 from taac2026.infrastructure.io.files import repo_root
+from taac2026.infrastructure.io.json_utils import dump_bytes, dumps
 
 
 @dataclass(slots=True)
@@ -88,7 +88,7 @@ def _write_code_package(
     with zipfile.ZipFile(code_package_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(
             "project/.taac_training_manifest.json",
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            dump_bytes(manifest, indent=2, trailing_newline=True),
         )
         for filename in ("pyproject.toml", "uv.lock", "README.md"):
             source = root / filename
@@ -190,7 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         force=args.force,
     )
     if args.json:
-        print(json.dumps(_bundle_payload(result), ensure_ascii=False, indent=2))
+        print(dumps(_bundle_payload(result), indent=2))
     else:
         print(_format_bundle_summary(result))
     return 0

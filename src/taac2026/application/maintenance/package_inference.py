@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -16,13 +15,13 @@ from taac2026.application.maintenance.package_training import (
     _resolve_experiment_path,
 )
 from taac2026.infrastructure.io.files import repo_root
+from taac2026.infrastructure.io.json_utils import dump_bytes, dumps
 
 
 _INFER_ENTRYPOINT = """#!/usr/bin/env python3
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shlex
 import shutil
@@ -30,6 +29,8 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+import orjson
 
 
 _TENCENT_PYPI_INDEX_URL = "https://mirrors.cloud.tencent.com/pypi/simple/"
@@ -66,8 +67,8 @@ def _extract_code_package(package_path: Path, workdir: Path) -> Path:
 def _read_manifest(manifest_path: Path) -> dict[str, object]:
     if not manifest_path.exists():
         return {}
-    with manifest_path.open(encoding="utf-8") as handle:
-        return json.load(handle)
+    with manifest_path.open("rb") as handle:
+        return orjson.loads(handle.read())
 
 
 def _split_env_words(name: str) -> list[str]:
@@ -175,7 +176,7 @@ def _write_code_package(
     with zipfile.ZipFile(code_package_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(
             "project/.taac_inference_manifest.json",
-            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            dump_bytes(manifest, indent=2, trailing_newline=True),
         )
         for filename in ("pyproject.toml", "uv.lock", "README.md"):
             source = root / filename
@@ -264,7 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         force=args.force,
     )
     if args.json:
-        print(json.dumps(_bundle_payload(result), ensure_ascii=False, indent=2))
+        print(dumps(_bundle_payload(result), indent=2))
     else:
         print(_format_bundle_summary(result))
     return 0

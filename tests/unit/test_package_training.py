@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -11,6 +10,7 @@ import pytest
 
 import taac2026.application.maintenance.package_training as package_training
 from taac2026.application.maintenance.package_training import BundleResult, build_training_bundle
+from taac2026.infrastructure.io.json_utils import dump_bytes, loads
 from tests.unit._pcvr_experiment_matrix import discover_nonbaseline_pcvr_experiment_paths
 
 
@@ -25,14 +25,14 @@ def _code_package_names(code_package_path: Path) -> set[str]:
 def _code_package_manifest(code_package_path: Path) -> dict[str, object]:
     with zipfile.ZipFile(code_package_path) as code_archive:
         payload = code_archive.read("project/.taac_training_manifest.json")
-    return json.loads(payload.decode("utf-8"))
+    return loads(payload)
 
 
 def _write_minimal_training_runtime_package(code_package_path: Path) -> None:
     with zipfile.ZipFile(code_package_path, mode="w", compression=zipfile.ZIP_DEFLATED) as code_archive:
         code_archive.writestr(
             "project/.taac_training_manifest.json",
-            json.dumps({"bundled_experiment_path": "config/minimal"}, ensure_ascii=False, indent=2) + "\n",
+            dump_bytes({"bundled_experiment_path": "config/minimal"}, indent=2, trailing_newline=True),
         )
         code_archive.writestr(
             "project/pyproject.toml",
@@ -48,15 +48,15 @@ def _write_minimal_training_runtime_package(code_package_path: Path) -> None:
             "project/src/taac2026/application/training/cli.py",
             "from __future__ import annotations\n"
             "\n"
-            "import json\n"
+            "import orjson\n"
             "import os\n"
             "import sys\n"
             "from pathlib import Path\n"
             "\n"
             "\n"
             "def main() -> None:\n"
-            "    print(json.dumps({\"cwd\": str(Path.cwd()), \"argv\": sys.argv[1:], "
-            "\"experiment\": os.environ.get(\"TAAC_EXPERIMENT\")}))\n"
+            "    print(orjson.dumps({\"cwd\": str(Path.cwd()), \"argv\": sys.argv[1:], "
+            "\"experiment\": os.environ.get(\"TAAC_EXPERIMENT\")}).decode())\n"
             "\n"
             "\n"
             "if __name__ == \"__main__\":\n"
@@ -72,11 +72,11 @@ def _write_fake_pip_package(root: Path, log_path: Path) -> Path:
     (pip_package / "__main__.py").write_text(
         "from __future__ import annotations\n"
         "\n"
-        "import json\n"
+        "import orjson\n"
         "import sys\n"
         "from pathlib import Path\n"
         "\n"
-        f"Path({str(log_path)!r}).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+        f"Path({str(log_path)!r}).write_bytes(orjson.dumps(sys.argv[1:]))\n",
         encoding="utf-8",
     )
     return fake_pip
@@ -207,8 +207,8 @@ def test_training_run_script_installs_project_dependencies_before_entrypoint(tmp
         env=env,
     )
 
-    payload = json.loads(completed.stdout)
-    pip_args = json.loads(pip_args_path.read_text(encoding="utf-8"))
+    payload = loads(completed.stdout)
+    pip_args = loads(pip_args_path.read_bytes())
 
     assert payload["cwd"].endswith("bundle_workdir/project")
     assert payload["experiment"] is None
@@ -351,7 +351,7 @@ def test_package_training_main_prints_json_when_requested(
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    payload = json.loads(captured.out)
+    payload = loads(captured.out)
     assert payload["output_dir"] == str(result.output_dir)
     assert payload["run_script_path"] == str(result.run_script_path)
     assert payload["code_package_path"] == str(result.code_package_path)

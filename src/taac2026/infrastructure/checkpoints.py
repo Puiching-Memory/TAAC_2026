@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from pathlib import Path
 from typing import Any
+
+from taac2026.infrastructure.io.json_utils import write_path
 
 
 _GLOBAL_STEP_PATTERN = re.compile(r"^global_step(?P<step>\d+)(?:[A-Za-z0-9_.=\-]*)$")
@@ -99,7 +100,7 @@ def write_checkpoint_sidecars(
         if ns_groups_copied:
             config_to_dump["ns_groups_json"] = "ns_groups.json"
         target = checkpoint_dir / "train_config.json"
-        target.write_text(json.dumps(config_to_dump, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_path(target, config_to_dump, indent=2, trailing_newline=True)
         written["train_config"] = target
 
     return written

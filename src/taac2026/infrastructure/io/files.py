@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import Any
+
+from taac2026.infrastructure.io.json_utils import read_path, write_path
 
 
 def repo_root() -> Path:
@@ -24,9 +25,8 @@ def ensure_parent(path: Path) -> Path:
 
 def write_json(path: Path, payload: Any) -> Path:
     ensure_parent(path)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return path
+    return write_path(path, payload, indent=2, trailing_newline=True)
 
 
 def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_path(path)

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from taac2026.infrastructure.experiments.discovery import discover_experiment_paths
+from taac2026.infrastructure.io.json_utils import dumps
 from tests.unit._pcvr_experiment_matrix import build_pcvr_experiment_cases
 
 
@@ -28,7 +28,7 @@ def _write_minimal_pcvr_experiment(package_dir: Path, *, experiment_name: str, m
         encoding="utf-8",
     )
     (package_dir / "ns_groups.json").write_text(
-        json.dumps({"user_ns_groups": {"U1": [0]}, "item_ns_groups": {"I1": [0]}}, ensure_ascii=False, indent=2) + "\n",
+        dumps({"user_ns_groups": {"U1": [0]}, "item_ns_groups": {"I1": [0]}}, indent=2, trailing_newline=True),
         encoding="utf-8",
     )
 

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
-
 import taac2026.application.evaluation.cli as evaluation_cli
 from taac2026.application.evaluation.cli import parse_eval_args
+from taac2026.infrastructure.io.json_utils import loads
 
 
 def test_parse_eval_args_accepts_runtime_flags() -> None:
@@ -27,7 +26,7 @@ def test_parse_eval_args_accepts_runtime_flags() -> None:
     assert args.compile is True
 
 
-def test_main_json_output_is_compact_single_line(monkeypatch, capsys) -> None:
+def test_main_output_is_compact_single_line(monkeypatch, capsys) -> None:
     payload = {
         "checkpoint_path": "/tmp/model.pt",
         "schema_path": "/tmp/schema.json",
@@ -48,7 +47,6 @@ def test_main_json_output_is_compact_single_line(monkeypatch, capsys) -> None:
             "/tmp/eval.parquet",
             "--result-dir",
             "/tmp/results",
-            "--json",
         ]
     )
 
@@ -56,4 +54,4 @@ def test_main_json_output_is_compact_single_line(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert "\n" not in captured.out.strip()
     assert '"schema":{"features":[{"name":"user_id"}]}' in captured.out.strip()
-    assert json.loads(captured.out) == payload
+    assert loads(captured.out) == payload

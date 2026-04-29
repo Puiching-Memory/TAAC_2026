@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 from collections.abc import Sequence
 from pathlib import Path
+
+from taac2026.infrastructure.io.json_utils import write_path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -14,9 +15,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps({"report": "tech_timeline", "status": "placeholder"}, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    write_path(
+        output,
+        {"report": "tech_timeline", "status": "placeholder"},
+        indent=2,
+        trailing_newline=True,
     )
     print(output)
     return 0

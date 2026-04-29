@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import json
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
 
 import torch
 
 from taac2026.domain.config import EvalRequest, InferRequest, default_run_dir
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.io.json_utils import dumps
 from taac2026.infrastructure.training.runtime import AMP_DTYPE_CHOICES
 
 
@@ -40,7 +40,6 @@ def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     single.add_argument("--num-workers", type=int, default=0)
     single.add_argument("--device", default=_default_device())
     _add_runtime_execution_args(single)
-    single.add_argument("--json", action="store_true")
 
     infer = subparsers.add_parser("infer", help="write platform predictions.json")
     infer.add_argument("--experiment", default="config/baseline")
@@ -52,7 +51,6 @@ def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     infer.add_argument("--num-workers", type=int, default=0)
     infer.add_argument("--device", default=_default_device())
     _add_runtime_execution_args(infer)
-    infer.add_argument("--json", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -93,10 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         payload = experiment.infer(request)
 
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-    else:
-        print(json.dumps(payload, ensure_ascii=False))
+    print(dumps(payload))
     return 0
 
 

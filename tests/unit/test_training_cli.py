@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +13,7 @@ from taac2026.infrastructure.pcvr.config import (
     PCVRTrainConfig,
 )
 from taac2026.application.training.cli import main, parse_train_args
+from taac2026.infrastructure.io.json_utils import loads
 from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args
 
 
@@ -80,12 +80,12 @@ def test_training_main_allows_experiment_without_dataset_path(
         str(experiment_dir),
         "--run-dir",
         str(tmp_path / "outputs"),
-        "--json",
     ])
 
     captured = capsys.readouterr()
-    payload = json.loads(captured.out)
+    payload = loads(captured.out)
     assert exit_code == 0
+    assert "\n" not in captured.out.strip()
     assert payload["dataset_path"] is None
     assert payload["run_dir"] == str(tmp_path / "outputs")
 

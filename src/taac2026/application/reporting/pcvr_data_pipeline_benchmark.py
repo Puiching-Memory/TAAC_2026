@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 
 import torch
 
+from taac2026.infrastructure.io.json_utils import dumps
 from taac2026.infrastructure.pcvr.config import (
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
@@ -169,7 +169,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     summary = run_benchmark(parse_args(argv))
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(dumps(summary, indent=2))
     return 0
 
 

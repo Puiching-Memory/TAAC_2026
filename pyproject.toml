@@ -16,6 +16,7 @@ dependencies = [
 	"hypothesis==6.151.12",
 	"matplotlib==3.10.8",
 	"numpy==2.2.5",
+	"orjson==3.11.8",
 	"pyarrow==23.0.1",
 	"pytest==9.0.3",
 	"pytest-benchmark==5.2.3",

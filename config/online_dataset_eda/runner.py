@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import heapq
-import json
 import math
 import os
 import random
@@ -12,6 +11,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from taac2026.infrastructure.io.json_utils import read_path
 
 try:
   import pyarrow.parquet as pq
@@ -108,7 +109,7 @@ class SchemaLayout:
 
   @classmethod
   def from_path(cls, path: Path) -> SchemaLayout:
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = read_path(path)
     user_int_columns = tuple(f"user_int_feats_{fid}" for fid, _vocab_size, _dim in raw["user_int"])
     item_int_columns = tuple(f"item_int_feats_{fid}" for fid, _vocab_size, _dim in raw["item_int"])
     user_dense_columns = tuple(f"user_dense_feats_{fid}" for fid, _dim in raw["user_dense"])

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
@@ -11,6 +10,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+
+from taac2026.infrastructure.io.json_utils import dumps
 
 
 def _replace_column(table: pa.Table, name: str, values: pa.ChunkedArray) -> pa.Table:
@@ -131,7 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         jitter_ids=not args.no_jitter_ids,
         force=args.force,
     )
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(dumps(summary, indent=2))
     return 0
 
 
