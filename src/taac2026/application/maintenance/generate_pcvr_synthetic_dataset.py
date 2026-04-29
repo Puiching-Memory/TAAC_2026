@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate an amplified synthetic PCVR parquet dataset for loader benchmarks."""
 
 from __future__ import annotations
@@ -6,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 import pyarrow as pa
@@ -98,7 +98,7 @@ def generate_dataset(
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--source-dir",
@@ -117,11 +117,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compression", default="snappy")
     parser.add_argument("--no-jitter-ids", action="store_true")
     parser.add_argument("--force", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
     summary = generate_dataset(
         source_dir=args.source_dir,
         output_dir=args.output_dir,
@@ -132,7 +132,8 @@ def main() -> None:
         force=args.force,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

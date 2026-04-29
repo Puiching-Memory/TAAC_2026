@@ -8,7 +8,7 @@ icon: lucide/gauge
 
 ## 当前状态
 
-基准测试图表已生成（`docs/assets/figures/benchmarks/`，6 个 ECharts JSON）。原始数据来自 `tools/benchmark_pcvr_data_pipeline.py`。
+基准测试图表已生成（`docs/assets/figures/benchmarks/`，6 个 ECharts JSON）。原始数据来自原生 CLI `taac-benchmark-pcvr-data-pipeline`。
 
 测试场景：
 
@@ -23,17 +23,17 @@ icon: lucide/gauge
 运行基准测试：
 
 ```bash
-python tools/benchmark_pcvr_data_pipeline.py \
+uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
   --preset none
 
-python tools/benchmark_pcvr_data_pipeline.py \
+uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
   --preset cache
 
-python tools/benchmark_pcvr_data_pipeline.py \
+uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
   --preset augment
@@ -41,10 +41,14 @@ python tools/benchmark_pcvr_data_pipeline.py \
 
 指标：samples/sec、batch latency (ms)、GPU utilization (%)。
 
-生成报告图表：
+推荐把每次运行的 JSON 输出重定向到 `outputs/benchmarks/`，后续再统一做图表汇总：
 
 ```bash
-uv run taac-bench-report \
-  --benchmark-dir outputs/benchmarks \
-  --output-dir docs/assets/figures/benchmarks
+mkdir -p outputs/benchmarks
+
+uv run taac-benchmark-pcvr-data-pipeline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
+  --preset none \
+  > outputs/benchmarks/none.json
 ```

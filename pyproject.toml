@@ -67,10 +67,12 @@ taac-package-train = "taac2026.application.maintenance.package_training:main"
 taac-package-infer = "taac2026.application.maintenance.package_inference:main"
 taac-clean-pycache = "taac2026.application.maintenance.clean_pycache:main"
 taac-clean-github-logs = "taac2026.application.maintenance.github_cleanup:main"
+taac-generate-pcvr-synthetic-dataset = "taac2026.application.maintenance.generate_pcvr_synthetic_dataset:main"
 taac-plot-model-performance = "taac2026.application.reporting.cli:main"
 taac-dataset-eda = "taac2026.application.reporting.eda_cli:main"
 taac-tech-timeline = "taac2026.application.reporting.timeline_cli:main"
 taac-bench-report = "taac2026.application.reporting.bench_cli:main"
+taac-benchmark-pcvr-data-pipeline = "taac2026.application.reporting.pcvr_data_pipeline_benchmark:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

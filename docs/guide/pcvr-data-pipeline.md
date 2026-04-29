@@ -137,7 +137,7 @@ PCVRTrainConfig(
 ## 吞吐压测
 
 ```bash
-python tools/benchmark_pcvr_data_pipeline.py \
+uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
   --preset augment

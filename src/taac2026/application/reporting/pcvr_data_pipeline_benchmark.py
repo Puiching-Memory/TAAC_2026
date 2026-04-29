@@ -1,31 +1,25 @@
-#!/usr/bin/env python3
 """Benchmark PCVR data pipeline throughput without running a model."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import torch
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_PATH = REPO_ROOT / "src"
-if str(SRC_PATH) not in sys.path:
-    sys.path.insert(0, str(SRC_PATH))
-
-from taac2026.infrastructure.pcvr.config import (  # noqa: E402
+from taac2026.infrastructure.pcvr.config import (
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
     PCVRSequenceCropConfig,
 )
-from taac2026.infrastructure.pcvr.data import get_pcvr_data  # noqa: E402
-from taac2026.infrastructure.pcvr.protocol import parse_seq_max_lens  # noqa: E402
+from taac2026.infrastructure.pcvr.data import get_pcvr_data
+from taac2026.infrastructure.pcvr.protocol import parse_seq_max_lens
 
 
 def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:
@@ -130,7 +124,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-path", type=Path, required=True)
     parser.add_argument("--schema-path", type=Path, required=True)
@@ -148,9 +142,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--torch-threads", type=int, default=0)
     parser.add_argument("--no-shuffle", action="store_true")
     parser.add_argument(
-        "--pipeline-preset",
+        "--preset",
+        dest="pipeline_preset",
         choices=("none", "cache", "augment"),
         default="none",
+        help="alias of --pipeline-preset",
+    )
+    parser.add_argument(
+        "--pipeline-preset",
+        choices=("none", "cache", "augment"),
+        default=None,
     )
     parser.add_argument("--cache-batches", type=int, default=512)
     parser.add_argument("--views-per-row", type=int, default=2)
@@ -160,13 +161,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict-time-filter", action=argparse.BooleanOptionalAction, default=True
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.pipeline_preset is None:
+        args.pipeline_preset = args.preset
+    return args
 
 
-def main() -> None:
-    summary = run_benchmark(parse_args())
+def main(argv: Sequence[str] | None = None) -> int:
+    summary = run_benchmark(parse_args(argv))
     print(json.dumps(summary, indent=2, ensure_ascii=False))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
