@@ -1,10 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 import json
-import os
 from pathlib import Path
-import re
-import subprocess
 import sys
 
 import pyarrow as pa
@@ -12,6 +10,19 @@ import pyarrow.parquet as pq
 import pytest
 
 from taac2026.application.reporting.eda_cli import main, resolve_dataset_role
+
+
+def _load_online_eda_runner_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    module_path = repo_root / "config" / "online_dataset_eda" / "runner.py"
+    module_name = "test_online_dataset_eda_runner"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _write_schema(path: Path) -> None:
@@ -50,41 +61,21 @@ def _write_dataset(path: Path, *, include_labels: bool) -> None:
     pq.write_table(pa.table(columns), path)
 
 
-def _write_online_eda_script_copy(
-    destination: Path,
+def _run_online_eda_runner(
     *,
     dataset_path: Path,
     schema_path: Path,
-    output_path: Path,
-    chart_dir: Path,
-    max_rows: str = "",
-    sample_percent: str = "",
-) -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    source_path = repo_root / "tools" / "run_online_dataset_eda.sh"
-    content = source_path.read_text(encoding="utf-8")
-    replacements = {
-        "ONLINE_EDA_DATASET_PATH": str(dataset_path),
-        "ONLINE_EDA_SCHEMA_PATH": str(schema_path),
-        "ONLINE_EDA_OUTPUT_PATH": str(output_path),
-        "ONLINE_EDA_CHART_DIR": str(chart_dir),
-        "ONLINE_EDA_DISABLE_CHARTS": "1",
-        "ONLINE_EDA_MAX_ROWS": max_rows,
-        "ONLINE_EDA_SAMPLE_PERCENT": sample_percent,
-        "ONLINE_EDA_PROGRESS_STEP_PERCENT": "10",
-    }
-    for name, value in replacements.items():
-        content, count = re.subn(
-            rf'^{name}="[^"]*"$',
-            f'{name}="{value}"',
-            content,
-            count=1,
-            flags=re.MULTILINE,
-        )
-        assert count == 1, name
-    destination.write_text(content, encoding="utf-8")
-    destination.chmod(destination.stat().st_mode | 0o111)
-    return destination
+    max_rows: int | None = None,
+    sample_percent: float | None = None,
+) -> dict[str, object]:
+    runner_module = _load_online_eda_runner_module()
+    config = runner_module.OnlineDatasetEDAConfig(
+        dataset_path=dataset_path.resolve(),
+        schema_path=schema_path.resolve(),
+        max_rows=max_rows,
+        sample_percent=sample_percent,
+    )
+    return runner_module.run_online_dataset_eda(config)
 
 
 def test_resolve_dataset_role_uses_labels_for_auto() -> None:
@@ -161,135 +152,84 @@ def test_main_skips_label_charts_for_online_dataset(tmp_path: Path) -> None:
     assert not (chart_dir / "label_distribution.echarts.json").exists()
 
 
-def test_online_dataset_eda_tool_is_standalone_without_pythonpath(tmp_path: Path) -> None:
+def test_online_dataset_eda_runner_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path, include_labels=False)
 
-    repo_root = Path(__file__).resolve().parents[2]
-    script_path = _write_online_eda_script_copy(
-        tmp_path / "run_online_dataset_eda.sh",
+    report = _run_online_eda_runner(
         dataset_path=dataset_path,
         schema_path=schema_path,
-        output_path=tmp_path / "online_dataset_eda.json",
-        chart_dir=tmp_path / "online_dataset_eda_charts",
-        max_rows="4",
+        max_rows=4,
     )
-    env = os.environ.copy()
-    env.pop("PYTHONPATH", None)
-    env["TAAC_PYTHON"] = sys.executable
+    captured = capsys.readouterr()
 
-    completed = subprocess.run(
-        ["bash", str(script_path)],
-        cwd=repo_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert "[online-eda] dataset=" in completed.stdout
-    assert "== Dataset ==" in completed.stdout
-    assert "== Top Null Rates ==" in completed.stdout
+    assert report["row_count"] == 4
+    assert "[online-eda] dataset=" in captured.out
+    assert "== Dataset ==" in captured.out
+    assert "== Top Null Rates ==" in captured.out
 
 
-def test_online_dataset_eda_tool_streams_full_dataset_by_default(tmp_path: Path) -> None:
+def test_online_dataset_eda_runner_streams_full_dataset_by_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path, include_labels=False)
 
-    repo_root = Path(__file__).resolve().parents[2]
-    script_path = _write_online_eda_script_copy(
-        tmp_path / "run_online_dataset_eda.sh",
+    report = _run_online_eda_runner(
         dataset_path=dataset_path,
         schema_path=schema_path,
-        output_path=tmp_path / "online_dataset_eda.json",
-        chart_dir=tmp_path / "online_dataset_eda_charts",
     )
-    env = os.environ.copy()
-    env.pop("PYTHONPATH", None)
-    env["TAAC_PYTHON"] = sys.executable
+    captured = capsys.readouterr()
 
-    completed = subprocess.run(
-        ["bash", str(script_path)],
-        cwd=repo_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert "scan=streaming full" in completed.stdout
-    assert "summary: online dataset, 4 rows" in completed.stdout
+    assert report["row_count"] == 4
+    assert "scan=streaming full" in captured.out
+    assert "summary: online dataset, 4 rows" in captured.out
 
 
-def test_online_dataset_eda_tool_honors_explicit_max_rows(tmp_path: Path) -> None:
+def test_online_dataset_eda_runner_honors_explicit_max_rows(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path, include_labels=False)
 
-    repo_root = Path(__file__).resolve().parents[2]
-    script_path = _write_online_eda_script_copy(
-        tmp_path / "run_online_dataset_eda.sh",
+    report = _run_online_eda_runner(
         dataset_path=dataset_path,
         schema_path=schema_path,
-        output_path=tmp_path / "online_dataset_eda.json",
-        chart_dir=tmp_path / "online_dataset_eda_charts",
-        max_rows="2",
+        max_rows=2,
     )
-    env = os.environ.copy()
-    env.pop("PYTHONPATH", None)
-    env["TAAC_PYTHON"] = sys.executable
+    captured = capsys.readouterr()
 
-    completed = subprocess.run(
-        ["bash", str(script_path)],
-        cwd=repo_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert "scan=streaming max_rows=2" in completed.stdout
-    assert "summary: online dataset, scanned 2/4 rows" in completed.stdout
-    assert "progress first-pass:" in completed.stdout
-    assert "progress second-pass:" in completed.stdout
+    assert report["row_count"] == 2
+    assert "scan=streaming max_rows=2" in captured.out
+    assert "summary: online dataset, scanned 2/4 rows" in captured.out
+    assert "progress first-pass:" in captured.out
+    assert "progress second-pass:" in captured.out
 
 
-def test_online_dataset_eda_tool_honors_sample_percent(tmp_path: Path) -> None:
+def test_online_dataset_eda_runner_honors_sample_percent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path, include_labels=False)
 
-    repo_root = Path(__file__).resolve().parents[2]
-    script_path = _write_online_eda_script_copy(
-        tmp_path / "run_online_dataset_eda.sh",
+    report = _run_online_eda_runner(
         dataset_path=dataset_path,
         schema_path=schema_path,
-        output_path=tmp_path / "online_dataset_eda.json",
-        chart_dir=tmp_path / "online_dataset_eda_charts",
-        sample_percent="50",
+        sample_percent=50.0,
     )
-    env = os.environ.copy()
-    env.pop("PYTHONPATH", None)
-    env["TAAC_PYTHON"] = sys.executable
+    captured = capsys.readouterr()
 
-    completed = subprocess.run(
-        ["bash", str(script_path)],
-        cwd=repo_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert "scan=streaming sample_percent=50.0 max_rows=2" in completed.stdout
-    assert "summary: online dataset, scanned 2/4 rows" in completed.stdout
+    assert report["row_count"] == 2
+    assert "scan=streaming sample_percent=50.0 max_rows=2" in captured.out
+    assert "summary: online dataset, scanned 2/4 rows" in captured.out

@@ -136,6 +136,18 @@ def test_build_training_bundle_contains_experiment_ns_groups(tmp_path: Path, exp
     assert f"project/{experiment}/ns_groups.json" in names
 
 
+@pytest.mark.parametrize("experiment", ["config/host_device_info", "config/online_dataset_eda"])
+def test_build_training_bundle_supports_maintenance_experiment_packages(tmp_path: Path, experiment: str) -> None:
+    output_dir = tmp_path / f"{Path(experiment).name}_bundle"
+
+    result = build_training_bundle(experiment, output_dir=output_dir)
+
+    manifest = _code_package_manifest(result.code_package_path)
+    names = _code_package_names(result.code_package_path)
+    assert manifest["bundled_experiment_path"] == experiment
+    assert f"project/{experiment}/__init__.py" in names
+
+
 def test_build_training_bundle_refuses_overwrite_without_force(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline_bundle"
     build_training_bundle("config/baseline", output_dir=output_dir)

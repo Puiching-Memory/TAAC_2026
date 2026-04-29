@@ -32,12 +32,11 @@ code_package.zip
 ├── pyproject.toml                 # 依赖声明
 ├── uv.lock                        # 依赖锁定
 ├── README.md
-├── tools/                         # 工具脚本
 ├── config/__init__.py
 ├── config/<experiment>/           # 实验包
 │   ├── __init__.py
-│   ├── model.py
-│   └── ns_groups.json
+│   ├── model.py / task 入口
+│   └── ns_groups.json             # 仅 PCVR 训练实验需要
 └── src/taac2026/                  # 框架源码
 ```
 
@@ -48,8 +47,41 @@ code_package.zip
 1. 检测 Bundle 模式（存在 `code_package.zip`）
 2. 解压到临时目录
 3. 读取 `.taac_training_manifest.json`
-4. 安装依赖（`uv sync`）
+4. 安装项目依赖（Bundle 模式默认使用当前 Python 的 `pip install .`）
 5. 执行 `taac-train`
+
+### 运维/分析类实验
+
+除 PCVR 模型训练外，以下任务也可打包成同样的双文件 Bundle：
+
+- `config/host_device_info`：采集主机、GPU、网络、依赖源探测等环境信息，结果直接打印到日志
+- `config/online_dataset_eda`：对线上 parquet 做 EDA，结果直接打印到日志
+
+示例：
+
+```bash
+uv run taac-package-train \
+  --experiment config/host_device_info \
+  --output-dir outputs/bundles/host_device_info
+
+uv run taac-package-train \
+  --experiment config/online_dataset_eda \
+  --output-dir outputs/bundles/online_dataset_eda
+```
+
+上传后仍然执行同一个 `run.sh`：
+
+```bash
+# host/device info 不需要数据集路径
+bash run.sh
+
+# online dataset EDA 需要数据集和 schema
+export TAAC_DATASET_PATH=/path/to/train.parquet_or_dir
+export TAAC_SCHEMA_PATH=/path/to/schema.json
+bash run.sh
+```
+
+如需限制扫描行数或调整批大小，请直接编辑 [config/online_dataset_eda/__init__.py](config/online_dataset_eda/__init__.py) 中的 `ONLINE_DATASET_EDA_CONFIG`。
 
 ## 推理 Bundle
 

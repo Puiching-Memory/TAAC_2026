@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,32 @@ from taac2026.infrastructure.pcvr.config import (
     PCVRSequenceCropConfig,
     PCVRTrainConfig,
 )
+from taac2026.application.training.cli import main, parse_train_args
 from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args
-from taac2026.application.training.cli import parse_train_args
+
+
+def _write_minimal_experiment(package_dir: Path, *, requires_dataset: bool) -> Path:
+    package_dir.mkdir(parents=True)
+    metadata = "{'requires_dataset': False}" if not requires_dataset else "{}"
+    (package_dir / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "from taac2026.domain.experiment import ExperimentSpec\n"
+        "\n"
+        "\n"
+        "def _train(request):\n"
+        "    return {\"dataset_path\": None if request.dataset_path is None else str(request.dataset_path), \"run_dir\": str(request.run_dir)}\n"
+        "\n"
+        "\n"
+        "EXPERIMENT = ExperimentSpec(\n"
+        "    name=\"minimal_experiment\",\n"
+        "    package_dir=Path(__file__).resolve().parent,\n"
+        "    train_fn=_train,\n"
+        f"    metadata={metadata},\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    return package_dir
 
 
 def test_parse_train_args_forwards_experiment_specific_options() -> None:
@@ -34,6 +59,42 @@ def test_parse_train_args_forwards_experiment_specific_options() -> None:
     assert args.dataset_path == "/data/train"
     assert args.schema_path == "/data/schema.json"
     assert extra == ["--batch_size", "8"]
+
+
+def test_parse_train_args_allows_missing_dataset_path() -> None:
+    args, extra = parse_train_args(["--experiment", "config/host_device_info"])
+
+    assert args.experiment == "config/host_device_info"
+    assert args.dataset_path is None
+    assert extra == []
+
+
+def test_training_main_allows_experiment_without_dataset_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    experiment_dir = _write_minimal_experiment(tmp_path / "config" / "maintenance_exp", requires_dataset=False)
+
+    exit_code = main([
+        "--experiment",
+        str(experiment_dir),
+        "--run-dir",
+        str(tmp_path / "outputs"),
+        "--json",
+    ])
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["dataset_path"] is None
+    assert payload["run_dir"] == str(tmp_path / "outputs")
+
+
+def test_training_main_rejects_missing_dataset_for_dataset_experiment(tmp_path: Path) -> None:
+    experiment_dir = _write_minimal_experiment(tmp_path / "config" / "dataset_exp", requires_dataset=True)
+
+    with pytest.raises(ValueError, match="requires --dataset-path"):
+        main(["--experiment", str(experiment_dir), "--run-dir", str(tmp_path / "outputs")])
 
 
 def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:

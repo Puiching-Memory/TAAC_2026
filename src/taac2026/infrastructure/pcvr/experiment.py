@@ -113,6 +113,8 @@ class PCVRExperiment:
                     sys.modules[module_name] = module
 
     def train(self, request: TrainRequest) -> Mapping[str, Any]:
+        if request.dataset_path is None:
+            raise ValueError(f"PCVR experiment {self.name!r} requires dataset_path")
         run_dir = request.run_dir.expanduser().resolve()
         train_log_dir = Path(os.environ.get("TRAIN_LOG_PATH", str(run_dir / "logs"))).expanduser().resolve()
         tensorboard_dir = Path(os.environ.get("TRAIN_TF_EVENTS_PATH", str(run_dir / "tensorboard"))).expanduser().resolve()
