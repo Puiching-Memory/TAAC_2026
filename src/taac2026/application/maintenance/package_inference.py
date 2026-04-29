@@ -15,7 +15,7 @@ from taac2026.application.maintenance.package_training import (
     _resolve_experiment_path,
 )
 from taac2026.infrastructure.io.files import repo_root
-from taac2026.infrastructure.io.json_utils import dump_bytes, dumps, load
+from taac2026.infrastructure.io.json_utils import dump_bytes, dumps
 
 
 _INFER_ENTRYPOINT = """#!/usr/bin/env python3
