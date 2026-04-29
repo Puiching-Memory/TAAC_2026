@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 
 from taac2026.domain.config import EvalRequest, InferRequest, TrainRequest
 from taac2026.domain.metrics import compute_classification_metrics
-from taac2026.infrastructure.checkpoints import load_checkpoint_state_dict, resolve_checkpoint_path
+from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
 import taac2026.infrastructure.pcvr.data as pcvr_data
 from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, REQUIRED_PCVR_TRAIN_CONFIG_KEYS
@@ -470,7 +470,7 @@ class PCVRExperiment:
         runtime_device = torch.device(device)
         resolved_runtime_execution = runtime_execution or RuntimeExecutionConfig()
         model.to(runtime_device)
-        state_dict = load_checkpoint_state_dict(checkpoint_path, map_location=runtime_device)
+        state_dict = torch.load(checkpoint_path, map_location=runtime_device)
         model.load_state_dict(state_dict)
         model.eval()
         predict_fn = maybe_compile_callable(
