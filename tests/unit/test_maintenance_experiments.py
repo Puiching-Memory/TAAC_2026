@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import importlib.util
-import json
 from pathlib import Path
 import sys
 
@@ -12,6 +11,7 @@ import pytest
 
 from taac2026.domain.config import TrainRequest
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.io.json_utils import dumps
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -54,7 +54,7 @@ def _write_schema(path: Path) -> None:
             "seq_a": {"prefix": "domain_a_seq", "ts_fid": 10, "features": [[10, 100], [11, 20]]},
         },
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(dumps(payload, indent=2, trailing_newline=True), encoding="utf-8")
 
 
 def _write_dataset(path: Path) -> None:

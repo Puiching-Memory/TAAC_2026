@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 import sys
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+
+from taac2026.infrastructure.io.json_utils import dumps
 
 
 def _load_online_eda_runner_module():
@@ -35,7 +36,7 @@ def _write_schema(path: Path) -> None:
             "seq_d": {"prefix": "domain_d_seq", "ts_fid": 40, "features": [[40, 100], [41, 20]]},
         },
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(dumps(payload, indent=2, trailing_newline=True), encoding="utf-8")
 
 
 def _write_dataset(path: Path) -> None:

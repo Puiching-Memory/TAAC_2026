@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
 
+from taac2026.infrastructure.io.json_utils import dumps
 from taac2026.infrastructure.pcvr.config import (
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
@@ -200,7 +200,7 @@ def test_strict_time_filter_removes_future_sequence_events(tmp_path: Path) -> No
             }
         },
     }
-    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    schema_path.write_text(dumps(schema), encoding="utf-8")
     table = pa.table(
         {
             "timestamp": [100],

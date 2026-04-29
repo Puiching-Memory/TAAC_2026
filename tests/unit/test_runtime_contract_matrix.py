@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +17,7 @@ from taac2026.infrastructure.checkpoints import (
     write_checkpoint_sidecars,
 )
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.io.json_utils import dumps, loads
 from taac2026.infrastructure.pcvr.protocol import (
     batch_to_model_input,
     build_feature_specs,
@@ -74,7 +74,7 @@ def _code_package_names(code_package_path: Path) -> set[str]:
 
 def _code_package_manifest(code_package_path: Path) -> dict[str, object]:
     with zipfile.ZipFile(code_package_path) as archive:
-        return json.loads(archive.read("project/.taac_training_manifest.json").decode("utf-8"))
+        return loads(archive.read("project/.taac_training_manifest.json"))
 
 
 @pytest.fixture(scope="module", params=EXPERIMENT_CASES, ids=lambda case: case.path)
@@ -292,7 +292,7 @@ def test_load_ns_groups_maps_feature_ids_preserves_declared_order(
     expected_item: list[list[int]],
 ) -> None:
     groups_path = tmp_path / "groups.json"
-    groups_path.write_text(json.dumps(payload), encoding="utf-8")
+    groups_path.write_text(dumps(payload), encoding="utf-8")
     dataset = SimpleNamespace(
         user_int_schema=_schema([(10, 0, 1), (20, 1, 1), (30, 2, 1)]),
         item_int_schema=_schema([(7, 0, 1), (8, 1, 1)]),
@@ -317,7 +317,7 @@ def test_load_ns_groups_raises_for_unknown_feature_ids(
     missing_name: str,
 ) -> None:
     groups_path = tmp_path / "groups.json"
-    groups_path.write_text(json.dumps(payload), encoding="utf-8")
+    groups_path.write_text(dumps(payload), encoding="utf-8")
     dataset = SimpleNamespace(
         user_int_schema=_schema([(10, 0, 1)]),
         item_int_schema=_schema([(7, 0, 1)]),
@@ -441,7 +441,7 @@ def test_build_pcvr_model_forwards_constructor_contract(
     if use_groups_file:
         groups_path = package_dir / "ns_groups.json"
         groups_path.write_text(
-            json.dumps({"user_ns_groups": {"u": [20, 10]}, "item_ns_groups": {"i": [7]}}),
+            dumps({"user_ns_groups": {"u": [20, 10]}, "item_ns_groups": {"i": [7]}}),
             encoding="utf-8",
         )
         resolved_config["ns_groups_json"] = "ns_groups.json"
@@ -633,7 +633,7 @@ def test_write_checkpoint_sidecars_cases(
     if "ns_groups" in expected_keys:
         assert (checkpoint_dir / "ns_groups.json").exists()
     if "train_config" in expected_keys:
-        payload = json.loads((checkpoint_dir / "train_config.json").read_text(encoding="utf-8"))
+        payload = loads((checkpoint_dir / "train_config.json").read_bytes())
         if rewrites_ns_path:
             assert payload["ns_groups_json"] == "ns_groups.json"
         else:
@@ -673,7 +673,7 @@ def test_model_module_contracts(loaded_model_module, experiment_case: Experiment
 
 def test_ns_groups_json_has_required_keys(experiment_case: ExperimentCase) -> None:
     groups_path = REPO_ROOT / experiment_case.path / "ns_groups.json"
-    payload = json.loads(groups_path.read_text(encoding="utf-8"))
+    payload = loads(groups_path.read_bytes())
 
     assert "user_ns_groups" in payload
     assert "item_ns_groups" in payload

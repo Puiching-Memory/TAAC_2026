@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
 import pytest
 
 from taac2026.domain.config import EvalRequest, InferRequest
+from taac2026.infrastructure.io.json_utils import dumps, loads
 from taac2026.infrastructure.pcvr.config import PCVRDataConfig, PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment, _log_prediction_progress
 from taac2026.infrastructure.training.runtime import RuntimeExecutionConfig
@@ -27,7 +27,7 @@ def _write_train_config(checkpoint_dir: Path, overrides: dict[str, object] | Non
     config = PCVRTrainConfig().to_flat_dict()
     if overrides:
         config.update(overrides)
-    (checkpoint_dir / "train_config.json").write_text(json.dumps(config), encoding="utf-8")
+    (checkpoint_dir / "train_config.json").write_text(dumps(config), encoding="utf-8")
 
 
 def test_resolve_infer_runtime_settings_requires_train_config_values(tmp_path: Path) -> None:
@@ -76,7 +76,7 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     checkpoint_dir.mkdir()
     (checkpoint_dir / "model.pt").write_bytes(b"checkpoint")
     schema_payload = {"features": [{"name": "user_id"}]}
-    (checkpoint_dir / "schema.json").write_text(json.dumps(schema_payload), encoding="utf-8")
+    (checkpoint_dir / "schema.json").write_text(dumps(schema_payload), encoding="utf-8")
     _write_train_config(checkpoint_dir, {"batch_size": 96, "num_workers": 4})
     captured: dict[str, object] = {}
 
@@ -107,7 +107,7 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     assert payload["num_workers"] == 4
     assert payload["schema_path"] == str((checkpoint_dir / "schema.json").resolve())
     assert payload["schema"] == schema_payload
-    assert json.loads((tmp_path / "results" / "predictions.json").read_text(encoding="utf-8")) == {
+    assert loads((tmp_path / "results" / "predictions.json").read_bytes()) == {
         "predictions": {"u1": 0.5},
     }
 
@@ -142,7 +142,7 @@ def test_load_train_config_requires_complete_sidecar(tmp_path: Path) -> None:
     experiment = _make_experiment(tmp_path)
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
-    (checkpoint_dir / "train_config.json").write_text(json.dumps({"batch_size": 128}), encoding="utf-8")
+    (checkpoint_dir / "train_config.json").write_text(dumps({"batch_size": 128}), encoding="utf-8")
 
     with pytest.raises(KeyError, match="amp"):
         experiment._load_train_config(checkpoint_dir)
@@ -153,7 +153,7 @@ def test_infer_uses_train_config_runtime_execution(tmp_path: Path, monkeypatch: 
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     (checkpoint_dir / "model.pt").write_bytes(b"checkpoint")
-    (checkpoint_dir / "schema.json").write_text(json.dumps({"features": []}), encoding="utf-8")
+    (checkpoint_dir / "schema.json").write_text(dumps({"features": []}), encoding="utf-8")
     _write_train_config(checkpoint_dir, {"amp": True, "amp_dtype": "float16", "compile": True})
     captured: dict[str, object] = {}
 
@@ -186,7 +186,7 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     checkpoint_path = checkpoint_dir / "model.pt"
     checkpoint_path.write_bytes(b"checkpoint")
     schema_payload = {"features": [{"name": "label"}]}
-    (checkpoint_dir / "schema.json").write_text(json.dumps(schema_payload), encoding="utf-8")
+    (checkpoint_dir / "schema.json").write_text(dumps(schema_payload), encoding="utf-8")
     _write_train_config(checkpoint_dir)
 
     def fake_bound_run_prediction_loop(self, **kwargs):
@@ -226,7 +226,7 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     assert payload["data_diagnostics"]["row_group_split"]["is_l1_ready"] is True
     assert payload["schema_path"] == str((checkpoint_dir / "schema.json").resolve())
     assert payload["schema"] == schema_payload
-    saved_payload = json.loads(output_path.read_text(encoding="utf-8"))
+    saved_payload = loads(output_path.read_bytes())
     assert saved_payload["metrics"]["score_diagnostics"] == diagnostics
     assert saved_payload["data_diagnostics"] == payload["data_diagnostics"]
     assert saved_payload["schema"] == schema_payload
