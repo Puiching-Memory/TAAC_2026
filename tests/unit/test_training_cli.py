@@ -69,11 +69,6 @@ def test_parse_train_args_allows_missing_dataset_path() -> None:
     assert extra == []
 
 
-def test_parse_train_args_rejects_removed_json_flag() -> None:
-    with pytest.raises(SystemExit):
-        parse_train_args(["--experiment", "config/baseline", "--json"])
-
-
 def test_training_main_allows_experiment_without_dataset_path(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

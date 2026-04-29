@@ -17,10 +17,7 @@ def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namesp
     parser.add_argument("--dataset-path", default=None, help="parquet file or parquet directory; required for data-driven experiments")
     parser.add_argument("--schema-path", default=None, help="schema.json path; defaults to the dataset directory")
     parser.add_argument("--run-dir", default=None, help="checkpoint/output directory")
-    args, extra_args = parser.parse_known_args(argv)
-    if "--json" in extra_args:
-        parser.error("unrecognized arguments: --json")
-    return args, extra_args
+    return parser.parse_known_args(argv)
 
 
 def _experiment_requires_dataset(experiment: object) -> bool:
