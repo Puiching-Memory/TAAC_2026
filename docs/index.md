@@ -9,7 +9,7 @@ icon: lucide/house
 ## 核心能力
 
 - **插件式实验包** -- 每个实验是 `config/` 下的独立目录，包含模型定义、NS 分组和默认配置。新增实验无需修改框架代码。
-- **统一训练/评估/推理入口** -- 通过 `taac-train`、`taac-evaluate`、`taac-search` 等 CLI 命令驱动所有实验。
+- **统一训练/评估/推理入口** -- 通过 `taac-train`、`taac-evaluate` 等 CLI 命令驱动所有实验。
 - **可组合数据管道** -- 序列裁剪、特征掩码、域 Dropout、Shuffle Buffer 等增强组件可自由组合。
 - **线上打包** -- `taac-package-train` / `taac-package-infer` 生成符合比赛平台要求的 Bundle。
 

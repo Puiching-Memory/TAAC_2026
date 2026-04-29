@@ -33,7 +33,6 @@ nav = [
     ] },
     { "数据集分析" = [
         { "总览" = "analysis/index.md" },
-        { "EDA 报告" = "analysis/dataset-eda.md" },
         { "性能基准" = "analysis/benchmarks.md" },
         { "评估指标分析" = "analysis/evaluation.md" },
     ] },
@@ -42,7 +41,6 @@ nav = [
         { "线上训练打包" = "guide/online-training-bundle.md" },
         { "比赛线上服务器设备信息" = "guide/competition-online-server.md" },
         { "PCVR 数据管道" = "guide/pcvr-data-pipeline.md" },
-        { "超参数搜索" = "guide/search.md" },
         { "测试" = "guide/testing.md" },
         { "Triton Kernel 开发" = "guide/triton-kernels.md" },
         { "仓库缓存清理" = "guide/cache-cleanup.md" },

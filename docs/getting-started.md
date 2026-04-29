@@ -109,18 +109,15 @@ uv run zensical serve
 | `taac-train`                           | 训练实验           |
 | `taac-evaluate single`                 | 评估模型           |
 | `taac-evaluate infer`                  | 推理（无标签数据） |
-| `taac-search`                          | 超参数搜索请求     |
 | `taac-package-train`                   | 打包训练 Bundle    |
 | `taac-package-infer`                   | 打包推理 Bundle    |
 | `taac-benchmark-pcvr-data-pipeline`    | 数据管道吞吐压测   |
 | `taac-generate-pcvr-synthetic-dataset` | 生成合成压测数据   |
 | `taac-plot-model-performance`          | 绘制 Pareto 前沿图 |
-| `taac-dataset-eda`                     | 数据集 EDA         |
-| `taac-clean-pycache`                   | 清理 `__pycache__` |
 
 运维/分析类实验通过 `taac-train --experiment config/<name>` 或同等的 `bash run.sh train --experiment config/<name>` 调用。
 
-文档结构裁剪工具保留为 shell 脚本：`bash tools/strip_docs_content.sh docs/<path-or-dir>`。
+仓库缓存清理和文档结构裁剪保留为 shell 脚本：`bash tools/cache-cleanup.sh`、`bash tools/strip_docs_content.sh docs/<path-or-dir>`。
 
 所有命令均通过 `run.sh` 也可调用：
 

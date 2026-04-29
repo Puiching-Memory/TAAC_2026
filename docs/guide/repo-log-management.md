@@ -4,7 +4,7 @@ icon: lucide/wrench
 
 # 仓库日志管理
 
-通过 GitHub API 清理 CI 工作流日志和 Pages 部署记录。
+通过 shell 脚本收集 GitHub 清理请求参数，或直接使用 `gh api` 清理 CI 工作流日志和 Pages 部署记录。
 
 ## 目标
 
@@ -27,14 +27,21 @@ export GITHUB_REPO=Puiching-Memory/TAAC_2026
 ## 脚本参数
 
 ```bash
-uv run taac-clean-github-logs
+# 使用环境变量
+bash tools/github-cleanup.sh --dry-run
+
+# 或显式传参
+bash tools/github-cleanup.sh --repo Puiching-Memory/TAAC_2026 --actions-only
 ```
+
+当前仓库内脚本只负责参数校验和请求记录，不会直接调用 GitHub API 删除日志。需要真正执行清理时，请使用下文列出的 `gh api` 命令。
 
 ## 推荐执行流程
 
 1. 设置环境变量
-2. 运行清理命令
-3. 检查输出
+2. 用 `bash tools/github-cleanup.sh ...` 校验目标仓库和模式
+3. 按需执行下方 `gh api` 命令
+4. 检查输出
 
 ## 常用命令
 
@@ -50,16 +57,18 @@ gh api repos/{owner}/{repo}/actions/runs --paginate \
 
 ## 输出解释
 
-- 删除的 workflow run 数量
-- 删除的 deployment 数量
+- 目标仓库
+- 是否 dry-run
+- 返回码 0 表示参数合法
 - 返回码 0 表示成功
 
 ## 返回码约定
 
 | 返回码 | 含义               |
 | ------ | ------------------ |
-| 0      | 清理成功           |
-| 1      | API 错误或权限不足 |
+| 0      | 参数校验通过       |
+| 1      | 参数缺失或校验失败 |
+| 2      | 参数组合非法       |
 
 ## GitHub API 接口清单
 

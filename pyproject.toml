@@ -16,7 +16,6 @@ dependencies = [
 	"hypothesis==6.151.12",
 	"matplotlib==3.10.8",
 	"numpy==2.2.6",
-	"optuna==4.8.0",
 	"pyarrow==23.0.1",
 	"pytest==9.0.3",
 	"pytest-benchmark==5.2.3",
@@ -62,14 +61,10 @@ environments = ["sys_platform == 'linux'"]
 [project.scripts]
 taac-train = "taac2026.application.training.cli:main"
 taac-evaluate = "taac2026.application.evaluation.cli:main"
-taac-search = "taac2026.application.search.cli:main"
 taac-package-train = "taac2026.application.maintenance.package_training:main"
 taac-package-infer = "taac2026.application.maintenance.package_inference:main"
-taac-clean-pycache = "taac2026.application.maintenance.clean_pycache:main"
-taac-clean-github-logs = "taac2026.application.maintenance.github_cleanup:main"
 taac-generate-pcvr-synthetic-dataset = "taac2026.application.maintenance.generate_pcvr_synthetic_dataset:main"
 taac-plot-model-performance = "taac2026.application.reporting.cli:main"
-taac-dataset-eda = "taac2026.application.reporting.eda_cli:main"
 taac-tech-timeline = "taac2026.application.reporting.timeline_cli:main"
 taac-bench-report = "taac2026.application.reporting.bench_cli:main"
 taac-benchmark-pcvr-data-pipeline = "taac2026.application.reporting.pcvr_data_pipeline_benchmark:main"
@@ -106,7 +101,6 @@ extend-select = ["B", "UP", "PTH", "RUF"]
 branch = true
 source = [
 	"src/taac2026/domain",
-	"src/taac2026/application/search",
 	"src/taac2026/application/training",
 ]
 

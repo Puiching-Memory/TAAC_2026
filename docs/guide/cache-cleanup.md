@@ -4,23 +4,20 @@ icon: lucide/wrench
 
 # 仓库缓存清理
 
-清理 Python 缓存文件和构建产物。
+清理仓库里的 Python 缓存目录和常见构建产物。
 
 ## 目标
 
 删除 `__pycache__`、`.pyc`、`.pyo`、`*.egg-info`、`dist/`、`build/` 等缓存目录，保持仓库干净。
 
-## 命令入口
+## 脚本入口
 
 ```bash
-# 使用 CLI 命令
-uv run taac-clean-pycache
+# 预览将要删除的内容
+bash tools/cache-cleanup.sh --dry-run
 
-# 使用 run.sh
-./run.sh clean
-
-# 使用 Makefile（如果存在）
-make clean
+# 执行清理
+bash tools/cache-cleanup.sh
 ```
 
 ## 常用命令
@@ -38,7 +35,9 @@ find . -type d -name "*.egg-info" -exec rm -rf {} +
 
 ## 脚本参数
 
-`taac-clean-pycache` 无额外参数，默认清理仓库根目录下的所有 Python 缓存。
+- `--root <path>`：指定清理根目录，默认是仓库根目录
+- `--dry-run`：只打印将删除的目录，不真正删除
+- `--include-env-dirs`：连 `.venv`、`venv`、`env`、`node_modules`、`.tox`、`.mypy_cache` 里的 `__pycache__` 一起清理
 
 ## 输出解释
 

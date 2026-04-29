@@ -13,6 +13,5 @@ site/
 .tmp/
 *.echarts.json
 .coverage.*
-!docs/assets/figures/eda/*.echarts.json
 !docs/assets/figures/papers/tech-timeline.echarts.json
 docs/assets/figures/benchmarks/benchmark_acceptance.json

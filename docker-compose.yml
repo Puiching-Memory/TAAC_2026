@@ -83,22 +83,6 @@ services:
         bash run.sh val
         $${EVAL_ARGS}
 
-  search:
-    <<: *gpu-service
-    profiles: [search]
-    environment:
-      <<: *gpu-env
-      EXPERIMENT: ${EXPERIMENT:-baseline}
-      TRIALS: ${TRIALS:-20}
-      SEARCH_ARGS: ${SEARCH_ARGS:-}
-    command:
-      - /bin/bash
-      - -lc
-      - >-
-        uv run taac-search --experiment config/$$EXPERIMENT
-        --trials $${TRIALS}
-        $${SEARCH_ARGS}
-
 volumes:
   train-outputs:
     name: taac2026-train-outputs

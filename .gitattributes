@@ -27,5 +27,4 @@
 *.joblib filter=lfs diff=lfs merge=lfs -text
 *.parquet filter=lfs diff=lfs merge=lfs -text
 *.orc filter=lfs diff=lfs merge=lfs -text
-docs/assets/figures/eda/*.echarts.json filter=lfs diff=lfs merge=lfs -text
 docs/assets/figures/papers/tech-timeline.echarts.json filter=lfs diff=lfs merge=lfs -text

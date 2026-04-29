@@ -17,9 +17,8 @@ src/taac2026/
 ├── application/            # CLI 入口
 │   ├── training/cli.py     # taac-train
 │   ├── evaluation/cli.py   # taac-evaluate
-│   ├── search/cli.py       # taac-search
-│   ├── maintenance/        # taac-package-*, taac-clean-*
-│   └── reporting/          # taac-plot-*, taac-dataset-eda
+│   ├── maintenance/        # taac-package-* / taac-generate-*
+│   └── reporting/          # taac-plot-* / taac-tech-timeline / taac-bench-report
 └── infrastructure/         # 数据加载、训练、模型构建
     ├── checkpoints.py      # Checkpoint 解析与保存
     ├── experiments/        # 实验包发现与加载
@@ -55,13 +54,12 @@ config/
 
 ## 运行入口
 
-12 个 CLI 命令通过 `pyproject.toml` 注册。核心命令：
+核心 CLI 命令通过 `pyproject.toml` 注册：
 
 | 命令            | 模块                                       |
 | --------------- | ------------------------------------------ |
 | `taac-train`    | `taac2026.application.training.cli:main`   |
 | `taac-evaluate` | `taac2026.application.evaluation.cli:main` |
-| `taac-search`   | `taac2026.application.search.cli:main`     |
 
 `taac-evaluate` 有两个子命令：
 
