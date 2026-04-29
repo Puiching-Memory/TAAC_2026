@@ -94,7 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload = experiment.infer(request)
 
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
     else:
         print(json.dumps(payload, ensure_ascii=False))
     return 0

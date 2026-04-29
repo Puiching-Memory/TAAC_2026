@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 
 from taac2026.domain.config import EvalRequest, InferRequest, TrainRequest
 from taac2026.domain.metrics import compute_classification_metrics
-from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
+from taac2026.infrastructure.checkpoints import load_checkpoint_state_dict, resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
 import taac2026.infrastructure.pcvr.data as pcvr_data
 from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, REQUIRED_PCVR_TRAIN_CONFIG_KEYS
@@ -155,6 +155,12 @@ class PCVRExperiment:
         output_path = request.output_path or (request.run_dir / "evaluation.json")
         predictions_path = request.predictions_path or (request.run_dir / "validation_predictions.jsonl")
         config = self._load_train_config(checkpoint.parent)
+        resolved_schema_path, resolved_schema = self._load_resolved_schema(
+            dataset_path=request.dataset_path,
+            schema_path=request.schema_path,
+            checkpoint_dir=checkpoint.parent,
+            mode="evaluation",
+        )
         effective_batch_size, batch_size_source, effective_num_workers, num_workers_source = self._resolve_prediction_runtime_settings(
             request,
             config,
@@ -182,7 +188,7 @@ class PCVRExperiment:
         with self._module_context():
             evaluation = self._run_prediction_loop(
                 dataset_path=request.dataset_path,
-                schema_path=request.schema_path,
+                schema_path=resolved_schema_path,
                 checkpoint_path=checkpoint,
                 batch_size=effective_batch_size,
                 num_workers=effective_num_workers,
@@ -208,6 +214,8 @@ class PCVRExperiment:
         payload = {
             "experiment_name": self.name,
             "checkpoint_path": str(checkpoint),
+            "schema_path": str(resolved_schema_path),
+            "schema": resolved_schema,
             "metrics": metrics,
             "data_diagnostics": self._build_evaluation_data_diagnostics(request.dataset_path),
             "validation_predictions_path": str(predictions_path),
@@ -260,6 +268,12 @@ class PCVRExperiment:
         if checkpoint is None:
             checkpoint = resolve_checkpoint_path(Path.cwd())
         config = self._load_train_config(checkpoint.parent)
+        resolved_schema_path, resolved_schema = self._load_resolved_schema(
+            dataset_path=request.dataset_path,
+            schema_path=request.schema_path,
+            checkpoint_dir=checkpoint.parent,
+            mode="inference",
+        )
         effective_batch_size, batch_size_source, effective_num_workers, num_workers_source = self._resolve_prediction_runtime_settings(
             request,
             config,
@@ -287,7 +301,7 @@ class PCVRExperiment:
         with self._module_context():
             evaluation = self._run_prediction_loop(
                 dataset_path=request.dataset_path,
-                schema_path=request.schema_path,
+                schema_path=resolved_schema_path,
                 checkpoint_path=checkpoint,
                 batch_size=effective_batch_size,
                 num_workers=effective_num_workers,
@@ -306,6 +320,8 @@ class PCVRExperiment:
         write_json(output_path, {"predictions": prediction_map})
         return {
             "checkpoint_path": str(checkpoint),
+            "schema_path": str(resolved_schema_path),
+            "schema": resolved_schema,
             "predictions_path": str(output_path),
             "prediction_count": len(prediction_map),
             "batch_size": effective_batch_size,
@@ -454,7 +470,7 @@ class PCVRExperiment:
         runtime_device = torch.device(device)
         resolved_runtime_execution = runtime_execution or RuntimeExecutionConfig()
         model.to(runtime_device)
-        state_dict = torch.load(checkpoint_path, map_location=runtime_device)
+        state_dict = load_checkpoint_state_dict(checkpoint_path, map_location=runtime_device)
         model.load_state_dict(state_dict)
         model.eval()
         predict_fn = maybe_compile_callable(
@@ -544,6 +560,18 @@ class PCVRExperiment:
             joined = ", ".join(missing_keys)
             raise KeyError(f"PCVR train_config.json is missing required key(s): {joined}")
         return config
+
+    def _load_resolved_schema(
+        self,
+        *,
+        dataset_path: Path,
+        schema_path: Path | None,
+        checkpoint_dir: Path,
+        mode: str,
+    ) -> tuple[Path, Any]:
+        resolved_schema_path = self._resolve_schema_path(dataset_path, schema_path, checkpoint_dir)
+        logging.info("Resolved PCVR %s schema.json: %s", mode, resolved_schema_path)
+        return resolved_schema_path, read_json(resolved_schema_path)
 
     def _resolve_schema_path(self, dataset_path: Path, schema_path: Path | None, checkpoint_dir: Path) -> Path:
         return resolve_schema_path(dataset_path, schema_path, checkpoint_dir)

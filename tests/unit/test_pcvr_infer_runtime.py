@@ -75,6 +75,8 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     (checkpoint_dir / "model.pt").write_bytes(b"checkpoint")
+    schema_payload = {"features": [{"name": "user_id"}]}
+    (checkpoint_dir / "schema.json").write_text(json.dumps(schema_payload), encoding="utf-8")
     _write_train_config(checkpoint_dir, {"batch_size": 96, "num_workers": 4})
     captured: dict[str, object] = {}
 
@@ -103,6 +105,8 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     assert captured["num_workers"] == 4
     assert payload["batch_size"] == 96
     assert payload["num_workers"] == 4
+    assert payload["schema_path"] == str((checkpoint_dir / "schema.json").resolve())
+    assert payload["schema"] == schema_payload
     assert json.loads((tmp_path / "results" / "predictions.json").read_text(encoding="utf-8")) == {
         "predictions": {"u1": 0.5},
     }
@@ -149,6 +153,7 @@ def test_infer_uses_train_config_runtime_execution(tmp_path: Path, monkeypatch: 
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     (checkpoint_dir / "model.pt").write_bytes(b"checkpoint")
+    (checkpoint_dir / "schema.json").write_text(json.dumps({"features": []}), encoding="utf-8")
     _write_train_config(checkpoint_dir, {"amp": True, "amp_dtype": "float16", "compile": True})
     captured: dict[str, object] = {}
 
@@ -180,6 +185,8 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     checkpoint_dir.mkdir()
     checkpoint_path = checkpoint_dir / "model.pt"
     checkpoint_path.write_bytes(b"checkpoint")
+    schema_payload = {"features": [{"name": "label"}]}
+    (checkpoint_dir / "schema.json").write_text(json.dumps(schema_payload), encoding="utf-8")
     _write_train_config(checkpoint_dir)
 
     def fake_bound_run_prediction_loop(self, **kwargs):
@@ -217,9 +224,12 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     assert diagnostics["score_margin_mean"] == pytest.approx(0.7)
     assert payload["metrics"]["auc_ci"]["low"] <= payload["metrics"]["auc"] <= payload["metrics"]["auc_ci"]["high"]
     assert payload["data_diagnostics"]["row_group_split"]["is_l1_ready"] is True
+    assert payload["schema_path"] == str((checkpoint_dir / "schema.json").resolve())
+    assert payload["schema"] == schema_payload
     saved_payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert saved_payload["metrics"]["score_diagnostics"] == diagnostics
     assert saved_payload["data_diagnostics"] == payload["data_diagnostics"]
+    assert saved_payload["schema"] == schema_payload
 
 
 def test_infer_request_runtime_settings_override_train_config(tmp_path: Path) -> None:
