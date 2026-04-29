@@ -199,7 +199,7 @@ def test_run_prediction_loop_loads_safetensors_via_checkpoint_helper(
         def __init__(self) -> None:
             self.loaded_state_dict = None
 
-        def to(self, device) -> "FakeModel":
+        def to(self, device) -> FakeModel:
             del device
             return self
 
