@@ -48,7 +48,7 @@ uv run taac-train \
 ```
 outputs/pcvr_baseline-<slug>/
 ├── global_step<N>.{params}.best_model/
-│   ├── model.pt
+│   ├── model.safetensors
 │   ├── schema.json
 │   ├── ns_groups.json
 │   └── train_config.json

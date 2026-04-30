@@ -141,7 +141,7 @@ Online training bundles should remain the platform two-file shape:
 - `run.sh`
 - `code_package.zip`
 
-The code package should include `src/taac2026`, `pyproject.toml`, `uv.lock` when present, and the selected experiment package including `model.py` and `ns_groups.json`.
+The code package should include `src/taac2026`, `pyproject.toml`, and the selected experiment package including `model.py` and `ns_groups.json`.
 
 ## Official Baseline Snapshot Notes
 
@@ -149,11 +149,11 @@ Official baseline source snapshots are disposable references only. Read them for
 
 The official self-contained training baseline contains `run.sh`, a training entrypoint, a trainer, utilities, dataset code, model code, and `ns_groups.json`. Its active `run.sh` used `ns_tokenizer_type=rankmixer`, `user_ns_tokens=5`, `item_ns_tokens=2`, `num_queries=2`, `ns_groups_json=""`, `emb_skip_threshold=1000000`, and `num_workers=8`. The commented group-tokenizer alternative uses `ns_groups.json` with `num_queries=1` because `rank_mixer_mode=full` requires `d_model % (num_queries * num_sequences + num_ns) == 0`.
 
-The official scoring baseline shares the same dataset and model definitions as the training snapshot. Its `infer.py` rebuilds `PCVRHyFormer` from checkpoint-side `schema.json`, optional `ns_groups.json`, and `train_config.json`, then strictly loads `model.pt` and writes `predictions.json` as `{"predictions": {user_id: probability}}`.
+The official scoring baseline shares the same dataset and model definitions as the training snapshot. Its `infer.py` rebuilds `PCVRHyFormer` from checkpoint-side `schema.json`, optional `ns_groups.json`, and `train_config.json`, then strictly loads `model.safetensors` and writes `predictions.json` as `{"predictions": {user_id: probability}}`.
 
 When adapting this snapshot into `config/baseline`, keep the model body local but adapt the public constructor to the shared contract. In particular, the official `num_hyformer_blocks` argument maps to the shared `num_blocks` argument, and the experiment package should own `ns_groups.json` even when a historical `run.sh` disabled the file for one rankmixer run.
 
-Checkpoint sidecars are part of the model contract, not optional convenience files. Training must persist `model.pt`, `schema.json`, `train_config.json`, and the resolved `ns_groups.json` when grouping is enabled, because evaluation/inference use those files as the source of truth for model reconstruction.
+Checkpoint sidecars are part of the model contract, not optional convenience files. Training must persist `model.safetensors`, `schema.json`, `train_config.json`, and the resolved `ns_groups.json` when grouping is enabled, because evaluation/inference use those files as the source of truth for model reconstruction.
 
 ## Tests to Update
 

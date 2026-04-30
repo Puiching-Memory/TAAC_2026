@@ -75,7 +75,7 @@ bash run.sh train --experiment config/baseline \
   --dataset-path /path/to/dataset_dir \
   --schema-path /path/to/dataset_dir/schema.json
 
-# 评估默认输出目录中的 best.pt；single 模式始终只评估一个实验/一个 checkpoint
+# 评估默认输出目录中的 best_model/model.safetensors；single 模式始终只评估一个实验/一个 checkpoint
 bash run.sh val --experiment config/baseline \
   --dataset-path /path/to/dataset_dir \
   --schema-path /path/to/dataset_dir/schema.json

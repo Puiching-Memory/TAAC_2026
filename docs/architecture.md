@@ -151,7 +151,7 @@ NS（Non-Sequential）Groups 将非序列特征 ID 映射到语义分组，供 N
 2. **AMP** -- 可选混合精度训练，支持 `bfloat16` / `float16`
 3. **`torch.compile`** -- 可选 JIT 编译加速
 4. **Early Stopping** -- 基于验证集 AUC
-5. **Checkpoint** -- 保存 `model.pt` + 侧车文件（`schema.json`、`ns_groups.json`、`train_config.json`）
+5. **Checkpoint** -- 保存 `model.safetensors` + 侧车文件（`schema.json`、`ns_groups.json`、`train_config.json`）
 6. **高基数 Embedding 重初始化** -- 每个 epoch 后重初始化低频特征的 Embedding
 
 损失函数（在 `infrastructure/training/runtime.py`）：
@@ -186,7 +186,7 @@ NS（Non-Sequential）Groups 将非序列特征 ID 映射到语义分组，供 N
 run.sh                    # 自动检测 Bundle / 本地模式
 code_package.zip
 ├── .taac_training_manifest.json
-├── pyproject.toml + uv.lock
+├── pyproject.toml
 ├── src/taac2026/
 ├── config/<experiment>/
 └── tools/
@@ -198,7 +198,7 @@ code_package.zip
 infer.py                  # 自解压 + 安装 + 推理脚本
 code_package.zip
 ├── .taac_inference_manifest.json
-├── pyproject.toml + uv.lock
+├── pyproject.toml
 ├── src/taac2026/
 ├── config/<experiment>/
 └── <checkpoint>/

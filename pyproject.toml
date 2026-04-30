@@ -21,6 +21,7 @@ dependencies = [
 	"pytest==9.0.3",
 	"pytest-benchmark==5.2.3",
 	"rich==14.3.3",
+	"safetensors==0.7.0",
 	"scikit-learn==1.7.2",
 	"tensorboard==2.19.0",
 	"tomli==2.4.0",

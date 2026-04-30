@@ -178,7 +178,7 @@ def _write_code_package(
             "project/.taac_inference_manifest.json",
             dump_bytes(manifest, indent=2, trailing_newline=True),
         )
-        for filename in ("pyproject.toml", "uv.lock", "README.md"):
+        for filename in ("pyproject.toml",):
             source = root / filename
             if source.exists():
                 _add_file_to_zip(archive, source, f"project/{filename}")

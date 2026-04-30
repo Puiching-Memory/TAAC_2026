@@ -30,8 +30,6 @@ outputs/bundle/
 code_package.zip
 ├── .taac_training_manifest.json   # Bundle 元信息
 ├── pyproject.toml                 # 依赖声明
-├── uv.lock                        # 依赖锁定
-├── README.md
 ├── config/__init__.py
 ├── config/<experiment>/           # 实验包
 │   ├── __init__.py

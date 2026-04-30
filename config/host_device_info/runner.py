@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -278,18 +280,100 @@ def _log_python_info(sink: LogSink) -> None:
     sink.log(f"nvidia_visible_devices={os.environ.get('NVIDIA_VISIBLE_DEVICES', '<unset>')}")
 
 
+def _normalize_distribution_name(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _distribution_display_name(distribution: metadata.Distribution) -> str:
+    return distribution.metadata.get("Name") or distribution.name or "<unknown>"
+
+
+def _distribution_top_level_names(distribution: metadata.Distribution) -> tuple[str, ...]:
+    top_level = distribution.read_text("top_level.txt")
+    if top_level:
+        names = tuple(
+            dict.fromkeys(
+                line.strip()
+                for line in top_level.splitlines()
+                if line.strip()
+            )
+        )
+        if names:
+            return names
+
+    names: dict[str, None] = {}
+    for file in distribution.files or ():
+        parts = file.parts
+        if not parts:
+            continue
+        top_level_name = parts[0]
+        if top_level_name.endswith((".dist-info", ".egg-info", ".data")):
+            continue
+        module_name = top_level_name[:-3] if len(parts) == 1 and top_level_name.endswith(".py") else top_level_name
+        if module_name.isidentifier():
+            names[module_name] = None
+    return tuple(names)
+
+
+def _distribution_import_source(distribution: metadata.Distribution) -> str:
+    for import_name in _distribution_top_level_names(distribution):
+        try:
+            spec = importlib.util.find_spec(import_name)
+        except (AttributeError, ImportError, ValueError):
+            continue
+        if spec is None:
+            continue
+        if spec.submodule_search_locations:
+            location = next(iter(spec.submodule_search_locations), None)
+            if location:
+                return location
+        if spec.origin not in (None, "built-in", "frozen"):
+            return spec.origin
+    return str(distribution.locate_file(""))
+
+
+def _active_distribution_for_group(
+    distributions: Sequence[metadata.Distribution],
+) -> metadata.Distribution:
+    candidate_names: list[str] = []
+    for distribution in distributions:
+        for candidate_name in (_distribution_display_name(distribution), distribution.name):
+            if candidate_name and candidate_name not in candidate_names:
+                candidate_names.append(candidate_name)
+    for candidate_name in candidate_names:
+        try:
+            return metadata.distribution(candidate_name)
+        except metadata.PackageNotFoundError:
+            continue
+    return distributions[0]
+
+
 def _log_python_packages(sink: LogSink) -> None:
     sink.log("---- python packages ----")
+    grouped_distributions: dict[str, list[metadata.Distribution]] = {}
+    for distribution in metadata.distributions():
+        grouped_distributions.setdefault(
+            _normalize_distribution_name(_distribution_display_name(distribution)),
+            [],
+        ).append(distribution)
+
     packages = sorted(
         (
-            (distribution.metadata.get("Name") or distribution.name or "<unknown>", distribution.version)
-            for distribution in metadata.distributions()
+            (
+                _distribution_display_name(active_distribution),
+                active_distribution.version,
+                _distribution_import_source(active_distribution),
+            )
+            for active_distribution in (
+                _active_distribution_for_group(distributions)
+                for distributions in grouped_distributions.values()
+            )
         ),
         key=lambda item: item[0].lower(),
     )
     sink.log(f"installed_python_packages={len(packages)}")
-    for name, version in packages:
-        sink.log(f"{name}=={version}")
+    for name, version, source in packages:
+        sink.log(f"{name}=={version} source={source}")
 
 
 def _log_uv_bootstrap_status(sink: LogSink, config: HostDeviceInfoConfig) -> None:

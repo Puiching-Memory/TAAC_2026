@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 from taac2026.domain.config import EvalRequest, InferRequest
 from taac2026.infrastructure.io.json_utils import dumps, loads
 from taac2026.infrastructure.pcvr.config import PCVRDataConfig, PCVRTrainConfig
+import taac2026.infrastructure.pcvr.experiment as experiment_module
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment, _log_prediction_progress
 from taac2026.infrastructure.training.runtime import RuntimeExecutionConfig
 
@@ -74,7 +76,7 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     )
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
-    (checkpoint_dir / "model.pt").write_bytes(b"checkpoint")
+    (checkpoint_dir / "model.safetensors").write_bytes(b"checkpoint")
     schema_payload = {"features": [{"name": "user_id"}]}
     (checkpoint_dir / "schema.json").write_text(dumps(schema_payload), encoding="utf-8")
     _write_train_config(checkpoint_dir, {"batch_size": 96, "num_workers": 4})
@@ -152,7 +154,7 @@ def test_infer_uses_train_config_runtime_execution(tmp_path: Path, monkeypatch: 
     experiment = _make_experiment(tmp_path)
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
-    (checkpoint_dir / "model.pt").write_bytes(b"checkpoint")
+    (checkpoint_dir / "model.safetensors").write_bytes(b"checkpoint")
     (checkpoint_dir / "schema.json").write_text(dumps({"features": []}), encoding="utf-8")
     _write_train_config(checkpoint_dir, {"amp": True, "amp_dtype": "float16", "compile": True})
     captured: dict[str, object] = {}
@@ -179,11 +181,76 @@ def test_infer_uses_train_config_runtime_execution(tmp_path: Path, monkeypatch: 
     assert runtime_execution == RuntimeExecutionConfig(amp=True, amp_dtype="float16", compile=True)
 
 
+def test_run_prediction_loop_loads_safetensors_via_checkpoint_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment = _make_experiment(tmp_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    checkpoint_dir.mkdir()
+    checkpoint_path = checkpoint_dir / "model.safetensors"
+    checkpoint_path.write_bytes(b"checkpoint")
+    loaded_state_dict = {"weight": object()}
+
+    class FakeDataset:
+        num_rows = 0
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.loaded_state_dict = None
+
+        def to(self, device) -> FakeModel:
+            del device
+            return self
+
+        def load_state_dict(self, state_dict) -> None:
+            self.loaded_state_dict = state_dict
+
+        def eval(self) -> None:
+            return None
+
+        def predict(self, model_input):
+            del model_input
+            raise AssertionError("predict should not run when loader is empty")
+
+    fake_model = FakeModel()
+    monkeypatch.setitem(__import__("sys").modules, "model", ModuleType("model"))
+    monkeypatch.setattr(
+        PCVRExperiment,
+        "_resolve_schema_path",
+        lambda self, dataset_path, schema_path, checkpoint_dir: checkpoint_dir / "schema.json",
+    )
+    monkeypatch.setattr(experiment_module, "parse_seq_max_lens", lambda value: {})
+    monkeypatch.setattr(experiment_module.pcvr_data, "PCVRParquetDataset", lambda **kwargs: FakeDataset())
+    monkeypatch.setattr(experiment_module, "DataLoader", lambda dataset, batch_size, num_workers, pin_memory: [])
+    monkeypatch.setattr(experiment_module, "build_pcvr_model", lambda **kwargs: fake_model)
+    monkeypatch.setattr(experiment_module, "load_checkpoint_state_dict", lambda path, map_location=None: loaded_state_dict)
+    monkeypatch.setattr(
+        experiment_module.torch,
+        "load",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("torch.load should not be used for safetensors checkpoints")),
+    )
+
+    payload = experiment._run_prediction_loop(
+        dataset_path=tmp_path / "eval.parquet",
+        schema_path=None,
+        checkpoint_path=checkpoint_path,
+        batch_size=32,
+        num_workers=0,
+        device="cpu",
+        is_training_data=False,
+        config={"seq_max_lens": "{}"},
+    )
+
+    assert payload == {"labels": [], "probabilities": [], "records": []}
+    assert fake_model.loaded_state_dict is loaded_state_dict
+
+
 def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     experiment = _make_experiment(tmp_path)
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
-    checkpoint_path = checkpoint_dir / "model.pt"
+    checkpoint_path = checkpoint_dir / "model.safetensors"
     checkpoint_path.write_bytes(b"checkpoint")
     schema_payload = {"features": [{"name": "label"}]}
     (checkpoint_dir / "schema.json").write_text(dumps(schema_payload), encoding="utf-8")

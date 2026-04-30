@@ -18,6 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from taac2026.infrastructure.checkpoints import save_checkpoint_state_dict
+
 
 AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
 BINARY_LOSS_TYPE_CHOICES: tuple[str, ...] = ("bce", "focal")
@@ -239,8 +241,7 @@ class EarlyStopping:
         if self.verbose:
             logging.info("Validation score increased. Saving model ...")
         checkpoint_path = Path(self.checkpoint_path)
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), checkpoint_path)
+        save_checkpoint_state_dict(model.state_dict(), checkpoint_path)
         self.best_saved_score = score
 
 

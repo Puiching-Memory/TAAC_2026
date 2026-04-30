@@ -28,7 +28,7 @@ def test_parse_eval_args_accepts_runtime_flags() -> None:
 
 def test_main_output_is_compact_single_line(monkeypatch, capsys) -> None:
     payload = {
-        "checkpoint_path": "/tmp/model.pt",
+        "checkpoint_path": "/tmp/model.safetensors",
         "schema_path": "/tmp/schema.json",
         "schema": {"features": [{"name": "user_id"}]},
     }

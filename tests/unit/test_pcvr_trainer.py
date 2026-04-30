@@ -43,7 +43,7 @@ def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, caplog
         num_epochs=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
     )
 
     losses = iter((0.5, 0.4, 0.3, 0.2))
@@ -89,7 +89,7 @@ def test_trainer_runtime_execution_wraps_train_and_predict(monkeypatch, tmp_path
         num_epochs=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
         runtime_execution=RuntimeExecutionConfig(amp=True, amp_dtype="float16", compile=True),
     )
     monkeypatch.setattr(trainer, "_make_model_input", lambda batch: object())
@@ -128,7 +128,7 @@ def test_trainer_delegates_loss_to_shared_runtime(monkeypatch, tmp_path) -> None
         num_epochs=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
         loss_type="FOCAL",
         focal_alpha=0.25,
         focal_gamma=1.5,
@@ -167,7 +167,7 @@ def test_trainer_accepts_orthogonal_adamw(tmp_path) -> None:
         num_epochs=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
         dense_optimizer_type="orthogonal_adamw",
     )
 
@@ -184,7 +184,7 @@ def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:
         num_epochs=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
     )
     logits = iter(
         (
@@ -213,7 +213,7 @@ def test_evaluate_records_score_diagnostics(tmp_path, caplog) -> None:
         num_epochs=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.pt", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
     )
     logits = iter(
         (

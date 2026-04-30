@@ -17,7 +17,6 @@ from taac2026.infrastructure.checkpoints import (
     write_checkpoint_sidecars,
 )
 from taac2026.infrastructure.experiments.loader import load_experiment_package
-from taac2026.infrastructure.io.json_utils import dumps, loads
 from taac2026.infrastructure.pcvr.protocol import (
     batch_to_model_input,
     build_feature_specs,
@@ -28,6 +27,7 @@ from taac2026.infrastructure.pcvr.protocol import (
     resolve_ns_groups_path,
     resolve_schema_path,
 )
+from taac2026.infrastructure.io.json_utils import dumps, loads
 from tests.unit._pcvr_experiment_matrix import ExperimentCase, REPO_ROOT, discover_pcvr_experiment_cases, load_model_module
 
 
@@ -479,11 +479,11 @@ def test_build_pcvr_model_forwards_constructor_contract(
         (Path("global_step0"), 0),
         (Path("global_step12.layer=2"), 12),
         (Path("global_step12.layer=2.best_model"), 12),
-        (Path("global_step3.head=4") / "model.pt", 3),
+        (Path("global_step3.head=4") / "model.safetensors", 3),
         (Path("global_step0007"), 7),
         (Path("global_step9.hidden=64.extra_token"), 9),
         (Path("best_model"), -1),
-        (Path("invalid_parent") / "model.pt", -1),
+        (Path("invalid_parent") / "model.safetensors", -1),
     ],
 )
 def test_checkpoint_step_cases(path_value: Path, expected: int) -> None:
@@ -538,9 +538,10 @@ def test_build_checkpoint_dir_name_rejects_negative_global_step() -> None:
     [
         "explicit_file",
         "explicit_dir",
+        "legacy_pt_file",
         "best_model",
         "latest_step",
-        "direct_model",
+        "direct_checkpoint",
         "missing",
     ],
 )
@@ -549,7 +550,7 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
     run_dir.mkdir()
 
     if scenario == "explicit_file":
-        candidate = tmp_path / "manual.pt"
+        candidate = tmp_path / "manual.safetensors"
         candidate.write_text("manual", encoding="utf-8")
         assert resolve_checkpoint_path(run_dir, candidate) == candidate.resolve()
         return
@@ -557,9 +558,16 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
     if scenario == "explicit_dir":
         candidate_dir = tmp_path / "manual_dir"
         candidate_dir.mkdir()
-        model_path = candidate_dir / "model.pt"
+        model_path = candidate_dir / "model.safetensors"
         model_path.write_text("manual", encoding="utf-8")
         assert resolve_checkpoint_path(run_dir, candidate_dir) == model_path.resolve()
+        return
+
+    if scenario == "legacy_pt_file":
+        legacy_path = tmp_path / "manual.pt"
+        legacy_path.write_text("legacy", encoding="utf-8")
+        with pytest.raises(ValueError, match=r"unsupported checkpoint format"):
+            resolve_checkpoint_path(run_dir, legacy_path)
         return
 
     if scenario == "best_model":
@@ -567,9 +575,9 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
         newer = run_dir / "global_step2.best_model"
         older.mkdir()
         newer.mkdir()
-        (older / "model.pt").write_text("old", encoding="utf-8")
-        (newer / "model.pt").write_text("new", encoding="utf-8")
-        assert resolve_checkpoint_path(run_dir) == (newer / "model.pt").resolve()
+        (older / "model.safetensors").write_text("old", encoding="utf-8")
+        (newer / "model.safetensors").write_text("new", encoding="utf-8")
+        assert resolve_checkpoint_path(run_dir) == (newer / "model.safetensors").resolve()
         return
 
     if scenario == "latest_step":
@@ -577,18 +585,18 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
         newer = run_dir / "global_step3.layer=2"
         older.mkdir()
         newer.mkdir()
-        (older / "model.pt").write_text("old", encoding="utf-8")
-        (newer / "model.pt").write_text("new", encoding="utf-8")
-        assert resolve_checkpoint_path(run_dir) == (newer / "model.pt").resolve()
+        (older / "model.safetensors").write_text("old", encoding="utf-8")
+        (newer / "model.safetensors").write_text("new", encoding="utf-8")
+        assert resolve_checkpoint_path(run_dir) == (newer / "model.safetensors").resolve()
         return
 
-    if scenario == "direct_model":
-        direct_model = run_dir / "model.pt"
+    if scenario == "direct_checkpoint":
+        direct_model = run_dir / "model.safetensors"
         direct_model.write_text("direct", encoding="utf-8")
         assert resolve_checkpoint_path(run_dir) == direct_model.resolve()
         return
 
-    with pytest.raises(FileNotFoundError, match=r"no model\.pt checkpoint"):
+    with pytest.raises(FileNotFoundError, match=r"no model\.safetensors checkpoint"):
         resolve_checkpoint_path(run_dir)
 
 

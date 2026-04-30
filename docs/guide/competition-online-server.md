@@ -151,7 +151,7 @@ bash run.sh --device cuda
 设计约束：
 
 - `code_package.zip` 应包含运行代码和选中的实验包，不依赖线上 `uv sync`。
-- `uv.lock` 可以随包保留用于追溯，但线上默认不使用它安装依赖。
+- `uv.lock` 只保留在仓库本地用于开发追溯，线上 bundle 不再包含它。
 - 缺少纯 Python 包时，先确认平台环境，再考虑用腾讯镜像补装。
 - 不要在任务启动时下载或覆盖核心 CUDA/PyTorch 栈。
 - 不要把旧训练栈里的 runtime optimization 参数复制到当前 PCVR CLI，当前共享 parser 不支持这些历史参数。

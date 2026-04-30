@@ -100,7 +100,7 @@ The package command calls `taac-package-train`, which writes:
 - `run.sh`: copied from the repository root and marked executable.
 - `code_package.zip`: minimal runtime source tree.
 
-The zip contains `project/.taac_training_manifest.json`, `pyproject.toml`, `uv.lock`, `README.md` when present, `src/taac2026`, and only the selected experiment package under `config/<experiment>`. It must not include tests, docs, or unrelated experiment packages.
+The zip contains `project/.taac_training_manifest.json`, `pyproject.toml`, `src/taac2026`, and only the selected experiment package under `config/<experiment>`. It must not include tests, docs, unrelated experiment packages, or local provenance files such as `uv.lock` and `README.md`.
 
 ## Official Baseline Snapshots
 
@@ -113,7 +113,7 @@ Treat these sources as disposable references. Extract the contracts, update repo
 
 The official training snapshot reads `TRAIN_DATA_PATH`, `TRAIN_CKPT_PATH`, `TRAIN_LOG_PATH`, and `TRAIN_TF_EVENTS_PATH`. The official scoring snapshot reads `MODEL_OUTPUT_PATH`, `EVAL_DATA_PATH`, and `EVAL_RESULT_PATH`, then writes `predictions.json` under `EVAL_RESULT_PATH` with the shape `{"predictions": {user_id: probability}}`.
 
-The important portable contract between training and scoring is the checkpoint directory. It must contain `model.pt`, `schema.json`, `train_config.json`, and `ns_groups.json` when grouping was enabled. Evaluation rebuilds the model from these sidecars and loads the state dict strictly, so missing or stale sidecars usually cause shape mismatches rather than a recoverable warning.
+The important portable contract between training and scoring is the checkpoint directory. It must contain `model.safetensors`, `schema.json`, `train_config.json`, and `ns_groups.json` when grouping was enabled. Evaluation rebuilds the model from these sidecars and loads the state dict strictly, so missing or stale sidecars usually cause shape mismatches rather than a recoverable warning.
 
 ## Online Conda + pip / Python Runtime
 
@@ -132,7 +132,7 @@ Dependency responsibility online:
 - Prefer the platform or image-provided CUDA, PyTorch, FBGEMM, and TorchRec stack.
 - Use Conda for the base Python/CUDA/PyTorch environment if the platform allows custom images or startup commands.
 - Use pip inside that Conda environment only for missing pure-Python packages that are not already available.
-- Do not call `uv sync` or require `uv.lock` online; `uv.lock` is packaged for provenance and local reproducibility, not online installation.
+- Do not call `uv sync` or require `uv.lock` online; `uv.lock` remains a local repository artifact for provenance and reproducibility and is not packaged into online bundles.
 
 If the platform image allows a pre-run dependency step, use the active Conda Python:
 

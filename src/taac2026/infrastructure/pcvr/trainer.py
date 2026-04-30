@@ -19,7 +19,12 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from taac2026.domain.metrics import binary_score_diagnostics
-from taac2026.infrastructure.checkpoints import build_checkpoint_dir_name, write_checkpoint_sidecars
+from taac2026.infrastructure.checkpoints import (
+    build_checkpoint_dir_name,
+    preferred_checkpoint_path,
+    save_checkpoint_state_dict,
+    write_checkpoint_sidecars,
+)
 from taac2026.infrastructure.pcvr.protocol import batch_to_model_input
 from taac2026.infrastructure.pcvr.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.training.runtime import (
@@ -221,11 +226,10 @@ class PCVRPointwiseTrainer:
         skip_model_file: bool = False,
     ) -> Path:
         checkpoint_dir = self.save_dir / self._build_step_dir_name(global_step, is_best=is_best)
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
         if not skip_model_file:
-            torch.save(self.model.state_dict(), checkpoint_dir / "model.pt")
+            save_checkpoint_state_dict(self.model.state_dict(), checkpoint_dir)
         self._write_sidecar_files(checkpoint_dir)
-        logging.info("Saved checkpoint to %s", checkpoint_dir / "model.pt")
+        logging.info("Saved checkpoint to %s", preferred_checkpoint_path(checkpoint_dir))
         return checkpoint_dir
 
     def _remove_old_best_dirs(self) -> None:
@@ -262,7 +266,7 @@ class PCVRPointwiseTrainer:
             return
 
         best_dir = self.save_dir / self._build_step_dir_name(total_step, is_best=True)
-        self.early_stopping.checkpoint_path = str(best_dir / "model.pt")
+        self.early_stopping.checkpoint_path = str(preferred_checkpoint_path(best_dir))
         self._remove_old_best_dirs()
 
         self.early_stopping(val_auc, self.model, {

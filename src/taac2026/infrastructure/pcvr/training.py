@@ -403,7 +403,7 @@ def train_pcvr_model(
         logging.info("Total parameters: %s", f"{total_params:,}")
 
         early_stopping = EarlyStopping(
-            checkpoint_path=ckpt_dir / "placeholder" / "model.pt",
+            checkpoint_path=ckpt_dir / "placeholder" / "model.safetensors",
             patience=args.patience,
             label="model",
         )

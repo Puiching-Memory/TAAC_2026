@@ -8,6 +8,8 @@ icon: lucide/folder-open
 
 ## 当前实验包
 
+### 模型训练包
+
 | 实验包         | 模型类         | Blocks | Dropout | NS Tokenizer      | 亮点                             |
 | -------------- | -------------- | ------ | ------- | ----------------- | -------------------------------- |
 | Baseline       | HyFormer       | 默认   | 默认    | group             | 基准参考                         |
@@ -20,9 +22,18 @@ icon: lucide/folder-open
 | UniRec         | UniRec         | 3      | 0.02    | rankmixer (5u/2i) | 统一推荐                         |
 | UniScaleFormer | UniScaleFormer | 4      | 0.02    | rankmixer (5u/2i) | 最深栈                           |
 
+### 维护工具包
+
+| 实验包             | 用途             | 需要数据集 | 说明                               |
+| ------------------ | ---------------- | ---------- | ---------------------------------- |
+| Host Device Info   | 主机设备诊断采集 | 否         | 采集 GPU、网络、依赖源等环境快照   |
+| Online Dataset EDA | 数据集探索分析   | 是         | 流式 Parquet 统计，线上友好        |
+
 ## 包内文件
 
-每个实验包目录必须包含三个文件：
+### 模型训练包
+
+每个模型训练包目录包含三个文件：
 
 ```
 config/<experiment_name>/
@@ -56,6 +67,19 @@ EXPERIMENT = PCVRExperiment(
 | `reinit_high_cardinality_params` | `() -> None`                           | 重初始化低频 Embedding |
 
 **`ns_groups.json`** 定义 NS 特征分组，格式见 [架构与概念](../architecture.md#ns-groups)。
+
+### 维护工具包
+
+维护工具包使用 `ExperimentSpec` 而非 `PCVRExperiment`，不需要模型定义和 NS 分组：
+
+```
+config/<tool_name>/
+├── __init__.py         # EXPERIMENT = ExperimentSpec(name, package_dir, train_fn, metadata)
+└── runner.py           # 工具逻辑实现
+```
+
+- [Host Device Info](host-device-info.md) -- 主机与设备诊断采集
+- [Online Dataset EDA](online-dataset-eda.md) -- 数据集探索性分析
 
 ## 运行任意实验包
 

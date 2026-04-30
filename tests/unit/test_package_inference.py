@@ -103,7 +103,8 @@ def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None
     names = _code_package_names(result.code_package_path)
     assert "project/.taac_inference_manifest.json" in names
     assert "project/pyproject.toml" in names
-    assert "project/uv.lock" in names
+    assert "project/uv.lock" not in names
+    assert "project/README.md" not in names
     assert "project/src/taac2026/application/evaluation/cli.py" in names
     assert "project/src/taac2026/application/evaluation/infer.py" in names
     assert "project/config/baseline/model.py" in names
