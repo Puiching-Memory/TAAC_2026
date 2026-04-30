@@ -1688,7 +1688,6 @@ wheels = [
 
 [[package]]
 name = "taac2026"
-version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "datasets", marker = "sys_platform == 'linux'" },

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "taac2026"
-version = "1.0.0"
+dynamic = ["version"]
 description = "TAAC 2026 experiment workspace"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
@@ -70,6 +70,9 @@ taac-plot-model-performance = "taac2026.application.reporting.cli:main"
 taac-tech-timeline = "taac2026.application.reporting.timeline_cli:main"
 taac-bench-report = "taac2026.application.reporting.bench_cli:main"
 taac-benchmark-pcvr-data-pipeline = "taac2026.application.reporting.pcvr_data_pipeline_benchmark:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "taac2026.__version__"}
 
 [tool.setuptools]
 package-dir = { "" = "src" }
