@@ -221,7 +221,7 @@ data/sample_1000_raw/
 
 ## 相关工作
 以下按公开可访问资料整理，优先保留能直接借鉴代码、EDA、方法说明和赛事资料的链接，持续补充。
-调查时间: 2026-04-24
+调查时间: 2026-04-30
 
 **2025届：官方 / 公开代码**  
 1. [TencentAdvertisingAlgorithmCompetition/baseline_2025](https://github.com/TencentAdvertisingAlgorithmCompetition/baseline_2025) 官方 parquet baseline，主体为 SASRec，并附带 faiss-based-ann 检索与 RQ-VAE 扩展入口。  
@@ -243,14 +243,20 @@ data/sample_1000_raw/
 5. [WestbrookLong/Interformer_Pytorch](https://github.com/WestbrookLong/Interformer_Pytorch) 非官方 InterFormer PyTorch 重写版，补齐了 TAAC 样例数据加载、训练脚手架与可运行 backbone，适合作为论文结构对照与本地 sanity check 参考。  
 6. [XiaolongWang-c/tencent-ad](https://github.com/XiaolongWang-c/tencent-ad) 轻量级 TAAC 2026 备赛工程脚手架，强调统一 Sample 抽象、显式标签映射入口与验证预测产物，便于快速替换 baseline 与特征工程。  
 7. [wangjialin114/kdd-cup-2026-tencent](https://github.com/wangjialin114/kdd-cup-2026-tencent) KDD Cup 2026 Industrial Track 公开备赛仓库，README 给出数据说明、项目目录和基础环境准备指引。  
+8. [tobegold574/TAAC2026](https://github.com/tobegold574/TAAC2026) HyFormer + RankMixer pCVR 方案，多序列混合 Transformer 架构，包含 MultiSeqQueryGenerator 实现。  
+9. [Maxsim111/QinShiHuang-TAAC2026](https://github.com/Maxsim111/QinShiHuang-TAAC2026) 秦始皇队，DeepFM 和 DIN 的 PyTorch 实现，结构清晰适合入门参考。  
+10. [Lireswallow/2026TAAC-model-checker](https://github.com/Lireswallow/2026TAAC-model-checker) 本地模型校验工具，在上传至 TAAC 官方沙箱前验证模型代码能否端到端跑通，内置修改版 baseline 与 demo 数据。  
+11. [Oka117/TAAC2026Baseline](https://github.com/Oka117/TAAC2026Baseline) Baseline 源码分析（中英双语 README），基于 HuggingFace 1k 样例的 smoke test。  
+12. [goldzzmj/TAAC-2026-AD-Baseline](https://github.com/goldzzmj/TAAC-2026-AD-Baseline) OneTrans-small baseline + 独立 OneTrans 架构复现（基于 arxiv 2510.26104）。  
+13. [lioliominister/TAAC2026](https://github.com/lioliominister/TAAC2026) pCVR 预测统一可堆叠骨干方案，附带 EDA 报告、统一入口与推理 benchmark。  
+14. [wwWW-pig/TAAC2026_HyFormer](https://github.com/wwWW-pig/TAAC2026_HyFormer) 自包含 HyFormer 风格 pCVR baseline，IterableDataset 读取 Parquet，内置 BCE/Focal Loss。  
 
 **2026届：Kaggle / Notebook**  
 1. [galegale05/TAAC2026 Baseline v3 - Final](https://www.kaggle.com/code/galegale05/taac2026-baseline-v3-final/notebook) Kaggle 上公开的 HSTU 风格时间特征 baseline notebook，可作为时间 bucket、session 切分和轻量级序列建模的补充参考。  
 
 **2026届：EDA / 资料入口**  
-1. [hun9008/TAAC_DI_Lab_EDA](https://github.com/hun9008/TAAC_DI_Lab_EDA) 对公开 sample parquet 做了较完整的 EDA，包含 label 分布、序列长度、feature 密度和建模建议。  
-2. [https://huggingface.co/datasets/TAAC2026/data_sample_1000](https://huggingface.co/datasets/TAAC2026/data_sample_1000) 官方样例数据页面。  
-3. [https://algo.qq.com/#intro](https://algo.qq.com/#intro) 大赛主页。  
+1. [https://huggingface.co/datasets/TAAC2026/data_sample_1000](https://huggingface.co/datasets/TAAC2026/data_sample_1000) 官方样例数据页面。  
+2. [https://algo.qq.com/#intro](https://algo.qq.com/#intro) 大赛主页。  
 
 **通用开源框架 / Benchmark**  
 1. [reczoo/FuxiCTR](https://github.com/reczoo/FuxiCTR) CTR 预测开源底座，长处是可配置、可调参与可复现实验，适合快速对照经典 ranking 模型与数据管线。
