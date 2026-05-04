@@ -18,7 +18,7 @@ user-invocable: true
 
 Each PCVR experiment package should keep only experiment-specific assets and model code:
 
-- `__init__.py` must define `EXPERIMENT = PCVRExperiment(...)`.
+- `__init__.py` should define `EXPERIMENT = create_pcvr_experiment(...)`.
 - `package_dir` should be `Path(__file__).resolve().parent`.
 - `model_class_name` must explicitly name the model class exported by `model.py`.
 - Full experiment-specific model classes must live in package-local `model.py`; do not centralize paper or experiment architecture classes in `src/taac2026/infrastructure/pcvr`.
@@ -42,97 +42,46 @@ Example:
 from pathlib import Path
 
 from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
-from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
-from taac2026.infrastructure.pcvr.prediction_stack import (
-  PCVRPredictionHooks,
-  default_build_prediction_data,
-  default_build_prediction_model,
-  default_prepare_prediction_runner,
-  default_run_prediction_loop,
-)
-from taac2026.infrastructure.pcvr.runtime_stack import (
-  PCVRRuntimeHooks,
-  default_build_evaluation_data_diagnostics,
-  default_load_runtime_schema,
-  default_load_train_config,
-  default_resolve_evaluation_checkpoint,
-  default_resolve_inference_checkpoint,
-  default_write_observed_schema_report,
-  default_write_train_split_observed_schema_reports,
-)
-from taac2026.infrastructure.pcvr.train_stack import (
-  PCVRTrainHooks,
-  default_build_train_data,
-  default_build_train_model,
-  default_build_train_summary,
-  default_build_train_trainer,
-  default_run_training,
-)
-from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args
+from taac2026.infrastructure.pcvr.factory import create_pcvr_experiment
 
 
-TRAIN_HOOKS = PCVRTrainHooks(
-  build_data=default_build_train_data,
-  build_model=default_build_train_model,
-  build_trainer=default_build_train_trainer,
-  run_training=default_run_training,
-  build_summary=default_build_train_summary,
-)
-
-PREDICTION_HOOKS = PCVRPredictionHooks(
-  build_data=default_build_prediction_data,
-  build_model=default_build_prediction_model,
-  prepare_predictor=default_prepare_prediction_runner,
-  run_loop=default_run_prediction_loop,
-)
-
-RUNTIME_HOOKS = PCVRRuntimeHooks(
-  resolve_evaluation_checkpoint=default_resolve_evaluation_checkpoint,
-  resolve_inference_checkpoint=default_resolve_inference_checkpoint,
-  load_train_config=default_load_train_config,
-  load_runtime_schema=default_load_runtime_schema,
-  build_evaluation_data_diagnostics=default_build_evaluation_data_diagnostics,
-  write_observed_schema_report=default_write_observed_schema_report,
-  write_train_split_observed_schema_reports=default_write_train_split_observed_schema_reports,
-)
-
-
-EXPERIMENT = PCVRExperiment(
+EXPERIMENT = create_pcvr_experiment(
     name="pcvr_example",
     package_dir=Path(__file__).resolve().parent,
     model_class_name="PCVRExampleModel",
     train_defaults=PCVRTrainConfig(
         model=PCVRModelConfig(num_blocks=2),
-    ns=PCVRNSConfig(
-      grouping_strategy="explicit",
-      user_groups={"U1": [1, 15]},
-      item_groups={"I1": [11, 13]},
-      tokenizer_type="rankmixer",
-      user_tokens=5,
-      item_tokens=2,
+        ns=PCVRNSConfig(
+            grouping_strategy="explicit",
+            user_groups={"U1": [1, 15]},
+            item_groups={"I1": [11, 13]},
+            tokenizer_type="rankmixer",
+            user_tokens=5,
+            item_tokens=2,
+        ),
     ),
-    ),
-  train_arg_parser=parse_pcvr_train_args,
-  train_hooks=TRAIN_HOOKS,
-  prediction_hooks=PREDICTION_HOOKS,
-  runtime_hooks=RUNTIME_HOOKS,
 )
+
+TRAIN_HOOKS = EXPERIMENT.train_hooks
+PREDICTION_HOOKS = EXPERIMENT.prediction_hooks
+RUNTIME_HOOKS = EXPERIMENT.runtime_hooks
 ```
 
-For new model-only experiments, the safest pattern is to copy `baseline/__init__.py` or another close experiment and then replace the experiment name, model class, and defaults. Avoid inventing new hooks unless the behavior really differs.
+For new model-only experiments, use `create_pcvr_experiment(...)` and replace the experiment name, model class, and defaults. Avoid inventing new hooks unless the behavior really differs; when it does, pass only the differing functions through `train_hook_overrides`, `prediction_hook_overrides`, or `runtime_hook_overrides`.
 
 ## Model Contract
 
 `model.py` must expose the `ModelInput` type and the model class named by `model_class_name`.
 
-Prefer importing shared building blocks from `taac2026.infrastructure.pcvr.modeling`:
+Prefer importing currently shared building blocks from `taac2026.infrastructure.pcvr.modeling`:
 
 - `ModelInput`
-- `EmbeddingParameterMixin`
-- `NonSequentialTokenizer`
-- `DenseTokenProjector`
-- `SequenceTokenizer`
 - mask and pooling helpers such as `make_padding_mask`, `masked_mean`, `masked_last`, and `safe_key_padding_mask`
+- tokenizer and embedding helpers such as `FeatureEmbeddingBank`, `NonSequentialTokenizer`, `DenseTokenProjector`, and `SequenceTokenizer`
+- `RMSNorm` plus `configure_rms_norm_runtime` for runtime-selectable Torch / TileLang RMSNorm
+- `EmbeddingParameterMixin` for sparse/dense parameter grouping and high-cardinality reinitialization
+
+Package-local `layers.py` files in the built-in non-baseline experiments are compatibility re-exports. New experiments should import these shared primitives directly from `taac2026.infrastructure.pcvr.modeling` unless they are implementing truly paper-specific layers.
 
 `src/taac2026/infrastructure/pcvr/modeling.py` is for reusable primitives only. Keep model bodies, paper-specific blocks, and experiment naming inside the owning `experiments/pcvr/<experiment>/model.py` package.
 
@@ -176,7 +125,7 @@ Behavioral requirements:
 - `forward(inputs: ModelInput)` returns logits.
 - `predict(inputs: ModelInput)` returns `(logits, embeddings)`.
 - The model exposes `num_ns` for logging and checkpoint metadata.
-- Use `EmbeddingParameterMixin` unless the model has a deliberate custom sparse/dense parameter split.
+- Use the package-local `EmbeddingParameterMixin` pattern unless the model has a deliberate custom sparse/dense parameter split.
 - Use `num_blocks`; do not introduce `num_hyformer_blocks` in new non-baseline code.
 
 ## NS Groups
@@ -220,6 +169,7 @@ Online bundles currently use two top-level files, but there are two different sh
 - inference: `infer.py` + `code_package.zip`
 
 The code package should include `project/.taac_*_manifest.json`, `project/pyproject.toml`, `project/src/taac2026`, and the selected experiment package under `project/experiments/...`. It should not include `tests/`, `uv.lock`, `README.md`, or unrelated experiment packages.
+Runtime platform behavior for `run.sh` and generated `infer.py` lives in `src/taac2026/infrastructure/platform`; keep shell/bootstrap code thin and put manifest, pip, and env parsing there.
 
 ## Official Baseline Snapshot Notes
 

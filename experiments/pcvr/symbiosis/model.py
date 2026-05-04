@@ -8,9 +8,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .layers import DenseTokenProjector, EmbeddingParameterMixin, NonSequentialTokenizer, RMSNorm, SequenceTokenizer, configure_rms_norm_runtime as _configure_rms_norm_runtime
 from taac2026.infrastructure.pcvr.modeling import (
+	DenseTokenProjector,
+	EmbeddingParameterMixin,
 	ModelInput,
+	NonSequentialTokenizer,
+	RMSNorm,
+	SequenceTokenizer,
+	configure_rms_norm_runtime as _configure_rms_norm_runtime,
 	maybe_gradient_checkpoint,
 	choose_num_heads,
 	make_padding_mask,

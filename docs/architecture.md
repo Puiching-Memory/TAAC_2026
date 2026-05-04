@@ -33,6 +33,7 @@ src/taac2026/
     ├── checkpoints.py      # checkpoint 解析与保存
     ├── experiments/        # 实验包发现与加载
     ├── io/                 # 文件 / JSON 工具
+    ├── platform/           # 本地 uv 与线上 Python Bundle 运行适配
     ├── training/           # 通用训练运行时工具
     └── pcvr/               # 共享 PCVR 运行时
         ├── config.py
@@ -65,7 +66,7 @@ experiments/
 │   │   └── model.py
 │   ├── symbiosis/
 │   │   ├── __init__.py
-│   │   ├── layers.py
+│   │   ├── layers.py       # 兼容 re-export，真实 primitives 在共享 modeling.py
 │   │   └── model.py
 │   ├── ctr_baseline/
 │   ├── deepcontextnet/
@@ -144,19 +145,19 @@ PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 
 | 文件          | 要求                                                                               |
 | ------------- | ---------------------------------------------------------------------------------- |
-| `__init__.py` | 定义 `EXPERIMENT = PCVRExperiment(...)`，并给出默认训练配置、模型类名和运行时 hook |
+| `__init__.py` | 定义 `EXPERIMENT = create_pcvr_experiment(...)`，并给出默认训练配置和模型类名      |
 | `model.py`    | 实现实验包自己的模型类，类名必须与 `model_class_name` 一致                         |
 
-包内可以按需要继续拆出局部模块，例如 `layers.py`；这已经在 `symbiosis` 里使用。
+包内可以按需要继续拆出局部模块；现有 `layers.py` 只保留为兼容 re-export，通用 tokenizer、embedding bank、RMSNorm 和参数分组 mixin 已经集中到 `taac2026.infrastructure.pcvr.modeling`。
 
-`PCVRExperiment` 本身是一个适配器，它持有：
+`create_pcvr_experiment()` 会创建 `PCVRExperiment` 适配器，并默认接上共享训练、预测和运行时 hooks。`PCVRExperiment` 本身持有：
 
 - `train_arg_parser`
 - `train_hooks`
 - `prediction_hooks`
 - `runtime_hooks`
 
-它会在运行时临时切换到实验包目录，导入包内 `model` 模块，再把共享训练 / 评估 / 推理栈拼起来。
+普通模型实验通常不需要手写这些 hook 对象；只有像 Symbiosis 这样需要扩展模型构造或配置校验的实验才通过工厂传入 override。运行时仍会临时切换到实验包目录，导入包内 `model` 模块，再把共享训练 / 评估 / 推理栈拼起来。
 
 ### 维护类实验包
 
@@ -195,6 +196,7 @@ PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 | `data.py`                                 | parquet 读取、Row Group 切分、数据集工具                          |
 | `data_observation.py` / `data_schema.py`  | observed schema 和 schema 解析                                    |
 | `data_pipeline.py`                        | 数据增强和流水线拼装                                              |
+| `modeling.py`                             | `ModelInput`、mask/pooling/attention helpers、共享 tokenizer / embedding / RMSNorm primitives |
 | `protocol.py`                             | `ModelInput`、模型构建协议和 schema -> 构造参数转换               |
 | `training.py`                             | 训练入口拼装                                                      |
 | `train_stack.py`                          | 训练 hooks 和共享训练流程                                         |
@@ -204,11 +206,15 @@ PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 | `experiment_runtime.py`                   | `PCVRExperiment` 的运行时 mixin                                   |
 | `tilelang_ops.py` / `tilelang_kernels.py` | TileLang / Torch 算子适配                                         |
 
+`run.sh` 和推理 Bundle 里的 `infer.py` 现在只做最小 bootstrap：定位 / 解压 `code_package.zip`，设置 `PYTHONPATH`，再把 manifest 读取、依赖安装、实验包默认值和 CLI 分发交给 `taac2026.infrastructure.platform`。本地仓库模式默认走 `uv`，线上 Bundle 模式默认走当前 Python / Conda 环境。
+
 ## NS Groups
 
 非序列特征分组现在主要通过实验包 `__init__.py` 中的 `PCVRNSConfig` 明确声明，而不是依赖一个外置 JSON 文件作为唯一来源。
 
 这层配置会进入训练时生成的 `train_config.json`，之后评估和推理也以 checkpoint 侧车文件为准。
+当前 `train_config.json` 仍保留 flat 配置字段，同时额外写入 `train_config_format`、`train_config_version` 和 `framework_version` 等版本元数据；读取端继续兼容旧的无版本 flat 文件。
+这类 checkpoint 侧契约由 Pydantic 2 模型校验，但对外仍以普通 JSON / dict 形态读写，避免把训练热路径和实验模型代码绑到 Pydantic 对象上。
 
 因此现在更值得记住的是：
 
@@ -269,7 +275,7 @@ PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 - `project/.taac_training_manifest.json`
 - `project/.taac_inference_manifest.json`
 
-训练 Bundle 当前格式号是 `taac2026-training-v2`，推理 Bundle 当前格式号是 `taac2026-inference-v1`。
+训练 Bundle 当前格式号是 `taac2026-training-v2`，推理 Bundle 当前格式号是 `taac2026-inference-v1`。manifest 还包含独立的 `manifest_version`、`bundle_format_version`、`framework.version`、`runtime_env` 和 `compatibility` 字段；训练和推理打包都会先通过共享 Pydantic 验证器检查这些字段再写入 zip。
 
 详见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
 

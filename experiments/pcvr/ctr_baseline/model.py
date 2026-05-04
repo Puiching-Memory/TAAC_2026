@@ -5,9 +5,13 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .layers import DenseTokenProjector, EmbeddingParameterMixin, NonSequentialTokenizer, SequenceTokenizer, configure_rms_norm_runtime as _configure_rms_norm_runtime
 from taac2026.infrastructure.pcvr.modeling import (
+	DenseTokenProjector,
+	EmbeddingParameterMixin,
 	ModelInput,
+	NonSequentialTokenizer,
+	SequenceTokenizer,
+	configure_rms_norm_runtime as _configure_rms_norm_runtime,
 	maybe_gradient_checkpoint,
 	make_padding_mask,
 	masked_last,

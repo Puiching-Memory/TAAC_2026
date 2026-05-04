@@ -50,15 +50,17 @@ code_package.zip
 - 不包含 `uv.lock`、`README.md`、`tests/`、顶层 `run.sh`，也不会把无关实验包一起打进去。
 - 当前实验包契约以包内 `__init__.py` 配置为主；不要假设 bundle 中一定有独立的 `ns_groups.json` 文件。
 
+manifest 是版本化对象。除了旧脚本仍会读取的 `bundle_format`、`bundled_experiment_path`、`entrypoint` 和 `code_package` 外，它还包含 `manifest_version`、`bundle_kind`、`bundle_format_version`、`framework.version`、`runtime_env` 和 `compatibility`。打包端使用 Pydantic 2 校验这个对象，但写入 bundle 的仍是普通 JSON。
+
 ### 运行时行为
 
-上传后的平台入口仍是顶层 `run.sh`。在 Bundle 模式下，它会：
+上传后的平台入口仍是顶层 `run.sh`。Shell 层只负责定位和解压代码包，然后委托给 `taac2026.infrastructure.platform.run_sh`。在 Bundle 模式下，它会：
 
 1. 检测同目录下是否存在 `code_package.zip`
 2. 解压到 `TAAC_BUNDLE_WORKDIR` 指定目录，默认是 `run.sh` 同目录下的 `.taac_bundle/project`
-3. 读取 `project/.taac_training_manifest.json`
-4. 在当前 Python 环境中执行 `pip install .`
-5. 设置 `PYTHONPATH=project/src:project`
+3. 设置 `PYTHONPATH=project/src:project`
+4. 读取 `project/.taac_training_manifest.json`
+5. 在当前 Python 环境中执行 `pip install .`
 6. 调用 `taac2026.application.training.cli`
 
 默认使用 manifest 里记录的实验包路径；如果显式设置了 `TAAC_EXPERIMENT`，它会覆盖 manifest。
@@ -124,13 +126,13 @@ code_package.zip
 
 ### 运行时行为
 
-`infer.py` 是一个自解压入口脚本。它会：
+`infer.py` 是一个自解压入口脚本。脚本只负责缓存目录选择、解压和导入共享平台运行时；manifest 读取、依赖安装和默认实验包注入由 `taac2026.infrastructure.platform.inference_bundle` 处理。它会：
 
 1. 找到同目录下的 `code_package.zip`
 2. 解压到 `TAAC_BUNDLE_WORKDIR` 指定目录；如果没设置，则默认使用 `USER_CACHE_PATH` 下的缓存目录
-3. 读取 `project/.taac_inference_manifest.json`
-4. 在当前 Python 环境中执行 `pip install .`
-5. 设置 `PYTHONPATH=project/src:project`
+3. 设置 `PYTHONPATH=project/src:project`
+4. 读取 `project/.taac_inference_manifest.json`
+5. 在当前 Python 环境中执行 `pip install .`
 6. 调用 `taac2026.application.evaluation.infer`
 
 ### 推理时常用环境变量
@@ -192,13 +194,20 @@ unzip -p outputs/bundles/baseline_inference/code_package.zip project/.taac_infer
 
 重点检查：
 
+- `manifest_version` 是否为当前支持的 manifest 版本
+- `bundle_kind` 是否为 `training` 或 `inference`
 - `bundle_format` 是否分别为 `taac2026-training-v2` 和 `taac2026-inference-v1`
+- `bundle_format_version` 是否与格式号匹配
+- `framework.version` 是否记录了生成 bundle 的框架版本
 - `bundled_experiment_path` 是否指向你期望的实验包
 - `entrypoint` 是否分别为 `run.sh` 和 `infer.py`
+- `runtime_env` 是否列出了平台需要提供的环境变量
+- `compatibility.requires_uv_online` 是否为 `false`
 
 ## 依赖原则
 
 - Bundle 运行时默认复用当前 Python / Conda 环境，不在线执行 `uv sync`
+- Bundle 的平台适配逻辑集中在 `src/taac2026/infrastructure/platform`，训练和推理入口共享同一套 pip / manifest / experiment 处理契约
 - 核心 CUDA / PyTorch / TorchRec / FBGEMM 栈应尽量复用平台预装环境
 - 只有缺少纯 Python 依赖时，才考虑让 bundle 通过 `pip install .` 补齐
 - 如果必须附带额外 extras，再显式设置 `TAAC_BUNDLE_PIP_EXTRAS`

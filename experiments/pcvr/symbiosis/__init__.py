@@ -21,34 +21,18 @@ from taac2026.infrastructure.pcvr.config import (
     PCVRSparseOptimizerConfig,
     PCVRTrainConfig,
 )
-from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
+from taac2026.infrastructure.pcvr.factory import create_pcvr_experiment
 from taac2026.infrastructure.pcvr.prediction_stack import (
     PCVRPredictionContext,
     PCVRPredictionDataBundle,
-    PCVRPredictionHooks,
-    default_build_prediction_data,
-    default_prepare_prediction_runner,
-    default_run_prediction_loop,
 )
 from taac2026.infrastructure.pcvr.protocol import build_pcvr_model, load_ns_groups
 from taac2026.infrastructure.pcvr.runtime_stack import (
-    PCVRRuntimeHooks,
-    default_build_evaluation_data_diagnostics,
-    default_load_runtime_schema,
     default_load_train_config,
-    default_resolve_evaluation_checkpoint,
-    default_resolve_inference_checkpoint,
-    default_write_observed_schema_report,
-    default_write_train_split_observed_schema_reports,
 )
 from taac2026.infrastructure.pcvr.train_stack import (
     PCVRTrainContext,
     PCVRTrainDataBundle,
-    PCVRTrainHooks,
-    default_build_train_data,
-    default_build_train_summary,
-    default_build_train_trainer,
-    default_run_training,
 )
 from taac2026.infrastructure.pcvr.training import (
     apply_pcvr_train_arg_env_overrides,
@@ -306,31 +290,6 @@ def load_symbiosis_train_config(experiment: Any, checkpoint_dir: Path) -> dict[s
     return config
 
 
-TRAIN_HOOKS = PCVRTrainHooks(
-    build_data=default_build_train_data,
-    build_model=build_symbiosis_train_model,
-    build_trainer=default_build_train_trainer,
-    run_training=default_run_training,
-    build_summary=default_build_train_summary,
-)
-
-PREDICTION_HOOKS = PCVRPredictionHooks(
-    build_data=default_build_prediction_data,
-    build_model=build_symbiosis_prediction_model,
-    prepare_predictor=default_prepare_prediction_runner,
-    run_loop=default_run_prediction_loop,
-)
-
-RUNTIME_HOOKS = PCVRRuntimeHooks(
-    resolve_evaluation_checkpoint=default_resolve_evaluation_checkpoint,
-    resolve_inference_checkpoint=default_resolve_inference_checkpoint,
-    load_train_config=load_symbiosis_train_config,
-    load_runtime_schema=default_load_runtime_schema,
-    build_evaluation_data_diagnostics=default_build_evaluation_data_diagnostics,
-    write_observed_schema_report=default_write_observed_schema_report,
-    write_train_split_observed_schema_reports=default_write_train_split_observed_schema_reports,
-)
-
 NS_GROUP_METADATA = {
     "_purpose": "Shared PCVR non-sequential feature grouping for this experiment package. The concrete fid lists match the official TAAC PCVR schema and are converted to schema-entry indices at runtime.",
     "_format": "Top-level keys: user_ns_groups and item_ns_groups. Each group maps a semantic group name to a list of feature ids, using the numeric suffix from user_int_feats_{fid} or item_int_feats_{fid}.",
@@ -430,16 +389,19 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     ),
 )
 
-EXPERIMENT = PCVRExperiment(
+EXPERIMENT = create_pcvr_experiment(
     name="pcvr_symbiosis",
     package_dir=Path(__file__).resolve().parent,
     model_class_name="PCVRSymbiosis",
     train_defaults=TRAIN_DEFAULTS,
     train_arg_parser=parse_symbiosis_train_args,
-    train_hooks=TRAIN_HOOKS,
-    prediction_hooks=PREDICTION_HOOKS,
-    runtime_hooks=RUNTIME_HOOKS,
+    train_hook_overrides={"build_model": build_symbiosis_train_model},
+    prediction_hook_overrides={"build_model": build_symbiosis_prediction_model},
+    runtime_hook_overrides={"load_train_config": load_symbiosis_train_config},
 )
+TRAIN_HOOKS = EXPERIMENT.train_hooks
+PREDICTION_HOOKS = EXPERIMENT.prediction_hooks
+RUNTIME_HOOKS = EXPERIMENT.runtime_hooks
 
 __all__ = [
     "EXPERIMENT",

@@ -18,6 +18,7 @@ from taac2026.infrastructure.checkpoints import (
     save_checkpoint_state_dict,
     write_checkpoint_sidecars,
 )
+from taac2026.infrastructure.pcvr.config_sidecar import build_pcvr_train_config_sidecar
 from taac2026.infrastructure.training.muon import Muon
 
 
@@ -96,7 +97,7 @@ class PCVRTrainerSupportMixin:
         write_checkpoint_sidecars(
             checkpoint_dir,
             schema_path=self.schema_path,
-            train_config=self.train_config,
+            train_config=build_pcvr_train_config_sidecar(self.train_config),
         )
 
     def _save_step_checkpoint(

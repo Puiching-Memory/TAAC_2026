@@ -18,19 +18,15 @@ experiments/pcvr/<experiment_name>/
 
 ## __init__.py
 
-当前 `PCVRExperiment` 的真实构造参数不止 `name` 和 `train_defaults`。最稳妥的方式是从一个现有实验包复制，再改成你的模型和默认配置。
+当前推荐通过 `create_pcvr_experiment()` 创建 PCVR 实验。普通模型实验只需要声明实验名、包目录、模型类名和默认训练配置；默认训练、预测和运行时 hooks 由工厂提供。
 
-一个最小可工作的骨架通常至少包含：
+一个最小可工作的骨架通常包含：
 
 ```python
 from pathlib import Path
 
 from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
-from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
-from taac2026.infrastructure.pcvr.prediction_stack import PREDICTION_HOOKS  # 示例占位，通常复用现有包的默认 hooks
-from taac2026.infrastructure.pcvr.runtime_stack import RUNTIME_HOOKS        # 示例占位
-from taac2026.infrastructure.pcvr.train_stack import TRAIN_HOOKS            # 示例占位
-from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args
+from taac2026.infrastructure.pcvr.factory import create_pcvr_experiment
 
 
 TRAIN_DEFAULTS = PCVRTrainConfig(
@@ -49,16 +45,16 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     ),
 )
 
-EXPERIMENT = PCVRExperiment(
+EXPERIMENT = create_pcvr_experiment(
     name="pcvr_my_experiment",
     package_dir=Path(__file__).resolve().parent,
     model_class_name="MyModel",
     train_defaults=TRAIN_DEFAULTS,
-    train_arg_parser=parse_pcvr_train_args,
-    train_hooks=TRAIN_HOOKS,
-    prediction_hooks=PREDICTION_HOOKS,
-    runtime_hooks=RUNTIME_HOOKS,
 )
+
+TRAIN_HOOKS = EXPERIMENT.train_hooks
+PREDICTION_HOOKS = EXPERIMENT.prediction_hooks
+RUNTIME_HOOKS = EXPERIMENT.runtime_hooks
 ```
 
 关键字段：
@@ -67,25 +63,35 @@ EXPERIMENT = PCVRExperiment(
 - `package_dir` -- 推荐使用 `Path(__file__).resolve().parent`
 - `model_class_name` -- 必须与 `model.py` 中的类名完全一致
 - `train_defaults` -- 当前默认训练配置，包括数据、优化器、runtime 和 NS 分组
-- `train_arg_parser` / `train_hooks` / `prediction_hooks` / `runtime_hooks` -- 通常先复用现有实验包的默认实现
+- `TRAIN_HOOKS` / `PREDICTION_HOOKS` / `RUNTIME_HOOKS` -- 兼容导出，普通实验包通常直接取自 `EXPERIMENT`
 
-如果你不是在做新的运行时扩展，而只是接一个新模型，优先复用已有 hook，而不是重新造一套训练 / 推理流程。
+如果你不是在做新的运行时扩展，而只是接一个新模型，不需要手写 hook 对象。确实需要覆盖行为时，只传差异项：
+
+```python
+EXPERIMENT = create_pcvr_experiment(
+    name="pcvr_my_experiment",
+    package_dir=Path(__file__).resolve().parent,
+    model_class_name="MyModel",
+    train_defaults=TRAIN_DEFAULTS,
+    train_hook_overrides={"build_model": build_my_model},
+)
+```
 
 ## model.py
 
-`model.py` 只负责当前实验自己的模型实现。建议复用共享建模层里的基础组件。
+`model.py` 只负责当前实验自己的模型实现。建议复用共享建模层里的基础组件和通用 PCVR primitives。
 
 ```python
 import torch
 import torch.nn as nn
 from taac2026.infrastructure.pcvr.modeling import (
     EmbeddingParameterMixin,
-    FeatureEmbeddingBank,
+    ModelInput,
     NonSequentialTokenizer,
     SequenceTokenizer,
-    DenseTokenProjector,
+    masked_mean,
+    safe_key_padding_mask,
 )
-from taac2026.infrastructure.pcvr.protocol import ModelInput
 
 
 class MyModel(EmbeddingParameterMixin, nn.Module):
@@ -122,11 +128,11 @@ class MyModel(EmbeddingParameterMixin, nn.Module):
         ...
 ```
 
-    如果模型需要包内私有组件，可以像 `symbiosis` 一样把复杂层拆到同目录下的 `layers.py`。
+共享 `modeling.py` 当前提供 `FeatureEmbeddingBank`、`NonSequentialTokenizer`、`DenseTokenProjector`、`SequenceTokenizer`、`RMSNorm`、`configure_rms_norm_runtime` 和 `EmbeddingParameterMixin`。如果模型确实需要论文特有组件，仍然可以把那些私有块拆到同目录下的局部模块。
 
 ## NS 分组配置
 
-    当前仓库使用 `PCVRNSConfig` 在 `__init__.py` 中显式声明 NS 分组：
+当前仓库使用 `PCVRNSConfig` 在 `__init__.py` 中显式声明 NS 分组：
 
 ```python
 ns=PCVRNSConfig(

@@ -15,6 +15,7 @@ from tests.unit.infrastructure.pcvr._pcvr_experiment_matrix import discover_nonb
 
 
 NON_BASELINE_EXPERIMENTS = discover_nonbaseline_pcvr_experiment_paths()
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _code_package_names(code_package_path: Path) -> set[str]:
@@ -26,6 +27,15 @@ def _code_package_manifest(code_package_path: Path) -> dict[str, object]:
     with zipfile.ZipFile(code_package_path) as code_archive:
         payload = code_archive.read("project/.taac_inference_manifest.json")
     return loads(payload)
+
+
+def _write_platform_runtime(code_archive: zipfile.ZipFile) -> None:
+    runtime_files = [
+        Path("src/taac2026/infrastructure/__init__.py"),
+        *sorted(Path("src/taac2026/infrastructure/platform").glob("*.py")),
+    ]
+    for relative_path in runtime_files:
+        code_archive.write(REPO_ROOT / relative_path, f"project/{relative_path.as_posix()}")
 
 
 def _write_minimal_runtime_package(code_package_path: Path) -> None:
@@ -44,6 +54,7 @@ def _write_minimal_runtime_package(code_package_path: Path) -> None:
             "project/src/taac2026/application/evaluation/__init__.py",
         ):
             code_archive.writestr(package_init, "")
+        _write_platform_runtime(code_archive)
         code_archive.writestr(
             "project/src/taac2026/application/evaluation/infer.py",
             "from __future__ import annotations\n"
@@ -99,11 +110,17 @@ def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None
     assert "taac2026.application.evaluation.infer" in infer_script
 
     manifest = _code_package_manifest(result.code_package_path)
+    assert manifest["manifest_version"] == 1
+    assert manifest["bundle_kind"] == "inference"
     assert manifest["bundle_format"] == "taac2026-inference-v1"
+    assert manifest["bundle_format_version"] == 1
+    assert manifest["framework"]["name"] == "taac2026"
+    assert manifest["framework"]["version"]
     assert manifest["bundled_experiment_path"] == "experiments/pcvr/baseline"
     assert manifest["entrypoint"] == "infer.py"
     assert manifest["code_package"] == "code_package.zip"
     assert manifest["runtime_env"]["pip_extras"].startswith("TAAC_BUNDLE_PIP_EXTRAS")
+    assert manifest["compatibility"]["requires_uv_online"] is False
 
     names = _code_package_names(result.code_package_path)
     assert "project/.taac_inference_manifest.json" in names

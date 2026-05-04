@@ -17,6 +17,12 @@ from taac2026.infrastructure.checkpoints import (
     write_checkpoint_sidecars,
 )
 from taac2026.infrastructure.experiments.loader import load_experiment_package
+from taac2026.infrastructure.pcvr.config import PCVRTrainConfig
+from taac2026.infrastructure.pcvr.config_sidecar import (
+    PCVR_TRAIN_CONFIG_FORMAT,
+    PCVR_TRAIN_CONFIG_VERSION,
+    build_pcvr_train_config_sidecar,
+)
 from taac2026.infrastructure.pcvr.protocol import (
     batch_to_model_input,
     build_feature_specs,
@@ -26,7 +32,8 @@ from taac2026.infrastructure.pcvr.protocol import (
     parse_seq_max_lens,
     resolve_schema_path,
 )
-from taac2026.infrastructure.io.json_utils import loads
+from taac2026.infrastructure.pcvr.runtime_stack import default_load_train_config
+from taac2026.infrastructure.io.json_utils import dumps, loads
 from tests.unit.infrastructure.pcvr._pcvr_experiment_matrix import ExperimentCase, REPO_ROOT, discover_pcvr_experiment_cases, load_model_module
 
 
@@ -615,6 +622,35 @@ def test_write_checkpoint_sidecars_cases(
         assert payload["ns_grouping_strategy"] == "explicit"
         assert payload["user_ns_groups"] == {"u": [10, 20]}
         assert payload["item_ns_groups"] == {"i": [7]}
+
+
+def test_build_pcvr_train_config_sidecar_adds_version_metadata() -> None:
+    flat_config = PCVRTrainConfig().to_flat_dict()
+
+    payload = build_pcvr_train_config_sidecar(flat_config)
+
+    assert payload["train_config_format"] == PCVR_TRAIN_CONFIG_FORMAT
+    assert payload["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
+    assert payload["framework_name"] == "taac2026"
+    assert payload["framework_version"]
+    assert payload["d_model"] == flat_config["d_model"]
+    assert payload["user_ns_groups"] == flat_config["user_ns_groups"]
+
+
+@pytest.mark.parametrize("versioned", [False, True])
+def test_default_load_train_config_accepts_legacy_and_versioned_payloads(tmp_path: Path, versioned: bool) -> None:
+    checkpoint_dir = tmp_path / "global_step1"
+    checkpoint_dir.mkdir()
+    flat_config = PCVRTrainConfig().to_flat_dict()
+    payload = build_pcvr_train_config_sidecar(flat_config) if versioned else flat_config
+    (checkpoint_dir / "train_config.json").write_text(dumps(payload), encoding="utf-8")
+
+    loaded = default_load_train_config(None, checkpoint_dir)
+
+    assert loaded["d_model"] == flat_config["d_model"]
+    assert loaded["ns_grouping_strategy"] == flat_config["ns_grouping_strategy"]
+    if versioned:
+        assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
 
 
 @pytest.mark.parametrize("identifier_kind", ["path", "path_object"])

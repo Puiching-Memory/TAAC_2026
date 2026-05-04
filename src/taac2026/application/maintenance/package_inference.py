@@ -12,6 +12,7 @@ from taac2026.infrastructure.bundles.common import (
     resolve_experiment_path,
     write_workspace_code_package,
 )
+from taac2026.infrastructure.bundles.manifest import build_bundle_manifest
 from taac2026.infrastructure.io.files import repo_root
 from taac2026.infrastructure.io.json_utils import dumps
 
@@ -21,17 +22,14 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shlex
 import shutil
-import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
-import orjson
-
-
-_TENCENT_PYPI_INDEX_URL = "https://mirrors.cloud.tencent.com/pypi/simple/"
+# Delegated to taac2026.infrastructure.platform.inference_bundle:
+# TAAC_INSTALL_PROJECT_DEPS, TAAC_BUNDLE_PIP_EXTRAS, TAAC_PIP_EXTRAS, and
+# taac2026.application.evaluation.infer.
 
 
 def _default_bundle_workdir(script_dir: Path, code_package: Path) -> Path:
@@ -62,48 +60,6 @@ def _extract_code_package(package_path: Path, workdir: Path) -> Path:
     return project_dir
 
 
-def _read_manifest(manifest_path: Path) -> dict[str, object]:
-    if not manifest_path.exists():
-        return {}
-    with manifest_path.open("rb") as handle:
-        return orjson.loads(handle.read())
-
-
-def _split_env_words(name: str) -> list[str]:
-    value = os.environ.get(name, "")
-    if not value:
-        return []
-    return shlex.split(value)
-
-
-def _should_install_project_pip_dependencies() -> bool:
-    if os.environ.get("TAAC_SKIP_PIP_INSTALL") == "1":
-        return False
-    install_project_deps = os.environ.get("TAAC_INSTALL_PROJECT_DEPS")
-    if install_project_deps is not None:
-        return install_project_deps != "0"
-    return True
-
-
-def _install_project_pip_dependencies(project_dir: Path) -> None:
-    if not _should_install_project_pip_dependencies():
-        return
-    extras = _split_env_words("TAAC_BUNDLE_PIP_EXTRAS")
-    target = "."
-    if extras:
-        target = f".[{','.join(extras)}]"
-
-    command = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check"]
-    index_url = os.environ.get("TAAC_PIP_INDEX_URL", _TENCENT_PYPI_INDEX_URL)
-    if index_url:
-        command.extend(["-i", index_url])
-    command.extend(_split_env_words("TAAC_PIP_EXTRA_ARGS"))
-    command.append(target)
-
-    print("Installing TAAC project dependencies from pyproject.toml", file=sys.stderr)
-    subprocess.check_call(command, cwd=project_dir)
-
-
 def main() -> None:
     script_dir = Path(__file__).resolve().parent
     code_package = Path(os.environ.get("TAAC_CODE_PACKAGE", str(script_dir / "code_package.zip"))).expanduser()
@@ -117,19 +73,12 @@ def main() -> None:
         raise FileNotFoundError(f"code_package.zip not found: {code_package}")
 
     project_dir = _extract_code_package(code_package, workdir)
-    manifest = _read_manifest(project_dir / ".taac_inference_manifest.json")
-    _install_project_pip_dependencies(project_dir)
-    default_experiment = manifest.get("bundled_experiment_path")
-    if isinstance(default_experiment, str) and default_experiment and "TAAC_EXPERIMENT" not in os.environ:
-        os.environ["TAAC_EXPERIMENT"] = default_experiment
-
     sys.path.insert(0, str(project_dir))
     sys.path.insert(0, str(project_dir / "src"))
-    os.chdir(project_dir)
 
-    from taac2026.application.evaluation.infer import main as packaged_main
+    from taac2026.infrastructure.platform.inference_bundle import run_inference_bundle
 
-    packaged_main()
+    run_inference_bundle(project_dir)
 
 
 if __name__ == "__main__":
@@ -189,19 +138,7 @@ def build_inference_bundle(
         names = ", ".join(path.name for path in existing_targets)
         raise FileExistsError(f"inference bundle file(s) already exist: {names}")
 
-    manifest: dict[str, object] = {
-        "bundle_format": "taac2026-inference-v1",
-        "bundled_experiment_path": str(experiment_path.relative_to(workspace_root)),
-        "entrypoint": "infer.py",
-        "code_package": "code_package.zip",
-        "runtime_env": {
-            "model_path": "MODEL_OUTPUT_PATH",
-            "dataset_path": "EVAL_DATA_PATH",
-            "result_path": "EVAL_RESULT_PATH",
-            "schema_path": "TAAC_SCHEMA_PATH",
-            "pip_extras": "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)",
-        },
-    }
+    manifest = build_bundle_manifest(kind="inference", experiment_path=experiment_path, root=workspace_root)
     if force:
         for target in (infer_script_path, code_package_path):
             if target.exists():

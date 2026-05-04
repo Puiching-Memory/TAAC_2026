@@ -7,9 +7,14 @@ import math
 import torch
 import torch.nn as nn
 
-from .layers import DenseTokenProjector, EmbeddingParameterMixin, NonSequentialTokenizer, RMSNorm, SequenceTokenizer, configure_rms_norm_runtime as _configure_rms_norm_runtime
 from taac2026.infrastructure.pcvr.modeling import (
+    DenseTokenProjector,
+    EmbeddingParameterMixin,
     ModelInput,
+    NonSequentialTokenizer,
+    RMSNorm,
+    SequenceTokenizer,
+    configure_rms_norm_runtime as _configure_rms_norm_runtime,
     maybe_gradient_checkpoint,
     causal_valid_attention_mask,
     choose_num_heads,

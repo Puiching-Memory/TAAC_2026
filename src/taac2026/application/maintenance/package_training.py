@@ -13,6 +13,7 @@ from taac2026.infrastructure.bundles.common import (
     resolve_experiment_path,
     write_workspace_code_package,
 )
+from taac2026.infrastructure.bundles.manifest import build_bundle_manifest
 from taac2026.infrastructure.io.files import repo_root
 from taac2026.infrastructure.io.json_utils import dumps
 
@@ -70,19 +71,7 @@ def build_training_bundle(
         names = ", ".join(path.name for path in existing_targets)
         raise FileExistsError(f"training bundle file(s) already exist: {names}")
 
-    manifest: dict[str, object] = {
-        "bundle_format": "taac2026-training-v2",
-        "bundled_experiment_path": str(experiment_path.relative_to(workspace_root)),
-        "entrypoint": "run.sh",
-        "code_package": "code_package.zip",
-        "runtime_env": {
-            "dataset_path": "TRAIN_DATA_PATH",
-            "schema_path": "TAAC_SCHEMA_PATH",
-            "checkpoint_path": "TRAIN_CKPT_PATH",
-            "cuda_profile": "TAAC_CUDA_PROFILE",
-            "pip_extras": "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)",
-        },
-    }
+    manifest = build_bundle_manifest(kind="training", experiment_path=experiment_path, root=workspace_root)
     if force:
         for target in (run_script_path, code_package_path):
             if target.exists():

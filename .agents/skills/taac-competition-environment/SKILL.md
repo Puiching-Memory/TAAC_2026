@@ -27,6 +27,7 @@ The same top-level `run.sh` supports both modes:
 - If `code_package.zip` exists beside `run.sh`, bundle mode is enabled and the default runner is `python`.
 - If running from the repository root without `code_package.zip`, local mode is enabled and the default runner is `uv`.
 - `TAAC_RUNNER=python|uv` can override the default when debugging.
+- `run.sh` is a thin bootstrapper; command parsing, manifest defaults, pip install behavior, and runner dispatch live in `taac2026.infrastructure.platform.run_sh`.
 
 Important current behavior:
 
@@ -133,6 +134,8 @@ uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir
 - `infer.py`: self-extracting inference entrypoint.
 - `code_package.zip`: minimal runtime source tree with `project/.taac_inference_manifest.json`.
 
+The generated `infer.py` imports `taac2026.infrastructure.platform.inference_bundle` from the extracted code package, so keep platform runtime modules included in every code package.
+
 ## Official Baseline Snapshots
 
 The competition reference snapshots may appear as top-level source drops:
@@ -229,11 +232,15 @@ Then it invokes:
 python -m taac2026.application.training.cli --experiment <manifest experiment> ...
 ```
 
+The Python module used by `run.sh` is `taac2026.infrastructure.platform.run_sh`; it owns manifest reading, `TAAC_BUNDLE_PIP_EXTRAS`, `TAAC_SKIP_PIP_INSTALL`, and the `train` / `val` / `eval` / `infer` argument mapping.
+
 In inference bundle mode, `infer.py` performs the same `project/` extraction and then invokes:
 
 ```bash
 python -m taac2026.application.evaluation.infer
 ```
+
+The generated script delegates manifest reading, pip installation, default experiment selection, and final import setup to `taac2026.infrastructure.platform.inference_bundle`.
 
 ## Competition Workflow
 

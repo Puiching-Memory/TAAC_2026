@@ -54,9 +54,9 @@ services:
     profiles: [train]
     environment:
       <<: *gpu-env
-      TAAC_DATASET_PATH: ${TAAC_DATASET_PATH:-}
+      TRAIN_DATA_PATH: ${TRAIN_DATA_PATH:-}
       TAAC_SCHEMA_PATH: ${TAAC_SCHEMA_PATH:-}
-      TAAC_EXPERIMENT: config/${EXPERIMENT:-baseline}
+      TAAC_EXPERIMENT: experiments/pcvr/${EXPERIMENT:-baseline}
       EXPERIMENT: ${EXPERIMENT:-baseline}
       TRAIN_ARGS: ${TRAIN_ARGS:-}
     command:
@@ -71,9 +71,9 @@ services:
     profiles: [evaluate]
     environment:
       <<: *gpu-env
-      TAAC_DATASET_PATH: ${TAAC_DATASET_PATH:-}
+      TRAIN_DATA_PATH: ${TRAIN_DATA_PATH:-}
       TAAC_SCHEMA_PATH: ${TAAC_SCHEMA_PATH:-}
-      TAAC_EXPERIMENT: config/${EXPERIMENT:-baseline}
+      TAAC_EXPERIMENT: experiments/pcvr/${EXPERIMENT:-baseline}
       EXPERIMENT: ${EXPERIMENT:-baseline}
       EVAL_ARGS: ${EVAL_ARGS:-}
     command:
