@@ -1,6 +1,6 @@
 ---
 name: taac-competition-environment
-description: 'Use when setting up, documenting, debugging, or reviewing the TAAC 2026 competition environment flow: local uv development, CUDA/CPU dependency profiles, run.sh commands, two-file online training bundles, code_package.zip, and online Conda+pip/Python execution without uv.'
+description: 'Use when setting up, documenting, debugging, or reviewing the current TAAC 2026 environment flow: local uv development, CUDA dependency profile cuda126, run.sh train/val/eval/infer behavior, taac-package-train / taac-package-infer, Bundle layouts under experiments/*, and online Conda+pip/Python execution without uv.'
 argument-hint: 'local setup, package, online run, or env debug'
 user-invocable: true
 ---
@@ -11,8 +11,8 @@ user-invocable: true
 
 - Set up or debug the local TAAC development environment.
 - Decide whether a command should run through `uv` or plain Python.
-- Build, inspect, or explain online training bundles.
-- Prepare online platform runs where the platform executes only `run.sh`.
+- Build, inspect, or explain online training or inference bundles.
+- Prepare online platform runs where the platform executes `run.sh` or `infer.py`.
 - Review docs or scripts that mention package shape, dependency installation, Conda, pip, CUDA profiles, or competition workflow.
 
 ## Environment Model
@@ -27,6 +27,13 @@ The same top-level `run.sh` supports both modes:
 - If `code_package.zip` exists beside `run.sh`, bundle mode is enabled and the default runner is `python`.
 - If running from the repository root without `code_package.zip`, local mode is enabled and the default runner is `uv`.
 - `TAAC_RUNNER=python|uv` can override the default when debugging.
+
+Important current behavior:
+
+- `run.sh` only supports `train`, `val`, `eval`, and `infer`.
+- `run.sh` no longer supports `package`, `package-infer`, or `test`.
+- Packaging is handled by `taac-package-train` and `taac-package-infer`.
+- Experiment paths live under `experiments/...`, not `config/...`.
 
 ## Local Development With uv
 
@@ -51,18 +58,19 @@ uv sync --locked --extra cuda126
 Use the top-level entrypoint instead of calling console scripts directly:
 
 ```bash
-bash run.sh train --experiment config/baseline \
+bash run.sh train --experiment experiments/pcvr/baseline \
     --dataset-path /path/to/parquet_or_dir \
     --schema-path /path/to/schema.json
 
 uv run pytest tests/unit -q
-bash run.sh package --experiment config/interformer --output-dir /tmp/interformer-online --force
+uv run taac-package-train --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-training
+uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-inference
 ```
 
 Local defaults:
 
-- All local commands use CUDA profile `cuda126`; setting `TAAC_CUDA_PROFILE` or `--cuda-profile` to any other value is treated as an error.
-- Training, evaluation, inference, and packaging commands all reuse the same `cuda126` environment; pytest, hypothesis, benchmark tooling, coverage helpers, Ruff, and Zensical live in the `dev` extra and should be installed with `uv sync --locked --extra dev --extra cuda126` when needed.
+- All local `run.sh` commands use CUDA profile `cuda126`; setting `TAAC_CUDA_PROFILE` or `--cuda-profile` to any other value is treated as an error.
+- Training, evaluation, inference, and local CLI tooling all reuse the same `cuda126` environment; pytest, coverage, Ruff, benchmark tooling, and Zensical live in the `dev` extra and should be installed with `uv sync --locked --extra dev --extra cuda126` when needed.
 - `TAAC_SKIP_UV_SYNC=1` skips automatic `uv sync` when the environment is already prepared.
 
 ## Dependency Profiles
@@ -76,9 +84,11 @@ Important extras:
 
 Do not point `uv` at an alternate package index unless you are intentionally updating dependency resolution. The lockfile is expected to resolve against the indexes declared in `pyproject.toml`.
 
-## Online Bundle Shape
+## Online Bundle Shapes
 
-The online platform is expected to recognize and execute only top-level `run.sh`. The upload directory must contain exactly the runnable entry script and code package:
+### Training Bundle
+
+The training upload directory contains exactly:
 
 ```text
 <training_bundle>/
@@ -89,17 +99,39 @@ The online platform is expected to recognize and execute only top-level `run.sh`
 Build it locally with:
 
 ```bash
-bash run.sh package --experiment config/baseline --output-dir outputs/training_bundles/baseline_training_bundle --force
-bash run.sh package --experiment config/interformer --output-dir outputs/training_bundles/interformer_training_bundle --force
-bash run.sh package --experiment config/onetrans --output-dir outputs/training_bundles/onetrans_training_bundle --force
+uv run taac-package-train --experiment experiments/pcvr/baseline --output-dir outputs/training_bundles/baseline_training_bundle
+uv run taac-package-train --experiment experiments/pcvr/interformer --output-dir outputs/training_bundles/interformer_training_bundle
+uv run taac-package-train --experiment experiments/pcvr/onetrans --output-dir outputs/training_bundles/onetrans_training_bundle
 ```
 
-The package command calls `taac-package-train`, which writes:
+`taac-package-train` writes:
 
 - `run.sh`: copied from the repository root and marked executable.
 - `code_package.zip`: minimal runtime source tree.
 
-The zip contains `project/.taac_training_manifest.json`, `pyproject.toml`, `src/taac2026`, and only the selected experiment package under `config/<experiment>`. It must not include tests, docs, unrelated experiment packages, or local provenance files such as `uv.lock` and `README.md`.
+The zip contains `project/.taac_training_manifest.json`, `project/pyproject.toml`, `project/src/taac2026`, and only the selected experiment package under `project/experiments/<group>/<experiment>`. It must not include tests, docs, unrelated experiment packages, or local provenance files such as `uv.lock` and `README.md`.
+
+### Inference Bundle
+
+The inference upload directory contains exactly:
+
+```text
+<inference_bundle>/
+├── infer.py
+└── code_package.zip
+```
+
+Build it locally with:
+
+```bash
+uv run taac-package-infer --experiment experiments/pcvr/baseline --output-dir outputs/inference_bundles/baseline_inference_bundle
+uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir outputs/inference_bundles/interformer_inference_bundle
+```
+
+`taac-package-infer` writes:
+
+- `infer.py`: self-extracting inference entrypoint.
+- `code_package.zip`: minimal runtime source tree with `project/.taac_inference_manifest.json`.
 
 ## Official Baseline Snapshots
 
@@ -108,11 +140,11 @@ The competition reference snapshots may appear as top-level source drops:
 - self-contained training baseline with `run.sh`, a training entrypoint, a trainer, utilities, dataset code, model code, and `ns_groups.json`.
 - self-contained final scoring baseline with `infer.py`, dataset code, and model code.
 
-Treat these sources as disposable references. Extract the contracts, update repository docs/skills without naming source-drop paths, and delete the source drops when finished. Do not include source drops in generated bundles; build from `config/<experiment>/` with the packaging CLIs instead.
+Treat these sources as disposable references. Extract the contracts, update repository docs/skills without naming source-drop paths, and delete the source drops when finished. Do not include source drops in generated bundles; build from `experiments/<group>/<experiment>` with the packaging CLIs instead.
 
 The official training snapshot reads `TRAIN_DATA_PATH`, `TRAIN_CKPT_PATH`, `TRAIN_LOG_PATH`, and `TRAIN_TF_EVENTS_PATH`. The official scoring snapshot reads `MODEL_OUTPUT_PATH`, `EVAL_DATA_PATH`, and `EVAL_RESULT_PATH`, then writes `predictions.json` under `EVAL_RESULT_PATH` with the shape `{"predictions": {user_id: probability}}`.
 
-The important portable contract between training and scoring is the checkpoint directory. It must contain `model.safetensors`, `schema.json`, `train_config.json`, and `ns_groups.json` when grouping was enabled. Evaluation rebuilds the model from these sidecars and loads the state dict strictly, so missing or stale sidecars usually cause shape mismatches rather than a recoverable warning.
+The important portable contract between training and scoring is the checkpoint directory. In current repository code, evaluation and inference rebuild the model primarily from `model.safetensors`, `schema.json`, and `train_config.json`; do not assume a package-local `ns_groups.json` file is part of the current workspace contract.
 
 ## Online Conda + pip / Python Runtime
 
@@ -145,6 +177,8 @@ Install the CUDA PyTorch stack only through the platform-approved channel. Avoid
 
 ## Online Run Procedure
 
+### Training Bundle
+
 After uploading `run.sh` and `code_package.zip` to the same directory, configure paths and run the script:
 
 ```bash
@@ -153,6 +187,18 @@ export TAAC_SCHEMA_PATH=/path/to/schema.json
 export TRAIN_CKPT_PATH=/path/to/output
 export TAAC_RUNNER=python
 bash run.sh --compile --amp --amp-dtype bfloat16
+```
+
+### Inference Bundle
+
+After uploading `infer.py` and `code_package.zip` to the same directory, configure paths and run the script:
+
+```bash
+export EVAL_DATA_PATH=/path/to/eval.parquet_or_dir
+export EVAL_RESULT_PATH=/path/to/result_dir
+export MODEL_OUTPUT_PATH=/path/to/model.safetensors
+export TAAC_SCHEMA_PATH=/path/to/schema.json
+python infer.py
 ```
 
 Important runtime variables:
@@ -167,8 +213,11 @@ Important runtime variables:
 - `TAAC_BUNDLE_PIP_EXTRAS`: optional extras to install in bundle mode; default is empty so packaged train/infer skip `dev`.
 - `TAAC_PYTHON`: explicit Python interpreter, often the active Conda interpreter.
 - `TAAC_RUNNER=python`: force online no-uv execution.
+- `EVAL_DATA_PATH`: inference dataset path.
+- `EVAL_RESULT_PATH`: inference output directory.
+- `MODEL_OUTPUT_PATH`: checkpoint path used by `infer.py`.
 
-In bundle mode, `run.sh` extracts the zip to `.taac_bundle/project`, sets:
+In training bundle mode, `run.sh` extracts the zip to `.taac_bundle/project`, sets:
 
 ```bash
 PYTHONPATH="<bundle-workdir>/project/src:<bundle-workdir>/project:${PYTHONPATH}"
@@ -180,19 +229,25 @@ Then it invokes:
 python -m taac2026.application.training.cli --experiment <manifest experiment> ...
 ```
 
+In inference bundle mode, `infer.py` performs the same `project/` extraction and then invokes:
+
+```bash
+python -m taac2026.application.evaluation.infer
+```
+
 ## Competition Workflow
 
 Use this lifecycle for competition work:
 
 1. Develop locally with `uv sync --locked --extra cuda126`.
 2. Install local dev tooling with `uv sync --locked --extra dev --extra cuda126` when you need pytest, Ruff, or docs preview.
-3. Add or modify an experiment package under `config/<name>`.
+3. Add or modify an experiment package under `experiments/<group>/<name>`.
 4. Run focused unit tests locally with `uv run pytest tests/unit -q`.
-5. For training experiments, keep the same `cuda126` environment and train through `bash run.sh train --experiment config/<name>`.
-6. Build the online bundle with `bash run.sh package --experiment config/<name> --force`.
-7. Inspect `code_package.zip` when changing packaging logic; confirm it contains the selected experiment package and required assets such as `ns_groups.json`.
-8. Upload only `run.sh` and `code_package.zip` to the online platform.
-9. Run online in the platform Conda/Python environment with `TAAC_RUNNER=python` and dataset/output environment variables.
+5. For training experiments, keep the same `cuda126` environment and train through `bash run.sh train --experiment experiments/pcvr/<name>`.
+6. Build the online bundle with `uv run taac-package-train` or `uv run taac-package-infer`.
+7. Inspect `code_package.zip` when changing packaging logic; confirm it contains the selected experiment package under `project/experiments/...` and the expected manifest under `project/`.
+8. Upload only the two generated top-level files for the bundle type you need.
+9. Run online in the platform Conda/Python environment with `TAAC_RUNNER=python` for training bundles, or direct `python infer.py` for inference bundles.
 10. Collect checkpoints, logs, tensorboard events, predictions, and sidecars from the platform output directory.
 
 ## Validation Commands
@@ -201,14 +256,17 @@ Local validation:
 
 ```bash
 uv run pytest tests/unit -q
-uv run --with ruff ruff check src/taac2026 tests/unit
+uv run --with ruff ruff check .
 ```
 
 Bundle validation:
 
 ```bash
-bash run.sh package --experiment config/interformer --output-dir /tmp/interformer-bundle --force
-python -m zipfile -l /tmp/interformer-bundle/code_package.zip | head
+uv run taac-package-train --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-training --json
+uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-inference --json
+
+python -m zipfile -l /tmp/interformer-training/code_package.zip | head
+python -m zipfile -l /tmp/interformer-inference/code_package.zip | head
 ```
 
 Online-style local smoke without `uv`:
@@ -217,7 +275,18 @@ Online-style local smoke without `uv`:
 export TAAC_RUNNER=python
 export TRAIN_DATA_PATH=/path/to/train.parquet_or_dataset_dir
 export TAAC_SCHEMA_PATH=/path/to/schema.json
-bash /tmp/interformer-bundle/run.sh --device cpu --num_epochs 1 --batch_size 8
+bash /tmp/interformer-training/run.sh --device cpu --max_steps 1 --batch_size 8 --num_workers 0
+```
+
+Inference-style local smoke:
+
+```bash
+export TAAC_BUNDLE_WORKDIR=/tmp/interformer-inference-workdir
+export EVAL_DATA_PATH=/path/to/eval.parquet_or_dir
+export EVAL_RESULT_PATH=/tmp/interformer-infer-results
+export MODEL_OUTPUT_PATH=/path/to/model.safetensors
+export TAAC_SCHEMA_PATH=/path/to/schema.json
+python /tmp/interformer-inference/infer.py
 ```
 
 Use tiny or sample data for smoke tests; full training should use the platform GPU environment.
@@ -233,6 +302,8 @@ If a dependency is missing online, install it into the active Conda environment 
 If Torch, CUDA, FBGEMM, or TorchRec versions conflict online, fix the Conda/platform image rather than pip-overwriting core GPU packages inside the job.
 
 If the wrong experiment runs online, inspect `project/.taac_training_manifest.json` inside `code_package.zip` and check whether `TAAC_EXPERIMENT` is overriding the manifest.
+
+If `infer.py` fails before extraction, set `TAAC_BUNDLE_WORKDIR` explicitly; some platforms may not provide `USER_CACHE_PATH`.
 
 If stale extracted code is reused, set:
 

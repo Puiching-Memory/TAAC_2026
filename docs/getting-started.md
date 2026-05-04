@@ -6,128 +6,167 @@ icon: lucide/rocket
 
 ## 前置要求
 
+- Linux
 - Python 3.10 - 3.13
-- CUDA 12.6（GPU 训练需要）
-- `uv` 包管理器（推荐）；`pip` 仅适用于已准备好兼容 Python / CUDA / PyTorch 环境的场景
+- CUDA 12.6（本地 GPU 训练需要）
+- `uv`
 - Git
 
-## 安装
+## 安装仓库环境
 
-=== "uv（推荐）"
+推荐直接使用锁定的 `uv` 环境：
 
-    ```bash
-    git clone https://github.com/Puiching-Memory/TAAC_2026.git
-    cd TAAC_2026
-    uv sync --extra dev --extra cuda126
-    ```
+```bash
+git clone https://github.com/Puiching-Memory/TAAC_2026.git
+cd TAAC_2026
 
-=== "pip（仅限已备好兼容 GPU 环境）"
+uv python install 3.10.20
 
-    ```bash
-    git clone https://github.com/Puiching-Memory/TAAC_2026.git
-    cd TAAC_2026
-  python -m pip install -e ".[dev]"
-  python -m pip install --extra-index-url https://download.pytorch.org/whl/cu126 \
-    torch==2.7.1+cu126 fbgemm-gpu==1.2.0+cu126 torchrec==1.2.0+cu126
-    ```
+# 本地训练 / 评估
+uv sync --locked --extra cuda126
 
-依赖说明：
-
-- `--extra dev`：Ruff、Pytest、Hypothesis、Benchmark、覆盖率插件、Zensical
-- `cuda126`：通过 `uv` 的 `pytorch-cu126` 索引解析 PyTorch、TorchRec、FBGEMM；如果不用 `uv`，需要像上面那样单独安装匹配的 CUDA 12.6 wheel，或直接复用已准备好的兼容环境
-
-## 准备数据
-
-仓库附带 `data/sample_1000_raw/` 含 1000 条示例数据：
-
+# 需要测试、lint 或本地文档站时
+uv sync --locked --extra dev --extra cuda126
 ```
+
+说明：
+
+- `cuda126` 是当前仓库唯一支持的本地 CUDA profile。
+- `dev` extra 包含 Ruff、Pytest、Coverage 和 Zensical。
+- 线上 Bundle 运行模式不依赖 `uv`；那部分见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
+
+## 准备示例数据
+
+仓库附带 1000 行示例数据，可直接做本地 smoke：
+
+```text
 data/sample_1000_raw/
-├── demo_1000.parquet    # 1000 行样本
-└── schema.json          # 列定义（特征 FID、词表大小、序列域等）
+├── demo_1000.parquet
+└── schema.json
 ```
 
-比赛正式数据需从官方平台下载，放置为相同格式。
+正式比赛数据只需要保持相同的 parquet + `schema.json` 约定。
 
-## 训练第一个模型
+## 训练第一个实验包
+
+顶层 `run.sh` 现在只封装训练、评估和推理入口；最简单的本地训练方式是：
+
+```bash
+bash run.sh train \
+  --experiment experiments/pcvr/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/quickstart_baseline
+```
+
+如果你更喜欢直接调用 CLI，上面的命令等价于：
 
 ```bash
 uv run taac-train \
   --experiment experiments/pcvr/baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/quickstart_baseline
 ```
 
-训练完成后，Checkpoint 和日志保存在 `outputs/<run-slug>/` 目录下。
+训练完成后，checkpoint、`train_config.json`、`schema.json` 和其他侧车文件都会写到 `outputs/quickstart_baseline/`。
 
-## 评估
+## 评估一个训练结果
+
+本地验证入口是 `taac-evaluate single`。最稳妥的做法是显式传入训练目录：
+
+```bash
+bash run.sh val \
+  --experiment experiments/pcvr/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/quickstart_baseline
+```
+
+如果需要指定某个 checkpoint，也可以直接传 `--checkpoint`：
 
 ```bash
 uv run taac-evaluate single \
   --experiment experiments/pcvr/baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --schema-path data/sample_1000_raw/schema.json \
+  --checkpoint outputs/quickstart_baseline/best_model/model.safetensors
 ```
 
-## 运行其他实验包
+## 运行一次推理
 
-切换 `--experiment` 参数即可：
+推理入口是 `taac-evaluate infer`，它会在结果目录下写出 `predictions.json`：
 
 ```bash
-uv run taac-train --experiment experiments/pcvr/symbiosis \
+bash run.sh infer \
+  --experiment experiments/pcvr/baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --schema-path data/sample_1000_raw/schema.json \
+  --checkpoint outputs/quickstart_baseline/best_model/model.safetensors \
+  --result-dir outputs/quickstart_infer
 ```
 
-PCVR 实验包位于 `experiments/pcvr/` 目录下，每个包含 `__init__.py` 和 `model.py`，其中 NS 分组在 `__init__.py` 的 `PCVRNSConfig` 中显式声明；运维/分析实验位于 `experiments/maintenance/`。
+## 切换到其他实验包
 
-## 线上训练打包
+PCVR 模型实验位于 `experiments/pcvr/`，维护 / 分析类实验位于 `experiments/maintenance/`。最常见的切换方式就是替换 `--experiment`：
 
 ```bash
-uv run taac-package-train \
+bash run.sh train \
   --experiment experiments/pcvr/symbiosis \
-  --output-dir outputs/bundle
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/quickstart_symbiosis
 ```
 
-生成 `run.sh` + `code_package.zip`，详见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
-
-## 测试
+维护类实验同样走训练入口，例如：
 
 ```bash
-# 已执行 uv sync --extra dev --extra cuda126
+bash run.sh train --experiment experiments/maintenance/host_device_info
+```
+
+## 生成线上 Bundle
+
+打包不走 `run.sh`，而是使用专门的 CLI：
+
+```bash
+# 训练 Bundle
+uv run taac-package-train \
+  --experiment experiments/pcvr/baseline \
+  --output-dir outputs/bundles/baseline_training
+
+# 推理 Bundle
+uv run taac-package-infer \
+  --experiment experiments/pcvr/baseline \
+  --output-dir outputs/bundles/baseline_inference
+```
+
+当前训练 Bundle 输出 `run.sh + code_package.zip`，推理 Bundle 输出 `infer.py + code_package.zip`。详见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
+
+## 测试与文档
+
+```bash
+# 单元测试
 uv run pytest tests/unit -v
-```
 
-## 本地文档站
+# 只看实验包相关测试
+uv run pytest tests/unit/infrastructure/experiments/test_experiment_packages.py -v
 
-```bash
-# 已执行 uv sync --extra dev
+# 本地文档站
 uv run zensical serve
 ```
 
-默认在 `http://127.0.0.1:8000` 启动开发服务器。
+默认文档地址是 `http://127.0.0.1:8000`。
 
-## 统一入口速查
+## 入口速查
 
-| 命令                                   | 用途               |
-| -------------------------------------- | ------------------ |
-| `taac-train`                           | 训练实验           |
-| `taac-evaluate single`                 | 评估模型           |
-| `taac-evaluate infer`                  | 推理（无标签数据） |
-| `taac-package-train`                   | 打包训练 Bundle    |
-| `taac-package-infer`                   | 打包推理 Bundle    |
-| `taac-benchmark-pcvr-data-pipeline`    | 数据管道吞吐压测   |
-| `taac-generate-pcvr-synthetic-dataset` | 生成合成压测数据   |
-| `taac-plot-model-performance`          | 绘制 Pareto 前沿图 |
+| 入口                                   | 当前用途                |
+| -------------------------------------- | ----------------------- |
+| `bash run.sh train`                    | 训练实验                |
+| `bash run.sh val` / `bash run.sh eval` | 本地评估一个实验        |
+| `bash run.sh infer`                    | 生成 `predictions.json` |
+| `uv run taac-package-train`            | 打包训练 Bundle         |
+| `uv run taac-package-infer`            | 打包推理 Bundle         |
+| `uv run pytest tests/unit -v`          | 运行单元测试            |
+| `uv run zensical serve`                | 启动本地文档站          |
 
-运维/分析类实验通过 `taac-train --experiment experiments/maintenance/<name>` 或同等的 `bash run.sh train --experiment experiments/maintenance/<name>` 调用。
-
-仓库缓存清理和文档结构裁剪保留为 shell 脚本：`bash tools/cache-cleanup.sh`、`bash tools/strip_docs_content.sh docs/<path-or-dir>`。
-
-所有命令均通过 `run.sh` 也可调用：
-
-```bash
-./run.sh train --experiment experiments/pcvr/baseline --dataset-path ...
-./run.sh val   --experiment experiments/pcvr/baseline --dataset-path ...
-./run.sh infer --experiment experiments/pcvr/baseline --dataset-path ...
-./run.sh package --experiment experiments/pcvr/symbiosis
-```
+注意：`run.sh` 当前不支持 `package`、`package-infer` 或 `test` 子命令；这些能力分别由独立 CLI 和 `pytest` 负责。

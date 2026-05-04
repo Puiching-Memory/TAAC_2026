@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/ci.yml"
-      - "config/**"
+      - "experiments/**"
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
@@ -14,7 +14,7 @@ on:
       - main
     paths:
       - ".github/workflows/ci.yml"
-      - "config/**"
+      - "experiments/**"
       - "src/**"
       - "tests/**"
       - "pyproject.toml"

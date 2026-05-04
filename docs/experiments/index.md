@@ -4,77 +4,95 @@ icon: lucide/folder-open
 
 # 实验包总览
 
-实验包是 TAAC 2026 的核心扩展单元。PCVR 模型包位于 `experiments/pcvr/`，维护工具包位于 `experiments/maintenance/`。每个包独立携带模型定义或任务入口、NS 分组和默认训练配置，新增实验无需修改框架代码。
+实验包是当前仓库的核心扩展单元。框架层负责训练、评估、推理、打包和通用运行时，实验包只保留实验特有的模型、默认配置和少量包内辅助模块。
+
+当前有两类实验包：
+
+- `experiments/pcvr/`：PCVR 模型实验
+- `experiments/maintenance/`：维护 / 分析类实验
 
 ## 当前实验包
 
 ### 模型训练包
 
-| 实验包         | 模型类         | Blocks | Dropout | NS Tokenizer      | 亮点                             |
-| -------------- | -------------- | ------ | ------- | ----------------- | -------------------------------- |
-| Baseline       | HyFormer       | 默认   | 默认    | group             | 基准参考                         |
-| CTR Baseline   | CTRBaseline    | 2      | 0.01    | group             | 低 Dropout                       |
-| DeepContextNet | DeepContextNet | 3      | 0.02    | group             | 最深的 group 栈                  |
-| HyFormer       | HyFormer       | 默认   | 默认    | rankmixer (5u/2i) | num_queries=2                    |
-| InterFormer    | InterFormer    | 2      | 0.02    | group             | 交叉注意力                       |
-| OneTrans       | OneTrans       | 2      | 0.02    | rankmixer (5u/2i) | 单 Transformer                   |
-| Symbiosis      | Symbiosis      | 3      | 0.02    | rankmixer (5u/2i) | RoPE + AMP + compile + 11 项开关 |
-| UniRec         | UniRec         | 3      | 0.02    | rankmixer (5u/2i) | 统一推荐                         |
-| UniScaleFormer | UniScaleFormer | 4      | 0.02    | rankmixer (5u/2i) | 最深栈                           |
+| 实验包         | 路径                              | 说明                                 |
+| -------------- | --------------------------------- | ------------------------------------ |
+| Baseline       | `experiments/pcvr/baseline`       | 共享 PCVR 运行时上的基准 HyFormer 包 |
+| CTR Baseline   | `experiments/pcvr/ctr_baseline`   | CTR 风格 baseline                    |
+| DeepContextNet | `experiments/pcvr/deepcontextnet` | 深层上下文建模实验                   |
+| HyFormer       | `experiments/pcvr/hyformer`       | HyFormer 变体                        |
+| InterFormer    | `experiments/pcvr/interformer`    | InterFormer 结构实验                 |
+| OneTrans       | `experiments/pcvr/onetrans`       | OneTrans 结构实验                    |
+| Symbiosis      | `experiments/pcvr/symbiosis`      | 带包内辅助层和额外训练参数的融合实验 |
+| UniRec         | `experiments/pcvr/unirec`         | 统一推荐方向实验                     |
+| UniScaleFormer | `experiments/pcvr/uniscaleformer` | 更深层 unified stack 变体            |
 
 ### 维护工具包
 
-| 实验包             | 用途             | 需要数据集 | 说明                               |
-| ------------------ | ---------------- | ---------- | ---------------------------------- |
-| Host Device Info   | 主机设备诊断采集 | 否         | 采集 GPU、网络、依赖源等环境快照   |
-| Online Dataset EDA | 数据集探索分析   | 是         | 流式 Parquet 统计，线上友好        |
+| 实验包             | 用途             | 需要数据集 | 说明                             |
+| ------------------ | ---------------- | ---------- | -------------------------------- |
+| Host Device Info   | 主机设备诊断采集 | 否         | 采集 GPU、网络、依赖源等环境快照 |
+| Online Dataset EDA | 数据集探索分析   | 是         | 流式 Parquet 统计，线上友好      |
 
 ## 包内文件
 
 ### 模型训练包
 
-每个模型训练包目录包含三个文件：
+PCVR 实验包的最小契约是两个文件：
 
-```
+```text
 experiments/pcvr/<experiment_name>/
-├── __init__.py         # EXPERIMENT = PCVRExperiment(...) 与显式 NS 分组配置
-└── model.py            # 模型类实现
+├── __init__.py
+└── model.py
 ```
 
-**`__init__.py`** 定义模块级 `EXPERIMENT` 对象：
+在此基础上，实验包可以按需要增加自己的辅助模块，例如：
 
-```python
-from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
-from taac2026.infrastructure.pcvr.config import PCVRTrainConfig
-
-EXPERIMENT = PCVRExperiment(
-    name="pcvr_baseline",
-    package_dir=Path(__file__).parent,
-    model_class_name="PCVRHyFormer",
-    train_defaults=PCVRTrainConfig(...),
-)
+```text
+experiments/pcvr/symbiosis/
+├── __init__.py
+├── layers.py
+└── model.py
 ```
 
-**`model.py`** 实现模型类，必须继承 `EmbeddingParameterMixin` 并实现：
+#### `__init__.py`
+
+`__init__.py` 负责导出模块级 `EXPERIMENT`。当前真实契约是：
+
+- 使用 `PCVRExperiment`
+- 声明 `name`
+- 指定 `package_dir`
+- 指定 `model_class_name`
+- 提供 `train_defaults`
+- 提供 `train_arg_parser`
+- 提供 `train_hooks`
+- 提供 `prediction_hooks`
+- 提供 `runtime_hooks`
+
+大多数新实验都会从一个现有包复制这些默认 hook，再替换实验名、模型类名和默认配置。
+
+#### `model.py`
+
+`model.py` 负责导出由 `model_class_name` 指定的模型类。模型类通常：
 
 | 方法                             | 签名                                   | 说明                   |
 | -------------------------------- | -------------------------------------- | ---------------------- |
 | `forward`                        | `(ModelInput) -> logits`               | 前向传播               |
 | `predict`                        | `(ModelInput) -> (logits, embeddings)` | 推理用                 |
-| `get_sparse_params`              | `() -> list[Parameter]`                | 稀疏参数               |
-| `get_dense_params`               | `() -> list[Parameter]`                | 稠密参数               |
+| `get_sparse_params`              | `() -> list[Parameter]`                | 稀疏参数分组           |
+| `get_dense_params`               | `() -> list[Parameter]`                | 稠密参数分组           |
 | `reinit_high_cardinality_params` | `() -> None`                           | 重初始化低频 Embedding |
 
-**`__init__.py` 中的 `PCVRNSConfig`** 定义 NS 特征分组，格式见 [架构与概念](../architecture.md#ns-groups)。
+当前仓库中的 NS 分组直接写在 `PCVRNSConfig` 里；不要再把包内独立 `ns_groups.json` 当成必备文件。
 
 ### 维护工具包
 
 维护工具包使用 `ExperimentSpec` 而非 `PCVRExperiment`，不需要模型定义和 NS 分组：
 
-```
+```text
 experiments/maintenance/<tool_name>/
-├── __init__.py         # EXPERIMENT = ExperimentSpec(name, package_dir, train_fn, metadata)
-└── runner.py           # 工具逻辑实现
+├── __init__.py
+└── runner.py
 ```
 
 - [Host Device Info](host-device-info.md) -- 主机与设备诊断采集
@@ -83,17 +101,26 @@ experiments/maintenance/<tool_name>/
 ## 运行任意实验包
 
 ```bash
-uv run taac-train --experiment experiments/pcvr/<name> \
+bash run.sh train --experiment experiments/pcvr/<name> \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/<name>
+```
+
+维护类实验也走同一入口，例如：
+
+```bash
+bash run.sh train --experiment experiments/maintenance/host_device_info
 ```
 
 ## 打包任意实验包
 
 ```bash
-uv run taac-package-train --experiment experiments/pcvr/<name> --output-dir outputs/bundle
-uv run taac-package-infer --experiment experiments/pcvr/<name> --output-dir outputs/bundle
+uv run taac-package-train --experiment experiments/pcvr/<name> --output-dir outputs/bundles/<name>_training
+uv run taac-package-infer --experiment experiments/pcvr/<name> --output-dir outputs/bundles/<name>_inference
 ```
+
+维护类实验只支持训练 Bundle，不支持推理 Bundle。
 
 ## 新增或修改实验包
 

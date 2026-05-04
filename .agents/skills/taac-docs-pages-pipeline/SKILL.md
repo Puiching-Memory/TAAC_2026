@@ -71,7 +71,7 @@ Behavior:
 
 - classify-push allows direct deployment as long as the same push did not also touch:
   - .github/workflows/ci.yml
-  - config/**
+  - experiments/**
   - src/**
   - tests/**
   - pyproject.toml
@@ -88,7 +88,7 @@ Trigger source:
 
 - ci.yml runs on pushes to main that touch:
   - .github/workflows/ci.yml
-  - config/**
+  - experiments/**
   - src/**
   - tests/**
   - pyproject.toml

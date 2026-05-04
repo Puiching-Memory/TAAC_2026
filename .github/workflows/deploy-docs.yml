@@ -46,7 +46,7 @@ jobs:
           allow_push_deploy=true
           if [[ "${{ github.event_name }}" == "push" ]]; then
             changed_files="$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")"
-            if echo "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|config/|src/|tests/|pyproject\.toml$|uv\.lock$)'; then
+            if echo "$changed_files" | grep -Eq '^(\.github/workflows/ci\.yml|experiments/|src/|tests/|pyproject\.toml$|uv\.lock$)'; then
               allow_push_deploy=false
             fi
           fi

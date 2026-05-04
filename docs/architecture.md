@@ -6,43 +6,67 @@ icon: lucide/blocks
 
 ## 工程结构
 
-项目采用三层领域驱动设计：
+仓库当前仍然保持分层结构，但 PCVR 运行时已经从单文件脚手架演进为一组共享栈模块。
 
-```
+```text
 src/taac2026/
-├── domain/                 # 纯业务逻辑（无 PyTorch 依赖）
-│   ├── config.py           # TrainRequest / EvalRequest / InferRequest
-│   ├── experiment.py       # ExperimentSpec / TrainFn / EvalFn / InferFn
-│   └── metrics.py          # AUC / LogLoss / GAUC / Bootstrap CI
-├── application/            # CLI 入口
+├── domain/
+│   ├── config.py           # TrainRequest / EvalRequest / InferRequest / default_run_dir
+│   ├── experiment.py       # ExperimentSpec 插件契约
+│   └── metrics.py          # AUC / LogLoss / GAUC / 诊断指标
+├── application/
 │   ├── training/cli.py     # taac-train
-│   ├── evaluation/cli.py   # taac-evaluate
-│   ├── maintenance/        # taac-package-* / taac-generate-*
-│   └── reporting/          # taac-plot-* / taac-tech-timeline / taac-bench-report
-└── infrastructure/         # 数据加载、训练、模型构建
-    ├── checkpoints.py      # Checkpoint 解析与保存
+│   ├── evaluation/
+│   │   ├── cli.py          # taac-evaluate single / infer
+│   │   └── infer.py        # 推理 Bundle 入口
+│   ├── maintenance/
+│   │   ├── package_training.py
+│   │   ├── package_inference.py
+│   │   └── generate_pcvr_synthetic_dataset.py
+│   └── reporting/
+│       ├── cli.py
+│       ├── bench_cli.py
+│       ├── timeline_cli.py
+│       └── *_benchmark.py
+└── infrastructure/
+    ├── bundles/            # 训练/推理 Bundle 组装
+    ├── checkpoints.py      # checkpoint 解析与保存
     ├── experiments/        # 实验包发现与加载
-    ├── io/                 # 文件工具
-    └── pcvr/               # PCVR 核心框架
-        ├── config.py       # PCVRTrainConfig 层级配置
-        ├── data.py         # PCVRParquetDataset
-        ├── data_pipeline.py# 增强管道
-        ├── experiment.py   # PCVRExperiment 适配器
-        ├── modeling.py     # 可复用构建块
-        ├── protocol.py     # ModelInput / build_pcvr_model
-        ├── trainer.py      # PCVRPointwiseTrainer
-        └── training.py     # train_pcvr_model / parse_pcvr_train_args
+    ├── io/                 # 文件 / JSON 工具
+    ├── training/           # 通用训练运行时工具
+    └── pcvr/               # 共享 PCVR 运行时
+        ├── config.py
+        ├── data.py
+        ├── data_observation.py
+        ├── data_pipeline.py
+        ├── data_schema.py
+        ├── experiment.py
+        ├── experiment_runtime.py
+        ├── modeling.py
+        ├── prediction_stack.py
+        ├── protocol.py
+        ├── runtime_stack.py
+        ├── tensors.py
+        ├── tilelang_kernels.py
+        ├── tilelang_ops.py
+        ├── train_stack.py
+        ├── trainer.py
+        ├── trainer_support.py
+        └── training.py
 ```
 
-实验包独立于框架之外：
+仓库外层的 `experiments/` 目录是插件层，不是框架核心的一部分：
 
-```
+```text
 experiments/
 ├── pcvr/
 │   ├── baseline/
-│   │   ├── __init__.py     # EXPERIMENT = PCVRExperiment(...) 与 NS 分组配置
-│   │   └── model.py        # 模型实现
+│   │   ├── __init__.py
+│   │   └── model.py
 │   ├── symbiosis/
+│   │   ├── __init__.py
+│   │   ├── layers.py
+│   │   └── model.py
 │   ├── ctr_baseline/
 │   ├── deepcontextnet/
 │   ├── hyformer/
@@ -55,175 +79,203 @@ experiments/
   └── online_dataset_eda/
 ```
 
-## 运行入口
+## 分层职责
 
-核心 CLI 命令通过 `pyproject.toml` 注册：
+### Domain
+
+`domain` 层只定义稳定契约：
+
+- 请求对象：`TrainRequest`、`EvalRequest`、`InferRequest`
+- 插件接口：`ExperimentSpec`
+- 指标函数：AUC、LogLoss、GAUC、score diagnostics
+
+这一层不负责 PyTorch 模型搭建，也不感知具体实验包目录。
+
+### Application
+
+`application` 层负责把 CLI / Bundle 入口翻译成 domain request：
+
+- `taac-train` 只解析训练命令和额外参数，然后把请求交给实验包
+- `taac-evaluate single` 和 `taac-evaluate infer` 负责本地评估与推理入口
+- `package_training.py` / `package_inference.py` 负责生成线上上传文件
+- `reporting` 下的命令负责 benchmark、timeline 和汇总报表
+
+### Infrastructure
+
+`infrastructure` 层负责真正的运行时实现：
+
+- 实验包扫描与加载
+- checkpoint、JSON、文件系统工具
+- Bundle 组装
+- 共享 PCVR 训练 / 评估 / 推理栈
+- TileLang 与 Torch 的算子适配
+
+## 统一入口
+
+当前最常用的仓库入口有两组：
+
+| 入口                                   | 用途             |
+| -------------------------------------- | ---------------- |
+| `bash run.sh train`                    | 训练             |
+| `bash run.sh val` / `bash run.sh eval` | 本地评估         |
+| `bash run.sh infer`                    | 推理             |
+| `uv run taac-package-train`            | 训练 Bundle 打包 |
+| `uv run taac-package-infer`            | 推理 Bundle 打包 |
+
+`run.sh` 当前只负责 `train` / `val` / `eval` / `infer`。打包不再通过 `run.sh package` 完成。
+
+底层 CLI 注册关系仍然很简单：
 
 | 命令            | 模块                                       |
 | --------------- | ------------------------------------------ |
 | `taac-train`    | `taac2026.application.training.cli:main`   |
 | `taac-evaluate` | `taac2026.application.evaluation.cli:main` |
 
-`taac-evaluate` 有两个子命令：
+其中 `taac-evaluate` 暴露两个子命令：
 
-- `single` -- 评估有标签数据，输出 AUC 等指标
-- `infer` -- 推理无标签数据，输出 `predictions.json`
-
-`run.sh` 是 shell 层包装，映射 `train` / `val` / `infer` / `package` 到对应 CLI 命令，并支持 Bundle 模式（检测 `code_package.zip` 自动解压安装）。
+- `single`：评估有标签数据
+- `infer`：写出平台要求的 `predictions.json`
 
 ## 实验包契约
 
-每个实验包目录必须包含：
+### PCVR 实验包
 
-| 文件             | 要求                                                                                    |
-| ---------------- | --------------------------------------------------------------------------------------- |
-| `__init__.py`    | 定义 `EXPERIMENT = PCVRExperiment(...)`，并在 `PCVRNSConfig` 中显式声明 NS 分组         |
-| `model.py`       | 实现模型类，必须暴露与 `model_class_name` 同名的类                                      |
+PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 
-`PCVRExperiment` 提供三个方法：
+| 文件          | 要求                                                                               |
+| ------------- | ---------------------------------------------------------------------------------- |
+| `__init__.py` | 定义 `EXPERIMENT = PCVRExperiment(...)`，并给出默认训练配置、模型类名和运行时 hook |
+| `model.py`    | 实现实验包自己的模型类，类名必须与 `model_class_name` 一致                         |
 
-- `train(TrainRequest)` -- 启动训练
-- `evaluate(EvalRequest)` -- 运行评估
-- `infer(InferRequest)` -- 运行推理
+包内可以按需要继续拆出局部模块，例如 `layers.py`；这已经在 `symbiosis` 里使用。
 
-加载机制：`load_experiment_package(value)` 通过 `sys.path` 临时修改加载实验目录中的 `model.py` 模块。
+`PCVRExperiment` 本身是一个适配器，它持有：
+
+- `train_arg_parser`
+- `train_hooks`
+- `prediction_hooks`
+- `runtime_hooks`
+
+它会在运行时临时切换到实验包目录，导入包内 `model` 模块，再把共享训练 / 评估 / 推理栈拼起来。
+
+### 维护类实验包
+
+维护类实验位于 `experiments/maintenance/`，不需要模型类，也不要求实现评估 / 推理。它们直接导出 `ExperimentSpec`，通常只实现 `train_fn`。
+
+例如：
+
+- `host_device_info`
+- `online_dataset_eda`
 
 ## 模型输入与构建
 
-所有 PCVR 模型接收统一的 `ModelInput` NamedTuple：
+所有 PCVR 模型都接收统一的 `ModelInput`。具体张量字段由共享协议层维护，模型本身只需要遵守这份统一输入契约，而不必重新实现数据解析。
 
-```python
-class ModelInput(NamedTuple):
-    user_int_feats:       Tensor   # (B, num_user_int)
-    item_int_feats:       Tensor   # (B, num_item_int)
-    user_dense_feats:     Tensor   # (B, user_dense_dim)
-    item_dense_feats:     Tensor   # (B, item_dense_dim)
-    seq_data:             dict[str, Tensor]  # domain -> (B, num_features, max_seq_len)
-    seq_lens:             dict[str, Tensor]  # domain -> (B,)
-    seq_time_buckets:     dict[str, Tensor]  # domain -> (B, max_seq_len)
-```
+`build_pcvr_model()` 的职责是把数据 schema 和训练配置翻译成模型构造参数，包括：
 
-`build_pcvr_model()` 根据 schema 和配置自动构建模型，负责：
+- 用户 / 物品稀疏特征规格
+- 稠密特征维度
+- 序列词表信息
+- NS tokenizer 相关配置
+- 模型默认参数与实验包特定参数
 
-1. 解析 `schema.json` 生成 `user_int_feature_specs` / `item_int_feature_specs`
-2. 读取 `train_config` 中显式声明的 NS 分组，生成 `user_ns_groups` / `item_ns_groups`
-3. 实例化实验包中的模型类，传入所有规格参数
+模型类需要提供的核心行为保持不变：
 
-模型必须实现的方法：
+- `forward(inputs)` -> logits
+- `predict(inputs)` -> `(logits, embeddings)`
+- 稀疏 / 稠密参数分组接口
 
-| 方法                             | 签名                                                      |
-| -------------------------------- | --------------------------------------------------------- |
-| `forward`                        | `(ModelInput) -> logits`                                  |
-| `predict`                        | `(ModelInput) -> (logits, embeddings)`                    |
-| `get_sparse_params`              | `() -> list[Parameter]`（来自 `EmbeddingParameterMixin`） |
-| `get_dense_params`               | `() -> list[Parameter]`（来自 `EmbeddingParameterMixin`） |
-| `reinit_high_cardinality_params` | `() -> None`                                              |
+## 共享 PCVR 栈
+
+当前共享 PCVR 栈的职责已经拆得比较清楚：
+
+| 模块                                      | 作用                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------- |
+| `config.py`                               | 训练、模型、优化器、数据和 NS 配置                                |
+| `data.py`                                 | parquet 读取、Row Group 切分、数据集工具                          |
+| `data_observation.py` / `data_schema.py`  | observed schema 和 schema 解析                                    |
+| `data_pipeline.py`                        | 数据增强和流水线拼装                                              |
+| `protocol.py`                             | `ModelInput`、模型构建协议和 schema -> 构造参数转换               |
+| `training.py`                             | 训练入口拼装                                                      |
+| `train_stack.py`                          | 训练 hooks 和共享训练流程                                         |
+| `trainer.py` / `trainer_support.py`       | trainer 循环和训练辅助逻辑                                        |
+| `runtime_stack.py`                        | checkpoint、train_config、runtime schema、observed schema sidecar |
+| `prediction_stack.py`                     | 评估 / 推理 loop 和 predictor 准备                                |
+| `experiment_runtime.py`                   | `PCVRExperiment` 的运行时 mixin                                   |
+| `tilelang_ops.py` / `tilelang_kernels.py` | TileLang / Torch 算子适配                                         |
 
 ## NS Groups
 
-NS（Non-Sequential）Groups 将非序列特征 ID 映射到语义分组，供 NS Tokenizer 使用。
+非序列特征分组现在主要通过实验包 `__init__.py` 中的 `PCVRNSConfig` 明确声明，而不是依赖一个外置 JSON 文件作为唯一来源。
 
-`__init__.py` 中的 `PCVRNSConfig` 写法：
+这层配置会进入训练时生成的 `train_config.json`，之后评估和推理也以 checkpoint 侧车文件为准。
 
-```python
-ns=PCVRNSConfig(
-    grouping_strategy="explicit",
-    metadata={
-        "_purpose": "Shared PCVR non-sequential feature grouping for this experiment package.",
-        "_note_T": "For the official schema, num_ns = 12 before model-specific tokenizer changes.",
-    },
-    user_groups={
-        "U1": [1, 15],
-        "U2": [48, 49, 89, 90, 91],
-    },
-    item_groups={
-        "I1": [11, 13],
-        "I2": [5, 6, 7, 8, 12],
-    },
-    tokenizer_type="rankmixer",
-    user_tokens=5,
-    item_tokens=2,
-)
-```
+因此现在更值得记住的是：
 
-其中 `metadata` 是可选的语义注释承载位，用来保留原本 JSON 中的 `_purpose`、`_usage`、`_note_*` 这类说明，而不会重新引入独立资源文件。
-
-特征 ID 是列名的数字后缀（`user_int_feats_1` -> fid 1）。
-
-两种 NS Tokenizer：
-
-- **`group`**（`GroupNSTokenizer`）-- 每组一个 token，取组内 Embedding 均值
-- **`rankmixer`**（`RankMixerNSTokenizer`）-- 全部 Embedding 拼接后分组投影，参数更多但表达力更强
+- 分组配置是实验包默认配置的一部分
+- 训练时落盘的 `train_config.json` 是评估 / 推理重建模型的真实来源之一
+- 文档和代码都不应再把 `ns_groups.json` 当成现行仓库结构里的必备文件
 
 ## 训练流程
 
-`PCVRPointwiseTrainer` 驱动训练循环：
+训练入口是 `taac-train` 或 `bash run.sh train`：
 
-1. **双优化器** -- Adagrad 处理稀疏（Embedding）参数，AdamW 处理稠密参数
-2. **AMP** -- 可选混合精度训练，支持 `bfloat16` / `float16`
-3. **`torch.compile`** -- 可选 JIT 编译加速
-4. **Early Stopping** -- 基于验证集 AUC
-5. **Checkpoint** -- 保存 `model.safetensors` + 侧车文件（`schema.json`、`train_config.json`，其中包含显式 NS 分组配置）
-6. **高基数 Embedding 重初始化** -- 每个 epoch 后重初始化低频特征的 Embedding
+1. CLI 解析 `--experiment`、`--dataset-path`、`--schema-path`、`--run-dir`
+2. `load_experiment_package()` 加载对应实验包
+3. `PCVRExperiment.train()` 进入共享训练栈
+4. 训练时构建 observed schema sidecar、checkpoint 和日志产物
+5. 返回训练摘要 JSON
 
-损失函数（在 `infrastructure/training/runtime.py`）：
+训练完成后，常见产物包括：
 
-- `compute_binary_classification_loss()` -- 支持 BCE、Focal Loss、Pairwise AUC Loss
-- `sigmoid_focal_loss()` -- 处理类别不平衡
-- `binary_pairwise_auc_loss()` -- 直接优化 AUC 排序
+- `model.safetensors`
+- `schema.json`
+- `train_config.json`
+- 训练 / 验证 split 的 observed schema 报告
+
+训练循环内部仍然支持稀疏 / 稠密参数分组、AMP、`torch.compile`、early stopping 和 checkpoint sidecar。
 
 ## 评估与推理
 
-**评估**（`taac-evaluate single`）：
+### 本地评估
 
-- 加载 Checkpoint，遍历验证集，计算 AUC / LogLoss / Brier / GAUC / Bootstrap CI
-- 输出指标 JSON 和可选的逐样本预测
+`taac-evaluate single` 或 `bash run.sh val` 会：
 
-**推理**（`taac-evaluate infer`）：
+1. 解析实验包、数据路径和 checkpoint / run_dir
+2. 读取 checkpoint 对应的 `train_config.json` 和运行时 schema
+3. 运行共享 prediction loop
+4. 计算分类指标
+5. 写出 `evaluation.json`、`validation_predictions.jsonl` 和 `evaluation_observed_schema.json`
 
-- 加载 Checkpoint，遍历无标签数据
-- 输出 `predictions.json`：`{"predictions": {user_id: score}}`
+### 平台推理
 
-指标计算（`domain/metrics.py`）：
+`taac-evaluate infer` 或推理 Bundle 中的 `infer.py` 会输出：
 
-- `binary_auc` / `binary_logloss` / `binary_score_diagnostics`
-- `binary_auc_bootstrap_ci` -- Bootstrap 置信区间
-- `group_auc` -- 按用户分组的 GAUC
+```json
+{"predictions": {"user_id": score}}
+```
+
+推理结果目录只要求最终的 `predictions.json`，不会像本地评估那样再落一套 evaluation sidecar。
 
 ## 线上打包
 
-**训练 Bundle**（`taac-package-train`）：
+当前线上上传物分为两类：
 
-```
-run.sh                    # 自动检测 Bundle / 本地模式
-code_package.zip
-├── .taac_training_manifest.json
-├── pyproject.toml
-├── src/taac2026/
-├── experiments/<group>/<experiment>/
-└── tools/
-```
+- 训练 Bundle：`run.sh` + `code_package.zip`
+- 推理 Bundle：`infer.py` + `code_package.zip`
 
-**推理 Bundle**（`taac-package-infer`）：
+两者的 zip 内部都使用 `project/` 根目录，manifest 分别是：
 
-```
-infer.py                  # 自解压 + 安装 + 推理脚本
-code_package.zip
-├── .taac_inference_manifest.json
-├── pyproject.toml
-├── src/taac2026/
-├── experiments/<group>/<experiment>/
-└── <checkpoint>/
-```
+- `project/.taac_training_manifest.json`
+- `project/.taac_inference_manifest.json`
 
-环境变量：`EVAL_DATA_PATH`、`EVAL_RESULT_PATH`、`MODEL_OUTPUT_PATH`、`TAAC_SCHEMA_PATH`。
+训练 Bundle 当前格式号是 `taac2026-training-v2`，推理 Bundle 当前格式号是 `taac2026-inference-v1`。
 
 详见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
 
 ## 当前边界
 
-- 仅支持 PCVR 二分类任务（AUC 优化）
-- Parquet 列式数据格式，120 列固定 Schema
-- 序列域固定为 4 个（a, b, c, d）
-- 模型接口为 `ModelInput -> logits`，不支持多任务
-- NS Groups 为静态分组，不支持动态特征选择
+- 主要面向 PCVR 二分类任务
+- 训练 / 评估 / 推理都基于 parquet + `schema.json` 约定
+- 实验扩展依赖插件式 `experiments/` 目录，而不是改动核心框架入口
+- 当前文档、测试和打包实现都已经默认实验路径位于 `experiments/...`，不再使用旧的 `config/...` 结构

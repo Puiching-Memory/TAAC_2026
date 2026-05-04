@@ -4,58 +4,76 @@ icon: lucide/git-branch-plus
 
 # 新增实验包
 
-如何创建和验证一个新的实验包。
+如何在当前共享 PCVR 运行时上新增或修改一个实验包。
 
 ## 最小目录
 
-```
+```text
 experiments/pcvr/<experiment_name>/
 ├── __init__.py
 └── model.py
 ```
 
-两个文件缺一不可。`discover_experiment_paths()` 会扫描 `experiments/pcvr/` 下所有包含这两个文件的目录。
+最小契约就是这两个文件。需要包内辅助层时，可以继续增加 `layers.py` 之类的局部模块。
 
 ## __init__.py
 
-定义模块级 `EXPERIMENT` 对象：
+当前 `PCVRExperiment` 的真实构造参数不止 `name` 和 `train_defaults`。最稳妥的方式是从一个现有实验包复制，再改成你的模型和默认配置。
+
+一个最小可工作的骨架通常至少包含：
 
 ```python
 from pathlib import Path
+
+from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
-from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, PCVRModelConfig, PCVRNSConfig
+from taac2026.infrastructure.pcvr.prediction_stack import PREDICTION_HOOKS  # 示例占位，通常复用现有包的默认 hooks
+from taac2026.infrastructure.pcvr.runtime_stack import RUNTIME_HOOKS        # 示例占位
+from taac2026.infrastructure.pcvr.train_stack import TRAIN_HOOKS            # 示例占位
+from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args
+
+
+TRAIN_DEFAULTS = PCVRTrainConfig(
+    model=PCVRModelConfig(
+        num_blocks=2,
+        num_heads=4,
+        dropout_rate=0.02,
+    ),
+    ns=PCVRNSConfig(
+        grouping_strategy="explicit",
+        user_groups={"U1": [1, 15]},
+        item_groups={"I1": [11, 13]},
+        tokenizer_type="rankmixer",
+        user_tokens=5,
+        item_tokens=2,
+    ),
+)
 
 EXPERIMENT = PCVRExperiment(
     name="pcvr_my_experiment",
-    package_dir=Path(__file__).parent,
+    package_dir=Path(__file__).resolve().parent,
     model_class_name="MyModel",
-    train_defaults=PCVRTrainConfig(
-        model=PCVRModelConfig(
-            num_blocks=3,
-            num_heads=4,
-            dropout_rate=0.02,
-        ),
-        ns=PCVRNSConfig(
-            grouping_strategy="explicit",
-            user_groups={"U1": [1, 15]},
-            item_groups={"I1": [11, 13]},
-            tokenizer_type="rankmixer",
-            user_tokens=5,
-            item_tokens=2,
-        ),
-    ),
+    train_defaults=TRAIN_DEFAULTS,
+    train_arg_parser=parse_pcvr_train_args,
+    train_hooks=TRAIN_HOOKS,
+    prediction_hooks=PREDICTION_HOOKS,
+    runtime_hooks=RUNTIME_HOOKS,
 )
 ```
 
 关键字段：
 
 - `name` -- 唯一标识，通常加 `pcvr_` 前缀
+- `package_dir` -- 推荐使用 `Path(__file__).resolve().parent`
 - `model_class_name` -- 必须与 `model.py` 中的类名完全一致
-- `train_defaults` -- `PCVRTrainConfig` 实例，定义默认超参数
+- `train_defaults` -- 当前默认训练配置，包括数据、优化器、runtime 和 NS 分组
+- `train_arg_parser` / `train_hooks` / `prediction_hooks` / `runtime_hooks` -- 通常先复用现有实验包的默认实现
+
+如果你不是在做新的运行时扩展，而只是接一个新模型，优先复用已有 hook，而不是重新造一套训练 / 推理流程。
 
 ## model.py
 
-实现模型类，继承 `EmbeddingParameterMixin`：
+`model.py` 只负责当前实验自己的模型实现。建议复用共享建模层里的基础组件。
 
 ```python
 import torch
@@ -104,21 +122,22 @@ class MyModel(EmbeddingParameterMixin, nn.Module):
         ...
 ```
 
+    如果模型需要包内私有组件，可以像 `symbiosis` 一样把复杂层拆到同目录下的 `layers.py`。
+
 ## NS 分组配置
 
-在 `__init__.py` 的 `PCVRNSConfig` 中显式声明：
+    当前仓库使用 `PCVRNSConfig` 在 `__init__.py` 中显式声明 NS 分组：
 
 ```python
 ns=PCVRNSConfig(
         grouping_strategy="explicit",
         user_groups={
-                "U1": [1, 15],
-                "U2": [48, 49, 89, 90, 91],
-                "U3": [80],
+        "U1": [1, 15],
+        "U2": [48, 49, 89, 90, 91],
         },
         item_groups={
-                "I1": [11, 13],
-                "I2": [5, 6, 7, 8, 12],
+        "I1": [11, 13],
+        "I2": [5, 6, 7, 8, 12],
         },
         tokenizer_type="rankmixer",
         user_tokens=5,
@@ -128,24 +147,32 @@ ns=PCVRNSConfig(
 
 特征 ID 是列名的数字后缀（`user_int_feats_1` -> fid 1）。
 
+    当前仓库不再要求每个实验包必须自带独立的 `ns_groups.json` 文件。
+
 ## 本地验证
 
 ```bash
 # 1. 发现实验包
-uv run python -c "from taac2026.infrastructure.experiments.discovery import discover_experiment_paths; print([p.name for p in discover_experiment_paths()])"
+    uv run python -c "from pathlib import Path; from taac2026.infrastructure.experiments.discovery import discover_experiment_paths; print(discover_experiment_paths(Path('experiments/pcvr')))"
 
 # 2. 加载实验包
 uv run python -c "from taac2026.infrastructure.experiments.loader import load_experiment_package; exp = load_experiment_package('experiments/pcvr/my_experiment'); print(exp.name)"
 
 # 3. 训练 Smoke Test
 uv run taac-train \
-    --experiment experiments/pcvr/my_experiment \
+      --experiment experiments/pcvr/my_experiment \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
-  --max-epochs 1
+      --run-dir outputs/my_experiment_smoke \
+      --device cpu \
+      --num_workers 0 \
+      --batch_size 8 \
+      --max_steps 1
 
-# 4. 运行单元测试
-uv run pytest tests/unit/test_experiment_packages.py -v
+    # 4. 运行最小相关单测
+    uv run pytest tests/unit/infrastructure/experiments/test_experiment_packages.py -v
+    uv run pytest tests/unit/infrastructure/experiments/test_experiment_discovery.py -v
+    uv run pytest tests/unit/infrastructure/pcvr/test_runtime_contract_matrix.py -v
 ```
 
 ## 修改现有包的检查清单
@@ -155,5 +182,6 @@ uv run pytest tests/unit/test_experiment_packages.py -v
 - [ ] `forward()` 返回 `(B,)` 形状的 logits
 - [ ] `predict()` 返回 `(logits, embeddings)` 元组
 - [ ] `get_sparse_params()` 和 `get_dense_params()` 正确分类参数
-- [ ] 训练 Smoke Test 通过（1 epoch）
-- [ ] 单元测试通过
+- [ ] 训练 Smoke Test 通过（建议 `--device cpu --max_steps 1`）
+- [ ] 最小相关单元测试通过
+- [ ] 如涉及打包或 runtime sidecar，补跑 `tests/unit/application/test_package_training.py` 或 `tests/unit/application/test_package_inference.py`
