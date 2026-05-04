@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any

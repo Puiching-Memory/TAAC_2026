@@ -26,7 +26,7 @@ from taac2026.infrastructure.pcvr.protocol import (
     parse_seq_max_lens,
     resolve_schema_path,
 )
-from taac2026.infrastructure.io.json_utils import dumps, loads
+from taac2026.infrastructure.io.json_utils import loads
 from tests.unit.infrastructure.pcvr._pcvr_experiment_matrix import ExperimentCase, REPO_ROOT, discover_pcvr_experiment_cases, load_model_module
 
 

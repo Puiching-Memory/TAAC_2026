@@ -12,7 +12,6 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from taac2026.domain.metrics import binary_score_diagnostics
 from taac2026.infrastructure.checkpoints import (
     build_checkpoint_dir_name,
     preferred_checkpoint_path,

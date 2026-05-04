@@ -4,7 +4,6 @@ from pathlib import Path
 from textwrap import dedent
 
 from taac2026.infrastructure.experiments.discovery import discover_experiment_paths
-from taac2026.infrastructure.io.json_utils import dumps
 from tests.unit.infrastructure.pcvr._pcvr_experiment_matrix import build_pcvr_experiment_cases
 
 

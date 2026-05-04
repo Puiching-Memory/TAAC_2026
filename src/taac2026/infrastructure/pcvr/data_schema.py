@@ -36,7 +36,7 @@ class FeatureSchema:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "FeatureSchema":
+    def from_dict(cls, payload: dict[str, Any]) -> FeatureSchema:
         schema = cls()
         for fid, offset, length in payload["entries"]:
             schema.entries.append((fid, offset, length))
@@ -129,4 +129,4 @@ BUCKET_BOUNDARIES = np.array(
 NUM_TIME_BUCKETS = len(BUCKET_BOUNDARIES) + 1
 
 
-__all__ = ["BUCKET_BOUNDARIES", "FeatureSchema", "NUM_TIME_BUCKETS"]
+__all__ = ["BUCKET_BOUNDARIES", "NUM_TIME_BUCKETS", "FeatureSchema"]

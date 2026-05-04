@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -10,9 +11,9 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import experiments.pcvr.ctr_baseline.layers as ctr_layers
-import experiments.pcvr.ctr_baseline.model as ctr_model
-import taac2026.infrastructure.pcvr.tilelang_ops as tilelang_ops
+ctr_layers = importlib.import_module("experiments.pcvr.ctr_baseline.layers")
+ctr_model = importlib.import_module("experiments.pcvr.ctr_baseline.model")
+tilelang_ops = importlib.import_module("taac2026.infrastructure.pcvr.tilelang_ops")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang model smoke validation")

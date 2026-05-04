@@ -319,7 +319,7 @@ def compile_rms_norm_kernel(
     *,
     block_rows: int | None = None,
 ) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
-    matrix, normalized_weight, _original_shape = _normalize_rms_norm_inputs(x, weight)
+    matrix, _normalized_weight, _original_shape = _normalize_rms_norm_inputs(x, weight)
     key = _rms_norm_cache_key(matrix, eps, block_rows)
     return _compile_tilelang_rms_norm_kernel(key)
 

@@ -13,8 +13,10 @@ from taac2026.infrastructure.pcvr.modeling import (
     maybe_gradient_checkpoint,
     causal_valid_attention_mask,
     choose_num_heads,
+    make_padding_mask,
     masked_mean,
     scaled_dot_product_attention,
+    sinusoidal_positions,
 )
 
 

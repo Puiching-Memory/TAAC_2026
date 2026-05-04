@@ -20,15 +20,10 @@ from taac2026.infrastructure.io.files import write_json
 from taac2026.infrastructure.io.json_utils import dump_bytes
 from taac2026.infrastructure.pcvr.config import PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment_runtime import PCVRExperimentRuntimeMixin
-from taac2026.infrastructure.pcvr.prediction_stack import (
-    PCVRPredictionContext,
-    PCVRPredictionHooks,
-    _log_prediction_progress,
-)
+from taac2026.infrastructure.pcvr.prediction_stack import PCVRPredictionHooks, _log_prediction_progress
 from taac2026.infrastructure.pcvr.runtime_stack import PCVRRuntimeHooks
 from taac2026.infrastructure.pcvr.train_stack import PCVRTrainHooks
-from taac2026.infrastructure.pcvr.training import parse_pcvr_train_args, train_pcvr_model
-from taac2026.infrastructure.training.runtime import RuntimeExecutionConfig
+from taac2026.infrastructure.pcvr.training import train_pcvr_model
 
 
 _PLUGIN_MODULE_NAMES = ("utils", "model")
@@ -292,3 +287,6 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             "batch_size": effective_batch_size,
             "num_workers": effective_num_workers,
         }
+
+
+__all__ = ["PCVRExperiment", "_log_prediction_progress"]

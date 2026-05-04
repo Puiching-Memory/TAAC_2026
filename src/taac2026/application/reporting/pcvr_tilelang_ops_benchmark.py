@@ -269,7 +269,6 @@ def _summarize_runs(
     elapsed_values = [run.elapsed_sec for run in successful_runs]
     step_values = [run.step_time_ms for run in successful_runs]
     throughput_values = [run.ops_per_sec for run in successful_runs]
-    compile_values = [run.compile_sec for run in successful_runs if run.compile_sec is not None]
     max_abs_errors = [run.max_abs_error for run in successful_runs if run.max_abs_error is not None]
     representative = successful_runs[0]
     return OperatorBenchmarkSummary(
