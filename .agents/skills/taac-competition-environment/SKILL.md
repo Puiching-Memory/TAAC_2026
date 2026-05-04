@@ -64,7 +64,6 @@ Local defaults:
 - All local commands use CUDA profile `cuda126`; setting `TAAC_CUDA_PROFILE` or `--cuda-profile` to any other value is treated as an error.
 - Training, evaluation, inference, and packaging commands all reuse the same `cuda126` environment; pytest, hypothesis, benchmark tooling, coverage helpers, Ruff, and Zensical live in the `dev` extra and should be installed with `uv sync --locked --extra dev --extra cuda126` when needed.
 - `TAAC_SKIP_UV_SYNC=1` skips automatic `uv sync` when the environment is already prepared.
-- `TAAC_INSTALL_UV=0` prevents `run.sh` from trying to install `uv` if it is missing.
 
 ## Dependency Profiles
 
@@ -149,18 +148,18 @@ Install the CUDA PyTorch stack only through the platform-approved channel. Avoid
 After uploading `run.sh` and `code_package.zip` to the same directory, configure paths and run the script:
 
 ```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet_or_dataset_dir
+export TRAIN_DATA_PATH=/path/to/train.parquet_or_dataset_dir
 export TAAC_SCHEMA_PATH=/path/to/schema.json
-export TAAC_OUTPUT_DIR=/path/to/output
+export TRAIN_CKPT_PATH=/path/to/output
 export TAAC_RUNNER=python
 bash run.sh --compile --amp --amp-dtype bfloat16
 ```
 
 Important runtime variables:
 
-- `TAAC_DATASET_PATH` or `TRAIN_DATA_PATH`: parquet file or parquet directory; usually required for training.
-- `TAAC_SCHEMA_PATH` or `TRAIN_SCHEMA_PATH`: official `schema.json` when it is not colocated with the parquet data.
-- `TAAC_OUTPUT_DIR` or `TRAIN_CKPT_PATH`: training output directory.
+- `TRAIN_DATA_PATH`: parquet file or parquet directory; usually required for training.
+- `TAAC_SCHEMA_PATH`: official `schema.json` when it is not colocated with the parquet data.
+- `TRAIN_CKPT_PATH`: training output directory.
 - `TAAC_EXPERIMENT`: override the bundled experiment path; normally leave unset so the manifest decides.
 - `TAAC_BUNDLE_WORKDIR`: directory where `code_package.zip` is extracted.
 - `TAAC_CODE_PACKAGE`: non-default path to `code_package.zip`.
@@ -216,7 +215,7 @@ Online-style local smoke without `uv`:
 
 ```bash
 export TAAC_RUNNER=python
-export TAAC_DATASET_PATH=/path/to/train.parquet_or_dataset_dir
+export TRAIN_DATA_PATH=/path/to/train.parquet_or_dataset_dir
 export TAAC_SCHEMA_PATH=/path/to/schema.json
 bash /tmp/interformer-bundle/run.sh --device cpu --num_epochs 1 --batch_size 8
 ```

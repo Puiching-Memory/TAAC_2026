@@ -9,13 +9,12 @@ icon: lucide/git-branch-plus
 ## 最小目录
 
 ```
-config/<experiment_name>/
+experiments/pcvr/<experiment_name>/
 ├── __init__.py
-├── model.py
-└── ns_groups.json
+└── model.py
 ```
 
-三个文件缺一不可。`discover_experiment_paths()` 会扫描 `config/` 下所有包含这三个文件的目录。
+两个文件缺一不可。`discover_experiment_paths()` 会扫描 `experiments/pcvr/` 下所有包含这两个文件的目录。
 
 ## __init__.py
 
@@ -24,7 +23,7 @@ config/<experiment_name>/
 ```python
 from pathlib import Path
 from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
-from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, PCVRModelConfig
+from taac2026.infrastructure.pcvr.config import PCVRTrainConfig, PCVRModelConfig, PCVRNSConfig
 
 EXPERIMENT = PCVRExperiment(
     name="pcvr_my_experiment",
@@ -37,9 +36,12 @@ EXPERIMENT = PCVRExperiment(
             dropout_rate=0.02,
         ),
         ns=PCVRNSConfig(
+            grouping_strategy="explicit",
+            user_groups={"U1": [1, 15]},
+            item_groups={"I1": [11, 13]},
             tokenizer_type="rankmixer",
-            user_ns_tokens=5,
-            item_ns_tokens=2,
+            user_tokens=5,
+            item_tokens=2,
         ),
     ),
 )
@@ -102,22 +104,26 @@ class MyModel(EmbeddingParameterMixin, nn.Module):
         ...
 ```
 
-## ns_groups.json
+## NS 分组配置
 
-JSON 格式的 NS 特征分组：
+在 `__init__.py` 的 `PCVRNSConfig` 中显式声明：
 
-```json
-{
-  "user_ns_groups": {
-    "U1": [1, 15],
-    "U2": [48, 49, 89, 90, 91],
-    "U3": [80]
-  },
-  "item_ns_groups": {
-    "I1": [11, 13],
-    "I2": [5, 6, 7, 8, 12]
-  }
-}
+```python
+ns=PCVRNSConfig(
+        grouping_strategy="explicit",
+        user_groups={
+                "U1": [1, 15],
+                "U2": [48, 49, 89, 90, 91],
+                "U3": [80],
+        },
+        item_groups={
+                "I1": [11, 13],
+                "I2": [5, 6, 7, 8, 12],
+        },
+        tokenizer_type="rankmixer",
+        user_tokens=5,
+        item_tokens=2,
+)
 ```
 
 特征 ID 是列名的数字后缀（`user_int_feats_1` -> fid 1）。
@@ -129,11 +135,11 @@ JSON 格式的 NS 特征分组：
 uv run python -c "from taac2026.infrastructure.experiments.discovery import discover_experiment_paths; print([p.name for p in discover_experiment_paths()])"
 
 # 2. 加载实验包
-uv run python -c "from taac2026.infrastructure.experiments.loader import load_experiment_package; exp = load_experiment_package('config/my_experiment'); print(exp.name)"
+uv run python -c "from taac2026.infrastructure.experiments.loader import load_experiment_package; exp = load_experiment_package('experiments/pcvr/my_experiment'); print(exp.name)"
 
 # 3. 训练 Smoke Test
 uv run taac-train \
-  --experiment config/my_experiment \
+    --experiment experiments/pcvr/my_experiment \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
   --max-epochs 1
@@ -145,7 +151,7 @@ uv run pytest tests/unit/test_experiment_packages.py -v
 ## 修改现有包的检查清单
 
 - [ ] `model_class_name` 与 `model.py` 中的类名一致
-- [ ] `ns_groups.json` 中的特征 ID 在 schema 范围内
+- [ ] `PCVRNSConfig` 中声明的特征 ID 在 schema 范围内
 - [ ] `forward()` 返回 `(B,)` 形状的 logits
 - [ ] `predict()` 返回 `(logits, embeddings)` 元组
 - [ ] `get_sparse_params()` 和 `get_dense_params()` 正确分类参数

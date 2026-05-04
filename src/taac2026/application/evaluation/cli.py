@@ -29,7 +29,7 @@ def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     single = subparsers.add_parser("single", help="evaluate one checkpoint on a labeled parquet dataset")
-    single.add_argument("--experiment", default="config/baseline")
+    single.add_argument("--experiment", required=True)
     single.add_argument("--dataset-path", required=True)
     single.add_argument("--schema-path", default=None)
     single.add_argument("--run-dir", default=None)
@@ -42,7 +42,7 @@ def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     _add_runtime_execution_args(single)
 
     infer = subparsers.add_parser("infer", help="write platform predictions.json")
-    infer.add_argument("--experiment", default="config/baseline")
+    infer.add_argument("--experiment", required=True)
     infer.add_argument("--dataset-path", required=True)
     infer.add_argument("--schema-path", default=None)
     infer.add_argument("--checkpoint", default=None)

@@ -76,22 +76,22 @@ uv sync --locked --extra cuda126
 uv sync --locked --extra dev --extra cuda126
 
 # 训练baseline
-bash run.sh train --experiment config/baseline \
+bash run.sh train --experiment experiments/pcvr/baseline \
   --dataset-path /path/to/dataset_dir \
   --schema-path /path/to/dataset_dir/schema.json
 
 # 评估默认输出目录中的 best_model/model.safetensors；single 模式始终只评估一个实验/一个 checkpoint
-bash run.sh val --experiment config/baseline \
+bash run.sh val --experiment experiments/pcvr/baseline \
   --dataset-path /path/to/dataset_dir \
   --schema-path /path/to/dataset_dir/schema.json
 ```
 
 ```bash
 # 生成线上训练上传文件
-uv run taac-package-train --experiment config/baseline
+uv run taac-package-train --experiment experiments/pcvr/baseline
 
 # 生成线上推理上传文件
-uv run taac-package-infer --experiment config/baseline
+uv run taac-package-infer --experiment experiments/pcvr/baseline
 
 # 跑完整训练栈回归（需 `--extra dev`）
 uv run pytest tests -q
@@ -101,15 +101,15 @@ uv run pytest tests -q
 
 | 实验包         | 目录                                           | 公开来源                                                                                                                                      |
 | -------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline       | [config/baseline](config/baseline)             | 官方 DHyFormer baseline                                                                                                                       |
-| Symbiosis      | [config/symbiosis](config/symbiosis)           | 本仓库维护的比赛用融合实验模型                                                                                                                |
-| CTR Baseline   | [config/ctr_baseline](config/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       |
-| DeepContextNet | [config/deepcontextnet](config/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) |
-| InterFormer    | [config/interformer](config/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
-| OneTrans       | [config/onetrans](config/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
-| HyFormer       | [config/hyformer](config/hyformer)             | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            |
-| UniRec         | [config/unirec](config/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     |
-| UniScaleFormer | [config/uniscaleformer](config/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             |
+| Baseline       | [experiments/pcvr/baseline](experiments/pcvr/baseline)             | 官方 DHyFormer baseline                                                                                                                       |
+| Symbiosis      | [experiments/pcvr/symbiosis](experiments/pcvr/symbiosis)           | 本仓库维护的比赛用融合实验模型                                                                                                                |
+| CTR Baseline   | [experiments/pcvr/ctr_baseline](experiments/pcvr/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       |
+| DeepContextNet | [experiments/pcvr/deepcontextnet](experiments/pcvr/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) |
+| InterFormer    | [experiments/pcvr/interformer](experiments/pcvr/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
+| OneTrans       | [experiments/pcvr/onetrans](experiments/pcvr/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
+| HyFormer       | [experiments/pcvr/hyformer](experiments/pcvr/hyformer)             | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            |
+| UniRec         | [experiments/pcvr/unirec](experiments/pcvr/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     |
+| UniScaleFormer | [experiments/pcvr/uniscaleformer](experiments/pcvr/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             |
 
 更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。
 

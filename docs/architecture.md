@@ -37,19 +37,22 @@ src/taac2026/
 实验包独立于框架之外：
 
 ```
-config/
-├── baseline/
-│   ├── __init__.py         # EXPERIMENT = PCVRExperiment(...)
-│   ├── model.py            # 模型实现
-│   └── ns_groups.json      # NS 特征分组
-├── symbiosis/
-├── ctr_baseline/
-├── deepcontextnet/
-├── hyformer/
-├── interformer/
-├── onetrans/
-├── unirec/
-└── uniscaleformer/
+experiments/
+├── pcvr/
+│   ├── baseline/
+│   │   ├── __init__.py     # EXPERIMENT = PCVRExperiment(...) 与 NS 分组配置
+│   │   └── model.py        # 模型实现
+│   ├── symbiosis/
+│   ├── ctr_baseline/
+│   ├── deepcontextnet/
+│   ├── hyformer/
+│   ├── interformer/
+│   ├── onetrans/
+│   ├── unirec/
+│   └── uniscaleformer/
+└── maintenance/
+  ├── host_device_info/
+  └── online_dataset_eda/
 ```
 
 ## 运行入口
@@ -74,9 +77,8 @@ config/
 
 | 文件             | 要求                                                                                    |
 | ---------------- | --------------------------------------------------------------------------------------- |
-| `__init__.py`    | 定义 `EXPERIMENT = PCVRExperiment(name, package_dir, model_class_name, train_defaults)` |
+| `__init__.py`    | 定义 `EXPERIMENT = PCVRExperiment(...)`，并在 `PCVRNSConfig` 中显式声明 NS 分组         |
 | `model.py`       | 实现模型类，必须暴露与 `model_class_name` 同名的类                                      |
-| `ns_groups.json` | JSON 格式的 NS 特征分组                                                                 |
 
 `PCVRExperiment` 提供三个方法：
 
@@ -104,7 +106,7 @@ class ModelInput(NamedTuple):
 `build_pcvr_model()` 根据 schema 和配置自动构建模型，负责：
 
 1. 解析 `schema.json` 生成 `user_int_feature_specs` / `item_int_feature_specs`
-2. 加载 `ns_groups.json` 生成 `user_ns_groups` / `item_ns_groups`
+2. 读取 `train_config` 中显式声明的 NS 分组，生成 `user_ns_groups` / `item_ns_groups`
 3. 实例化实验包中的模型类，传入所有规格参数
 
 模型必须实现的方法：
@@ -121,20 +123,30 @@ class ModelInput(NamedTuple):
 
 NS（Non-Sequential）Groups 将非序列特征 ID 映射到语义分组，供 NS Tokenizer 使用。
 
-`ns_groups.json` 格式：
+`__init__.py` 中的 `PCVRNSConfig` 写法：
 
-```json
-{
-  "user_ns_groups": {
-    "U1": [1, 15],
-    "U2": [48, 49, 89, 90, 91]
-  },
-  "item_ns_groups": {
-    "I1": [11, 13],
-    "I2": [5, 6, 7, 8, 12]
-  }
-}
+```python
+ns=PCVRNSConfig(
+    grouping_strategy="explicit",
+    metadata={
+        "_purpose": "Shared PCVR non-sequential feature grouping for this experiment package.",
+        "_note_T": "For the official schema, num_ns = 12 before model-specific tokenizer changes.",
+    },
+    user_groups={
+        "U1": [1, 15],
+        "U2": [48, 49, 89, 90, 91],
+    },
+    item_groups={
+        "I1": [11, 13],
+        "I2": [5, 6, 7, 8, 12],
+    },
+    tokenizer_type="rankmixer",
+    user_tokens=5,
+    item_tokens=2,
+)
 ```
+
+其中 `metadata` 是可选的语义注释承载位，用来保留原本 JSON 中的 `_purpose`、`_usage`、`_note_*` 这类说明，而不会重新引入独立资源文件。
 
 特征 ID 是列名的数字后缀（`user_int_feats_1` -> fid 1）。
 
@@ -151,7 +163,7 @@ NS（Non-Sequential）Groups 将非序列特征 ID 映射到语义分组，供 N
 2. **AMP** -- 可选混合精度训练，支持 `bfloat16` / `float16`
 3. **`torch.compile`** -- 可选 JIT 编译加速
 4. **Early Stopping** -- 基于验证集 AUC
-5. **Checkpoint** -- 保存 `model.safetensors` + 侧车文件（`schema.json`、`ns_groups.json`、`train_config.json`）
+5. **Checkpoint** -- 保存 `model.safetensors` + 侧车文件（`schema.json`、`train_config.json`，其中包含显式 NS 分组配置）
 6. **高基数 Embedding 重初始化** -- 每个 epoch 后重初始化低频特征的 Embedding
 
 损失函数（在 `infrastructure/training/runtime.py`）：
@@ -188,7 +200,7 @@ code_package.zip
 ├── .taac_training_manifest.json
 ├── pyproject.toml
 ├── src/taac2026/
-├── config/<experiment>/
+├── experiments/<group>/<experiment>/
 └── tools/
 ```
 
@@ -200,7 +212,7 @@ code_package.zip
 ├── .taac_inference_manifest.json
 ├── pyproject.toml
 ├── src/taac2026/
-├── config/<experiment>/
+├── experiments/<group>/<experiment>/
 └── <checkpoint>/
 ```
 

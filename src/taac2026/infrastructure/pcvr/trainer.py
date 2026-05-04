@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import sys
 import time
+from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -19,14 +19,10 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from taac2026.domain.metrics import binary_score_diagnostics
-from taac2026.infrastructure.checkpoints import (
-    build_checkpoint_dir_name,
-    preferred_checkpoint_path,
-    save_checkpoint_state_dict,
-    write_checkpoint_sidecars,
-)
+from taac2026.infrastructure.pcvr.config import DENSE_LR_SCHEDULER_TYPE_CHOICES
 from taac2026.infrastructure.pcvr.protocol import batch_to_model_input
 from taac2026.infrastructure.pcvr.tensors import sigmoid_probabilities_numpy
+from taac2026.infrastructure.pcvr.trainer_support import PCVRTrainerSupportMixin
 from taac2026.infrastructure.training.runtime import (
     BinaryClassificationLossConfig,
     DENSE_OPTIMIZER_TYPE_CHOICES,
@@ -57,7 +53,7 @@ def _format_duration(seconds: float) -> str:
     return str(timedelta(seconds=max(0, round(seconds))))
 
 
-class PCVRPointwiseTrainer:
+class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
     """PCVR trainer for binary pointwise classification with AUC monitoring."""
 
     def __init__(
@@ -67,11 +63,14 @@ class PCVRPointwiseTrainer:
         train_loader: DataLoader,
         valid_loader: DataLoader,
         lr: float,
-        num_epochs: int,
+        max_steps: int,
         device: str,
         save_dir: str | Path,
         early_stopping: EarlyStopping,
         dense_optimizer_type: str = "adamw",
+        scheduler_type: str = "none",
+        warmup_steps: int = 0,
+        min_lr_ratio: float = 0.0,
         loss_type: str = "bce",
         focal_alpha: float = 0.1,
         focal_gamma: float = 2.0,
@@ -79,12 +78,11 @@ class PCVRPointwiseTrainer:
         pairwise_auc_temperature: float = 1.0,
         sparse_lr: float = 0.05,
         sparse_weight_decay: float = 0.0,
-        reinit_sparse_after_epoch: int = 1,
+        reinit_sparse_every_n_steps: int = 0,
         reinit_cardinality_threshold: int = 0,
         ckpt_params: dict[str, Any] | None = None,
         writer: Any | None = None,
         schema_path: str | Path | None = None,
-        ns_groups_path: str | Path | None = None,
         eval_every_n_steps: int = 0,
         train_config: dict[str, Any] | None = None,
         runtime_execution: RuntimeExecutionConfig | None = None,
@@ -95,10 +93,21 @@ class PCVRPointwiseTrainer:
         self.valid_loader = valid_loader
         self.writer = writer
         self.schema_path = Path(schema_path).expanduser().resolve() if schema_path else None
-        self.ns_groups_path = Path(ns_groups_path).expanduser().resolve() if ns_groups_path else None
         self.dense_optimizer_type = str(dense_optimizer_type).strip().lower()
         if self.dense_optimizer_type not in DENSE_OPTIMIZER_TYPE_CHOICES:
             raise ValueError(f"unsupported dense optimizer type: {dense_optimizer_type}")
+        self.scheduler_type = str(scheduler_type).strip().lower()
+        if self.scheduler_type not in DENSE_LR_SCHEDULER_TYPE_CHOICES:
+            raise ValueError(f"unsupported scheduler type: {scheduler_type}")
+        self.warmup_steps = int(warmup_steps)
+        if self.warmup_steps < 0:
+            raise ValueError("warmup_steps must be non-negative")
+        self.min_lr_ratio = float(min_lr_ratio)
+        if not 0.0 <= self.min_lr_ratio <= 1.0:
+            raise ValueError("min_lr_ratio must be between 0.0 and 1.0")
+        self.base_dense_lr = float(lr)
+        self.current_dense_lr = self.base_dense_lr
+        self.optim_step = 0
         self.dense_params: list[nn.Parameter] = []
 
         self.sparse_optimizer: torch.optim.Optimizer | None
@@ -106,7 +115,10 @@ class PCVRPointwiseTrainer:
             sparse_params = model.get_sparse_params()
             dense_params = model.get_dense_params()
             if not sparse_params:
-                logging.info("Model exposes get_sparse_params but has no embedding parameters; using AdamW for all params")
+                logging.info(
+                    "Model exposes get_sparse_params but has no embedding parameters; using %s for all params",
+                    self._dense_optimizer_display_name(),
+                )
                 self.sparse_optimizer = None
                 self.dense_params = list(model.parameters())
                 self.dense_optimizer = self._build_dense_optimizer(self.dense_params, lr)
@@ -121,9 +133,10 @@ class PCVRPointwiseTrainer:
                     sparse_lr,
                 )
                 logging.info(
-                    "Dense params: %s tensors, %s parameters (AdamW lr=%s)",
+                    "Dense params: %s tensors, %s parameters (%s lr=%s)",
                     len(dense_params),
                     f"{dense_param_count:,}",
+                    self._dense_optimizer_display_name(),
                     lr,
                 )
                 self.sparse_optimizer = torch.optim.Adagrad(
@@ -135,7 +148,7 @@ class PCVRPointwiseTrainer:
             self.dense_params = list(model.parameters())
             self.dense_optimizer = self._build_dense_optimizer(self.dense_params, lr)
 
-        self.num_epochs = num_epochs
+        self.max_steps = int(max_steps)
         self.device = device
         self.save_dir = Path(save_dir).expanduser().resolve()
         self.early_stopping = early_stopping
@@ -161,7 +174,7 @@ class PCVRPointwiseTrainer:
         self.loss_type = self.loss_config.loss_type
         self.focal_alpha = self.loss_config.focal_alpha
         self.focal_gamma = self.loss_config.focal_gamma
-        self.reinit_sparse_after_epoch = reinit_sparse_after_epoch
+        self.reinit_sparse_every_n_steps = int(reinit_sparse_every_n_steps)
         self.reinit_cardinality_threshold = reinit_cardinality_threshold
         self.sparse_lr = sparse_lr
         self.sparse_weight_decay = sparse_weight_decay
@@ -173,110 +186,21 @@ class PCVRPointwiseTrainer:
         logging.info(
             "PCVRPointwiseTrainer loss_type=%s, focal_alpha=%s, focal_gamma=%s, "
             "pairwise_auc_weight=%s, pairwise_auc_temperature=%s, "
-            "dense_optimizer_type=%s, reinit_sparse_after_epoch=%s",
+            "dense_optimizer_type=%s, scheduler_type=%s, warmup_steps=%s, min_lr_ratio=%s, "
+            "max_steps=%s, reinit_sparse_every_n_steps=%s",
             self.loss_type,
             self.focal_alpha,
             self.focal_gamma,
             self.loss_config.pairwise_auc_weight,
             self.loss_config.pairwise_auc_temperature,
             self.dense_optimizer_type,
-            reinit_sparse_after_epoch,
+            self.scheduler_type,
+            self.warmup_steps,
+            self.min_lr_ratio,
+            self.max_steps,
+            self.reinit_sparse_every_n_steps,
         )
         logging.info("PCVRPointwiseTrainer runtime: %s", self.runtime_execution.summary(self.device))
-
-    def _build_dense_optimizer(self, parameters: list[nn.Parameter], lr: float) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(parameters, lr=lr, betas=(0.9, 0.98))
-
-    def _orthogonalize_dense_gradients(self) -> None:
-        if self.dense_optimizer_type != "orthogonal_adamw":
-            return
-        for parameter in self.dense_params:
-            gradient = parameter.grad
-            if gradient is None or gradient.ndim < 2:
-                continue
-            with torch.no_grad():
-                original_dtype = gradient.dtype
-                original_norm = gradient.norm().clamp_min(1e-12)
-                matrix = gradient.float().reshape(gradient.shape[0], -1)
-                transposed = matrix.shape[0] > matrix.shape[1]
-                if transposed:
-                    matrix = matrix.t()
-                matrix = matrix / matrix.norm().clamp_min(1e-12)
-                for _ in range(2):
-                    matrix = 1.5 * matrix - 0.5 * matrix @ (matrix.t() @ matrix)
-                if transposed:
-                    matrix = matrix.t()
-                gradient.copy_((matrix.reshape_as(gradient) * original_norm).to(original_dtype))
-
-    def _build_step_dir_name(self, global_step: int, is_best: bool = False) -> str:
-        return build_checkpoint_dir_name(global_step, self.ckpt_params, is_best=is_best)
-
-    def _write_sidecar_files(self, checkpoint_dir: Path) -> None:
-        write_checkpoint_sidecars(
-            checkpoint_dir,
-            schema_path=self.schema_path,
-            ns_groups_path=self.ns_groups_path,
-            train_config=self.train_config,
-        )
-
-    def _save_step_checkpoint(
-        self,
-        global_step: int,
-        is_best: bool = False,
-        skip_model_file: bool = False,
-    ) -> Path:
-        checkpoint_dir = self.save_dir / self._build_step_dir_name(global_step, is_best=is_best)
-        if not skip_model_file:
-            save_checkpoint_state_dict(self.model.state_dict(), checkpoint_dir)
-        self._write_sidecar_files(checkpoint_dir)
-        logging.info("Saved checkpoint to %s", preferred_checkpoint_path(checkpoint_dir))
-        return checkpoint_dir
-
-    def _remove_old_best_dirs(self) -> None:
-        for old_dir in self.save_dir.glob("global_step*.best_model"):
-            shutil.rmtree(old_dir)
-            logging.info("Removed old best_model dir: %s", old_dir)
-
-    def _batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
-        device_batch: dict[str, Any] = {}
-        for key, value in batch.items():
-            if isinstance(value, torch.Tensor):
-                device_batch[key] = value.to(self.device, non_blocking=True)
-            else:
-                device_batch[key] = value
-        return device_batch
-
-    def _handle_validation_result(
-        self,
-        total_step: int,
-        val_auc: float,
-        val_logloss: float,
-    ) -> None:
-        old_best = self.early_stopping.best_score
-        is_likely_new_best = (
-            old_best is None
-            or val_auc > old_best + self.early_stopping.delta
-        )
-        if not is_likely_new_best:
-            self.early_stopping(val_auc, self.model, {
-                "best_val_AUC": val_auc,
-                "best_val_logloss": val_logloss,
-                "best_val_score_diagnostics": self.last_eval_diagnostics,
-            })
-            return
-
-        best_dir = self.save_dir / self._build_step_dir_name(total_step, is_best=True)
-        self.early_stopping.checkpoint_path = str(preferred_checkpoint_path(best_dir))
-        self._remove_old_best_dirs()
-
-        self.early_stopping(val_auc, self.model, {
-            "best_val_AUC": val_auc,
-            "best_val_logloss": val_logloss,
-            "best_val_score_diagnostics": self.last_eval_diagnostics,
-        })
-
-        if self.early_stopping.best_score != old_best and Path(self.early_stopping.checkpoint_path).exists():
-            self._save_step_checkpoint(total_step, is_best=True, skip_model_file=True)
 
     def _log_loop_progress(
         self,
@@ -284,15 +208,10 @@ class PCVRPointwiseTrainer:
         current_batch: int,
         total_batches: int,
         *,
-        epoch: int | None = None,
         loop_started_at: float | None = None,
         loss: float | None = None,
     ) -> None:
-        prefix = f"{phase} progress"
-        if epoch is not None and epoch > 0:
-            prefix = f"{phase} epoch {epoch} progress"
-
-        message = f"{prefix} {current_batch}/{total_batches} ({current_batch / total_batches:.1%})"
+        message = f"{phase} progress {current_batch}/{total_batches} ({current_batch / total_batches:.1%})"
         if loop_started_at is not None and current_batch > 0:
             elapsed_seconds = max(0.0, time.monotonic() - loop_started_at)
             eta_seconds = elapsed_seconds * max(0, total_batches - current_batch) / current_batch
@@ -301,82 +220,63 @@ class PCVRPointwiseTrainer:
             message = f"{message} | loss={loss:.4f}"
         logging.info(message)
 
-    def _write_eval_diagnostics(self, total_step: int) -> None:
-        if self.writer is None:
-            return
-        for name, value in self.last_eval_diagnostics.items():
-            numeric_value = float(value)
-            if np.isfinite(numeric_value):
-                self.writer.add_scalar(f"Diagnostics/valid/{name}", numeric_value, total_step)
-
     def train(self) -> None:
-        print("Start training (PCVR pointwise)")
+        print("Start Training (PCVR pointwise)")
         self.model.train()
+
         total_step = 0
+        total_train_steps = self.max_steps if self.max_steps > 0 else self._logical_train_sweep_steps()
+        use_tqdm = _use_interactive_progress()
+        log_interval = _progress_log_interval(total_train_steps)
+        loop_started_at = time.monotonic()
+        eval_interval = self.eval_every_n_steps if self.eval_every_n_steps > 0 else self._logical_train_sweep_steps()
+        if self.early_stopping.patience_unit == "steps":
+            self.early_stopping.configure_step_scale(eval_interval)
+        train_iter = self._infinite_train_batches()
+        train_pbar = tqdm(total=total_train_steps, dynamic_ncols=True) if use_tqdm else None
+        window_loss_sum = 0.0
+        window_loss_steps = 0
+        evaluated_on_last_step = False
 
-        for epoch in range(1, self.num_epochs + 1):
-            total_train_batches = len(self.train_loader)
-            use_tqdm = _use_interactive_progress()
-            log_interval = _progress_log_interval(total_train_batches)
-            loop_started_at = time.monotonic()
-            train_iter = enumerate(self.train_loader)
-            train_pbar = (
-                tqdm(train_iter, total=total_train_batches, dynamic_ncols=True)
-                if use_tqdm
-                else train_iter
-            )
-            loss_sum = 0.0
+        while total_step < total_train_steps:
+            batch = next(train_iter)
+            loss = self._train_step(batch)
+            total_step += 1
+            window_loss_sum += loss
+            window_loss_steps += 1
 
-            for step_index, batch in train_pbar:
-                loss = self._train_step(batch)
-                total_step += 1
-                loss_sum += loss
+            if self.writer:
+                self.writer.add_scalar("Loss/train", loss, total_step)
+                self.writer.add_scalar("LR/dense", self.current_dense_lr, total_step)
 
-                if self.writer:
-                    self.writer.add_scalar("Loss/train", loss, total_step)
+            if train_pbar is not None:
+                train_pbar.update(1)
+                train_pbar.set_postfix({"loss": f"{loss:.4f}"})
+            elif _should_log_progress(total_step, total_train_steps, log_interval):
+                self._log_loop_progress(
+                    "Train",
+                    total_step,
+                    total_train_steps,
+                    loop_started_at=loop_started_at,
+                    loss=loss,
+                )
 
-                current_batch = step_index + 1
-                if use_tqdm:
-                    train_pbar.set_postfix({"loss": f"{loss:.4f}"})
-                elif _should_log_progress(current_batch, total_train_batches, log_interval):
-                    self._log_loop_progress(
-                        "Train",
-                        current_batch,
-                        total_train_batches,
-                        epoch=epoch,
-                        loop_started_at=loop_started_at,
-                        loss=loss,
-                    )
+            if self.reinit_sparse_every_n_steps > 0 and total_step % self.reinit_sparse_every_n_steps == 0:
+                self._rebuild_sparse_optimizer(total_step)
 
-                if self.eval_every_n_steps > 0 and total_step % self.eval_every_n_steps == 0:
-                    logging.info("Evaluating at step %s", total_step)
-                    val_auc, val_logloss = self.evaluate(epoch=epoch)
-                    self.model.train()
-                    torch.cuda.empty_cache()
+            if total_step % eval_interval != 0 and total_step != total_train_steps:
+                continue
 
-                    logging.info("Step %s Validation | AUC: %s, LogLoss: %s", total_step, val_auc, val_logloss)
+            logging.info("Train step %s, Average Loss: %s", total_step, window_loss_sum / max(1, window_loss_steps))
+            window_loss_sum = 0.0
+            window_loss_steps = 0
 
-                    if self.writer:
-                        self.writer.add_scalar("AUC/valid", val_auc, total_step)
-                        self.writer.add_scalar("LogLoss/valid", val_logloss, total_step)
-                        self._write_eval_diagnostics(total_step)
-
-                    self._handle_validation_result(total_step, val_auc, val_logloss)
-
-                    if self.early_stopping.early_stop:
-                        logging.info("Early stopping at step %s", total_step)
-                        return
-
-            if use_tqdm:
-                train_pbar.close()
-
-            logging.info("Epoch %s, Average Loss: %s", epoch, loss_sum / len(self.train_loader))
-
-            val_auc, val_logloss = self.evaluate(epoch=epoch)
+            logging.info("Evaluating at step %s", total_step)
+            val_auc, val_logloss = self.evaluate(step=total_step)
             self.model.train()
             torch.cuda.empty_cache()
 
-            logging.info("Epoch %s Validation | AUC: %s, LogLoss: %s", epoch, val_auc, val_logloss)
+            logging.info("Step %s Validation | AUC: %s, LogLoss: %s", total_step, val_auc, val_logloss)
 
             if self.writer:
                 self.writer.add_scalar("AUC/valid", val_auc, total_step)
@@ -384,34 +284,28 @@ class PCVRPointwiseTrainer:
                 self._write_eval_diagnostics(total_step)
 
             self._handle_validation_result(total_step, val_auc, val_logloss)
+            evaluated_on_last_step = total_step == total_train_steps
 
             if self.early_stopping.early_stop:
-                logging.info("Early stopping at epoch %s", epoch)
-                break
+                logging.info("Early stopping at step %s", total_step)
+                if train_pbar is not None:
+                    train_pbar.close()
+                return
 
-            if epoch >= self.reinit_sparse_after_epoch and self.sparse_optimizer is not None:
-                old_state: dict[int, Any] = {}
-                for group in self.sparse_optimizer.param_groups:
-                    for parameter in group["params"]:
-                        if parameter.data_ptr() in self.sparse_optimizer.state:
-                            old_state[parameter.data_ptr()] = self.sparse_optimizer.state[parameter]
+        if train_pbar is not None:
+            train_pbar.close()
 
-                reinit_ptrs = self.model.reinit_high_cardinality_params(self.reinit_cardinality_threshold)
-                sparse_params = self.model.get_sparse_params()
-                self.sparse_optimizer = torch.optim.Adagrad(
-                    sparse_params, lr=self.sparse_lr, weight_decay=self.sparse_weight_decay
-                )
-                restored = 0
-                for parameter in sparse_params:
-                    if parameter.data_ptr() not in reinit_ptrs and parameter.data_ptr() in old_state:
-                        self.sparse_optimizer.state[parameter] = old_state[parameter.data_ptr()]
-                        restored += 1
-                logging.info(
-                    "Rebuilt Adagrad optimizer after epoch %s, restored optimizer state for "
-                    "%s low-cardinality params",
-                    epoch,
-                    restored,
-                )
+        if not evaluated_on_last_step:
+            logging.info("Evaluating at step %s", total_step)
+            val_auc, val_logloss = self.evaluate(step=total_step)
+            self.model.train()
+            torch.cuda.empty_cache()
+            logging.info("Step %s Validation | AUC: %s, LogLoss: %s", total_step, val_auc, val_logloss)
+            if self.writer:
+                self.writer.add_scalar("AUC/valid", val_auc, total_step)
+                self.writer.add_scalar("LogLoss/valid", val_logloss, total_step)
+                self._write_eval_diagnostics(total_step)
+            self._handle_validation_result(total_step, val_auc, val_logloss)
 
     def _make_model_input(self, device_batch: dict[str, Any]) -> Any:
         return batch_to_model_input(device_batch, self.model_input_type, torch.device(self.device))
@@ -419,6 +313,7 @@ class PCVRPointwiseTrainer:
     def _train_step(self, batch: dict[str, Any]) -> float:
         device_batch = self._batch_to_device(batch)
         label = device_batch["label"].float()
+        self._set_dense_learning_rate(self.optim_step + 1)
 
         self.dense_optimizer.zero_grad()
         if self.sparse_optimizer is not None:
@@ -450,13 +345,13 @@ class PCVRPointwiseTrainer:
             if self.sparse_optimizer is not None:
                 self.sparse_optimizer.step()
 
+        self.optim_step += 1
+
         return loss.item()
 
-    def evaluate(self, epoch: int | None = None) -> tuple[float, float]:
+    def evaluate(self, step: int | None = None) -> tuple[float, float]:
         print("Start Evaluation (PCVR pointwise) - validation")
         self.model.eval()
-        if epoch is None:
-            epoch = -1
 
         total_valid_batches = len(self.valid_loader)
         use_tqdm = _use_interactive_progress()
@@ -483,7 +378,6 @@ class PCVRPointwiseTrainer:
                         "Validation",
                         current_batch,
                         total_valid_batches,
-                        epoch=epoch,
                         loop_started_at=loop_started_at,
                     )
 

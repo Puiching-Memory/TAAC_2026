@@ -11,7 +11,7 @@ import random
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -23,7 +23,12 @@ from taac2026.infrastructure.checkpoints import save_checkpoint_state_dict
 
 AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
 BINARY_LOSS_TYPE_CHOICES: tuple[str, ...] = ("bce", "focal")
-DENSE_OPTIMIZER_TYPE_CHOICES: tuple[str, ...] = ("adamw", "orthogonal_adamw")
+DENSE_OPTIMIZER_TYPE_CHOICES: tuple[str, ...] = (
+    "adamw",
+    "fused_adamw",
+    "orthogonal_adamw",
+    "muon",
+)
 _AMP_DTYPE_ALIASES = {
     "bf16": "bfloat16",
     "bfloat16": "bfloat16",
@@ -195,6 +200,8 @@ class EarlyStopping:
         patience: int = 5,
         verbose: bool = False,
         delta: float = 0,
+        patience_unit: Literal["evaluations", "steps"] = "evaluations",
+        step_scale: int = 1,
     ) -> None:
         self.checkpoint_path = str(checkpoint_path)
         self.patience = patience
@@ -207,6 +214,31 @@ class EarlyStopping:
         self.best_saved_score = 0.0
         self.best_extra_metrics: dict[str, Any] | None = None
         self.label = f"{label} " if label else ""
+        if patience_unit not in {"evaluations", "steps"}:
+            raise ValueError(f"unsupported patience_unit: {patience_unit}")
+        if step_scale <= 0:
+            raise ValueError("step_scale must be positive")
+        self.patience_unit = patience_unit
+        self.step_scale = int(step_scale)
+        self.best_step: int | None = None
+
+    @property
+    def resolved_patience(self) -> int:
+        if self.patience_unit == "steps":
+            return self.patience * self.step_scale
+        return self.patience
+
+    def configure_step_scale(self, step_scale: int) -> None:
+        if step_scale <= 0:
+            raise ValueError("step_scale must be positive")
+        self.step_scale = int(step_scale)
+
+    def _resolve_current_step(self, step: int | None) -> int:
+        if self.patience_unit != "steps":
+            return 0
+        if step is None:
+            raise ValueError("step is required when patience_unit='steps'")
+        return int(step)
 
     def _is_not_improved(self, score: float) -> bool:
         assert self.best_score is not None, "call __call__ first to seed best_score"
@@ -217,23 +249,37 @@ class EarlyStopping:
         score: float,
         model: nn.Module,
         extra_metrics: dict[str, Any] | None = None,
+        step: int | None = None,
     ) -> None:
+        current_step = self._resolve_current_step(step)
         if self.best_score is None:
             self.best_score = score
             self.best_extra_metrics = extra_metrics
             self.best_saved_score = 0.0
+            self.best_step = current_step if self.patience_unit == "steps" else None
             self.save_checkpoint(score, model)
             self.best_model = copy.deepcopy(model.state_dict())
         elif self._is_not_improved(score):
-            self.counter += 1
-            logging.info("%searlyStopping counter: %s / %s", self.label, self.counter, self.patience)
-            if self.counter >= self.patience:
+            if self.patience_unit == "steps":
+                assert self.best_step is not None
+                self.counter = max(0, current_step - self.best_step)
+            else:
+                self.counter += 1
+            logging.info(
+                "%searlyStopping counter: %s / %s %s",
+                self.label,
+                self.counter,
+                self.resolved_patience,
+                self.patience_unit,
+            )
+            if self.counter >= self.resolved_patience:
                 self.early_stop = True
         else:
             logging.info("%searlyStopping counter reset!", self.label)
             self.best_score = score
             self.best_model = copy.deepcopy(model.state_dict())
             self.best_extra_metrics = extra_metrics
+            self.best_step = current_step if self.patience_unit == "steps" else None
             self.save_checkpoint(score, model)
             self.counter = 0
 

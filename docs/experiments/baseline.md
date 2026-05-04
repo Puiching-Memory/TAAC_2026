@@ -36,7 +36,7 @@ HyFormer 是一个多查询混合 Transformer，核心组件：
 
 ```bash
 uv run taac-train \
-  --experiment config/baseline \
+  --experiment experiments/pcvr/baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
@@ -50,14 +50,13 @@ outputs/pcvr_baseline-<slug>/
 ├── global_step<N>.{params}.best_model/
 │   ├── model.safetensors
 │   ├── schema.json
-│   ├── ns_groups.json
 │   └── train_config.json
 └── events.out.tfevents.*    # TensorBoard 日志
 ```
 
 ## 来源
 
-- 模型源码：`config/baseline/model.py`
-- NS Groups：`config/baseline/ns_groups.json`
-- 训练配置：`config/baseline/__init__.py`
+- 模型源码：`experiments/pcvr/baseline/model.py`
+- NS Groups：`experiments/pcvr/baseline/__init__.py` 中的 `USER_NS_GROUPS` / `ITEM_NS_GROUPS`
+- 训练配置：`experiments/pcvr/baseline/__init__.py`
 - HyFormer 论文解读：[papers/hyformer.md](../papers/hyformer.md)

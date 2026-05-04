@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -15,9 +16,22 @@ from taac2026.infrastructure.training.runtime import (
 SeqEncoderType = Literal["swiglu", "transformer", "longer"]
 RankMixerMode = Literal["full", "ffn_only", "none"]
 NSTokenizerType = Literal["group", "rankmixer"]
+NSGroupingStrategy = Literal["explicit", "singleton"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
-PCVRDataCacheMode = Literal["none", "memory"]
-DenseOptimizerType = Literal["adamw", "orthogonal_adamw"]
+PCVRDataCacheMode = Literal["none", "memory", "opt"]
+DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
+DenseLRSchedulerType = Literal["none", "linear", "cosine"]
+RMSNormBackend = Literal["torch", "tilelang"]
+
+
+DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
+
+
+def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, list[int]]:
+    return {
+        str(group_name): [int(feature_id) for feature_id in feature_ids]
+        for group_name, feature_ids in groups.items()
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +75,7 @@ class PCVRDataCacheConfig:
 
     @property
     def enabled(self) -> bool:
-        return self.mode == "memory"
+        return self.mode in {"memory", "opt"}
 
 
 PCVRDataTransformConfig = (
@@ -129,22 +143,31 @@ def _data_transform_config_to_dict(
 @dataclass(frozen=True, slots=True)
 class PCVROptimizerConfig:
     lr: float = 1e-4
-    num_epochs: int = 999
+    max_steps: int = 0
     patience: int = 5
     seed: int = 42
     device: str | None = None
     dense_optimizer_type: DenseOptimizerType = "adamw"
+    scheduler_type: DenseLRSchedulerType = "none"
+    warmup_steps: int = 0
+    min_lr_ratio: float = 0.0
 
     def __post_init__(self) -> None:
         if self.dense_optimizer_type not in DENSE_OPTIMIZER_TYPE_CHOICES:
             raise ValueError(f"unsupported dense optimizer type: {self.dense_optimizer_type}")
+        if self.scheduler_type not in DENSE_LR_SCHEDULER_TYPE_CHOICES:
+            raise ValueError(f"unsupported scheduler type: {self.scheduler_type}")
+        if self.warmup_steps < 0:
+            raise ValueError("warmup_steps must be non-negative")
+        if not 0.0 <= self.min_lr_ratio <= 1.0:
+            raise ValueError("min_lr_ratio must be between 0.0 and 1.0")
 
 
 @dataclass(frozen=True, slots=True)
 class PCVRSparseOptimizerConfig:
     sparse_lr: float = 0.05
     sparse_weight_decay: float = 0.0
-    reinit_sparse_after_epoch: int = 1
+    reinit_sparse_every_n_steps: int = 0
     reinit_cardinality_threshold: int = 0
 
 
@@ -167,32 +190,36 @@ class PCVRModelConfig:
     rope_base: float = 10000.0
     emb_skip_threshold: int = 0
     seq_id_threshold: int = 10000
+    gradient_checkpointing: bool = False
+    rms_norm_backend: RMSNormBackend = "torch"
+    rms_norm_block_rows: int = 1
+
+    def __post_init__(self) -> None:
+        if self.rms_norm_backend not in {"torch", "tilelang"}:
+            raise ValueError(f"unsupported rms_norm backend: {self.rms_norm_backend}")
+        if self.rms_norm_block_rows < 1:
+            raise ValueError("rms_norm_block_rows must be positive")
 
 
 @dataclass(frozen=True, slots=True)
 class PCVRNSConfig:
-    groups_json: str = "ns_groups.json"
+    grouping_strategy: NSGroupingStrategy = "explicit"
+    metadata: dict[str, str] = field(default_factory=dict)
+    user_groups: dict[str, list[int]] = field(default_factory=dict)
+    item_groups: dict[str, list[int]] = field(default_factory=dict)
     tokenizer_type: NSTokenizerType = "rankmixer"
     user_tokens: int = 0
     item_tokens: int = 0
 
-
-@dataclass(frozen=True, slots=True)
-class PCVRSymbiosisConfig:
-    use_user_item_graph: bool = True
-    use_fourier_time: bool = True
-    use_context_exchange: bool = True
-    use_multi_scale: bool = True
-    use_domain_gate: bool = True
-    use_candidate_decoder: bool = True
-    use_action_conditioning: bool = True
-    use_compressed_memory: bool = True
-    use_attention_sink: bool = True
-    use_lane_mixing: bool = True
-    use_semantic_id: bool = True
-    memory_block_size: int = 16
-    memory_top_k: int = 8
-    recent_tokens: int = 64
+    def to_flat_dict(self) -> dict[str, Any]:
+        return {
+            "ns_grouping_strategy": self.grouping_strategy,
+            "user_ns_groups": _normalize_ns_group_map(self.user_groups),
+            "item_ns_groups": _normalize_ns_group_map(self.item_groups),
+            "ns_tokenizer_type": self.tokenizer_type,
+            "user_ns_tokens": self.user_tokens,
+            "item_ns_tokens": self.item_tokens,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +238,6 @@ class PCVRTrainConfig:
     )
     model: PCVRModelConfig = field(default_factory=PCVRModelConfig)
     ns: PCVRNSConfig = field(default_factory=PCVRNSConfig)
-    symbiosis: PCVRSymbiosisConfig = field(default_factory=PCVRSymbiosisConfig)
 
     def to_flat_dict(self) -> dict[str, Any]:
         return {
@@ -224,11 +250,14 @@ class PCVRTrainConfig:
             "seq_max_lens": self.data.seq_max_lens,
             **self.data_pipeline.to_flat_dict(),
             "lr": self.optimizer.lr,
-            "num_epochs": self.optimizer.num_epochs,
+            "max_steps": self.optimizer.max_steps,
             "patience": self.optimizer.patience,
             "seed": self.optimizer.seed,
             "device": self.optimizer.device,
             "dense_optimizer_type": self.optimizer.dense_optimizer_type,
+            "scheduler_type": self.optimizer.scheduler_type,
+            "warmup_steps": self.optimizer.warmup_steps,
+            "min_lr_ratio": self.optimizer.min_lr_ratio,
             "amp": self.runtime.amp,
             "amp_dtype": self.runtime.amp_dtype,
             "compile": self.runtime.compile,
@@ -239,7 +268,7 @@ class PCVRTrainConfig:
             "pairwise_auc_temperature": self.loss.pairwise_auc_temperature,
             "sparse_lr": self.sparse_optimizer.sparse_lr,
             "sparse_weight_decay": self.sparse_optimizer.sparse_weight_decay,
-            "reinit_sparse_after_epoch": self.sparse_optimizer.reinit_sparse_after_epoch,
+            "reinit_sparse_every_n_steps": self.sparse_optimizer.reinit_sparse_every_n_steps,
             "reinit_cardinality_threshold": self.sparse_optimizer.reinit_cardinality_threshold,
             "d_model": self.model.d_model,
             "emb_dim": self.model.emb_dim,
@@ -258,26 +287,9 @@ class PCVRTrainConfig:
             "rope_base": self.model.rope_base,
             "emb_skip_threshold": self.model.emb_skip_threshold,
             "seq_id_threshold": self.model.seq_id_threshold,
-            "ns_groups_json": self.ns.groups_json,
-            "ns_tokenizer_type": self.ns.tokenizer_type,
-            "user_ns_tokens": self.ns.user_tokens,
-            "item_ns_tokens": self.ns.item_tokens,
-            "symbiosis_use_user_item_graph": self.symbiosis.use_user_item_graph,
-            "symbiosis_use_fourier_time": self.symbiosis.use_fourier_time,
-            "symbiosis_use_context_exchange": self.symbiosis.use_context_exchange,
-            "symbiosis_use_multi_scale": self.symbiosis.use_multi_scale,
-            "symbiosis_use_domain_gate": self.symbiosis.use_domain_gate,
-            "symbiosis_use_candidate_decoder": self.symbiosis.use_candidate_decoder,
-            "symbiosis_use_action_conditioning": self.symbiosis.use_action_conditioning,
-            "symbiosis_use_compressed_memory": self.symbiosis.use_compressed_memory,
-            "symbiosis_use_attention_sink": self.symbiosis.use_attention_sink,
-            "symbiosis_use_lane_mixing": self.symbiosis.use_lane_mixing,
-            "symbiosis_use_semantic_id": self.symbiosis.use_semantic_id,
-            "symbiosis_memory_block_size": self.symbiosis.memory_block_size,
-            "symbiosis_memory_top_k": self.symbiosis.memory_top_k,
-            "symbiosis_recent_tokens": self.symbiosis.recent_tokens,
+            "gradient_checkpointing": self.model.gradient_checkpointing,
+            "rms_norm_backend": self.model.rms_norm_backend,
+            "rms_norm_block_rows": self.model.rms_norm_block_rows,
+            **self.ns.to_flat_dict(),
         }
-
-
-DEFAULT_PCVR_TRAIN_CONFIG = PCVRTrainConfig()
-REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(DEFAULT_PCVR_TRAIN_CONFIG.to_flat_dict())
+REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())

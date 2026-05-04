@@ -141,9 +141,9 @@ https_proxy=http://21.100.120.217:3128
 ```bash
 export TAAC_RUNNER=python
 export TAAC_PYTHON=/opt/conda/envs/competition/bin/python3
-export TAAC_DATASET_PATH=/path/to/train.parquet_or_dataset_dir
+export TRAIN_DATA_PATH=/path/to/train.parquet_or_dataset_dir
 export TAAC_SCHEMA_PATH=/path/to/schema.json
-export TAAC_OUTPUT_DIR=/path/to/output
+export TRAIN_CKPT_PATH=/path/to/output
 
 bash run.sh --device cuda
 ```
@@ -151,6 +151,7 @@ bash run.sh --device cuda
 设计约束：
 
 - `code_package.zip` 应包含运行代码和选中的实验包，不依赖线上 `uv sync`。
+- 训练 bundle 对数据和输出目录直接读取平台官方 `TRAIN_DATA_PATH`、`TRAIN_CKPT_PATH`；仅 `schema` 继续使用仓库自定义的 `TAAC_SCHEMA_PATH`。
 - `uv.lock` 只保留在仓库本地用于开发追溯，线上 bundle 不再包含它。
 - 缺少纯 Python 包时，先确认平台环境，再考虑用腾讯镜像补装。
 - 不要在任务启动时下载或覆盖核心 CUDA/PyTorch 栈。

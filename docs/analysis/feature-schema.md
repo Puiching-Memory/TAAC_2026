@@ -11,12 +11,13 @@ icon: lucide/table-properties
 
 Schema 会随数据集规模变化而变化。样本量越大，观测到的唯一值越多，基数越接近真实分布；因此 Train / Eval 不能再直接抄运行日志里的 `Loaded PCVR schema`，必须使用 split-specific observed schema sidecar。
 
-> [!IMPORTANT]
-> 当前运行日志里的 `PCVR train schema payload` / `PCVR valid schema payload` 是压缩成单行 JSON 的声明式 `schema.json`，便于日志检索，但它们不是 Train / Eval 独立统计结果。
->
-> 当前实现中，真正用于回填 Train / Eval 列的文件是：
-> - 训练：`train_split_observed_schema.json`、`valid_split_observed_schema.json`
-> - 评估：`evaluation_observed_schema.json`
+!!! important
+
+    当前运行日志里的 `PCVR train schema payload` / `PCVR valid schema payload` 是压缩成单行 JSON 的声明式 `schema.json`，便于日志检索，但它们不是 Train / Eval 独立统计结果。
+
+    当前实现中，真正用于回填 Train / Eval 列的文件是：
+    - 训练：`train_split_observed_schema.json`、`valid_split_observed_schema.json`
+    - 评估：`evaluation_observed_schema.json`
 
 ## 数据集与 Schema 对应关系
 

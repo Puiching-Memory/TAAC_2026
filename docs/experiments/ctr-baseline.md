@@ -34,7 +34,7 @@ CTRBaseline 是一个精简的 CTR 模型，设计目标是验证最基本的 Tr
 
 ```bash
 uv run taac-train \
-  --experiment config/ctr_baseline \
+  --experiment experiments/pcvr/ctr_baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
@@ -45,5 +45,5 @@ uv run taac-train \
 
 ## 来源
 
-- 模型源码：`config/ctr_baseline/model.py`
-- NS Groups：`config/ctr_baseline/ns_groups.json`
+- 模型源码：`experiments/pcvr/ctr_baseline/model.py`
+- NS Groups：`experiments/pcvr/ctr_baseline/__init__.py` 中的 `USER_NS_GROUPS` / `ITEM_NS_GROUPS`

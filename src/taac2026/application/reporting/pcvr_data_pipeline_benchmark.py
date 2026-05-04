@@ -27,6 +27,8 @@ def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:
     cache = PCVRDataCacheConfig()
     if args.pipeline_preset in {"cache", "augment"}:
         cache = PCVRDataCacheConfig(mode="memory", max_batches=args.cache_batches)
+    elif args.pipeline_preset == "opt":
+        cache = PCVRDataCacheConfig(mode="opt", max_batches=args.cache_batches)
     if args.pipeline_preset == "augment":
         transforms.extend(
             [
@@ -108,6 +110,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "dataset_path": str(args.dataset_path),
         "schema_path": str(args.schema_path),
         "pipeline_preset": args.pipeline_preset,
+        "cache_mode": pipeline_config.cache.mode,
+        "cache_impl": train_dataset.pipeline.cache.__class__.__name__,
+        "shared_cache": bool(getattr(train_dataset.pipeline.cache, "uses_global_access_trace", False)),
         "train_rows": train_dataset.num_rows,
         "train_row_groups": len(train_dataset._rg_list),
         "batch_size": args.batch_size,
@@ -144,13 +149,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--preset",
         dest="pipeline_preset",
-        choices=("none", "cache", "augment"),
+        choices=("none", "cache", "opt", "augment"),
         default="none",
         help="alias of --pipeline-preset",
     )
     parser.add_argument(
         "--pipeline-preset",
-        choices=("none", "cache", "augment"),
+        choices=("none", "cache", "opt", "augment"),
         default=None,
     )
     parser.add_argument("--cache-batches", type=int, default=512)

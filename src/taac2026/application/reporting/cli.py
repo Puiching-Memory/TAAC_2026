@@ -50,8 +50,8 @@ class BenchmarkResult:
     estimated_step_flops: float
     estimated_training_compute_tflops: float
     batch_size: int
-    train_steps_per_epoch: int
-    num_epochs: int
+    train_steps_per_sweep: int
+    max_steps: int
 
 def compute_pareto_frontier(rows: list[dict[str, Any]], *, x_key: str, y_key: str) -> list[dict[str, Any]]:
     frontier: list[dict[str, Any]] = []
@@ -76,8 +76,8 @@ def _load_model_module(experiment_path: str) -> Any:
 
 def _benchmark_override_args(args: argparse.Namespace) -> tuple[str, ...]:
     forwarded: list[str] = [
-        "--num_epochs",
-        str(args.num_epochs),
+        "--max_steps",
+        str(args.max_steps),
         "--num_workers",
         str(args.num_workers),
         "--device",
@@ -183,8 +183,8 @@ def _estimate_step_flops(
     return estimated_step_flops
 
 
-def _subtitle(dataset_path: Path, num_epochs: int) -> str:
-    return f"{dataset_path.name}, {num_epochs}-epoch smoke"
+def _subtitle(dataset_path: Path, max_steps: int) -> str:
+    return f"{dataset_path.name}, {max_steps}-step smoke"
 
 
 def _footer() -> str:
@@ -290,11 +290,11 @@ def benchmark_experiment(
         override_args,
     )
     total_params = sum(parameter.numel() for parameter in model.parameters())
-    train_steps_per_epoch = len(train_loader)
+    train_steps_per_sweep = len(train_loader)
     sample_batch = next(iter(train_loader))
     runtime_device = torch.device(parsed_args.device)
     estimated_step_flops = _estimate_step_flops(model, model_module, sample_batch, device=runtime_device)
-    estimated_training_compute_tflops = estimated_step_flops * train_steps_per_epoch * parsed_args.num_epochs / 1e12
+    estimated_training_compute_tflops = estimated_step_flops * parsed_args.max_steps / 1e12
 
     request = TrainRequest(
         experiment=experiment_path,
@@ -334,8 +334,8 @@ def benchmark_experiment(
         estimated_step_flops=estimated_step_flops,
         estimated_training_compute_tflops=estimated_training_compute_tflops,
         batch_size=int(parsed_args.batch_size),
-        train_steps_per_epoch=int(train_steps_per_epoch),
-        num_epochs=int(parsed_args.num_epochs),
+        train_steps_per_sweep=int(train_steps_per_sweep),
+        max_steps=int(parsed_args.max_steps),
     )
 
 
@@ -349,7 +349,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--report", default=str(DEFAULT_REPORT_PATH))
     parser.add_argument("--size-output", default=str(DEFAULT_SIZE_FIGURE))
     parser.add_argument("--compute-output", default=str(DEFAULT_COMPUTE_FIGURE))
-    parser.add_argument("--num-epochs", type=int, default=10)
+    parser.add_argument("--max-steps", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", default="cpu")
@@ -395,7 +395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     write_path(report_path, report_payload, indent=2, trailing_newline=True)
 
-    subtitle = _subtitle(dataset_path, args.num_epochs)
+    subtitle = _subtitle(dataset_path, args.max_steps)
     footer = _footer()
     _render_plot(
         report_rows,

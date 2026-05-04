@@ -56,9 +56,8 @@ uv run pytest tests/unit -m unit -v
 
 | 改动模块                               | 必须运行的测试                                                |
 | -------------------------------------- | ------------------------------------------------------------- |
-| `config/*/model.py`                    | `test_experiment_packages.py`                                 |
-| `config/*/ns_groups.json`              | `test_experiment_packages.py`, `test_pcvr_protocol.py`        |
-| `config/*/__init__.py`                 | `test_experiment_packages.py`, `test_experiment_discovery.py` |
+| `experiments/pcvr/*/model.py`          | `test_experiment_packages.py`                                 |
+| `experiments/pcvr/*/__init__.py`       | `test_experiment_packages.py`, `test_experiment_discovery.py`, `test_pcvr_protocol.py` |
 | `infrastructure/pcvr/protocol.py`      | `test_pcvr_protocol.py`, `test_runtime_contract_matrix.py`    |
 | `infrastructure/pcvr/trainer.py`       | `test_pcvr_trainer.py`                                        |
 | `infrastructure/pcvr/data.py`          | `test_pcvr_data_split.py`                                     |

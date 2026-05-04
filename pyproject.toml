@@ -20,6 +20,7 @@ dependencies = [
 	"rich==14.3.3",
 	"safetensors==0.7.0",
 	"scikit-learn==1.7.2",
+	"tilelang==0.1.9",
 	"tensorboard==2.19.0",
 	"tomli==2.4.0",
 	"tqdm==4.67.3",
@@ -75,6 +76,8 @@ taac-plot-model-performance = "taac2026.application.reporting.cli:main"
 taac-tech-timeline = "taac2026.application.reporting.timeline_cli:main"
 taac-bench-report = "taac2026.application.reporting.bench_cli:main"
 taac-benchmark-pcvr-data-pipeline = "taac2026.application.reporting.pcvr_data_pipeline_benchmark:main"
+taac-benchmark-pcvr-optimizer = "taac2026.application.reporting.pcvr_optimizer_benchmark:main"
+taac-benchmark-pcvr-tilelang-ops = "taac2026.application.reporting.pcvr_tilelang_ops_benchmark:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "taac2026.__version__"}

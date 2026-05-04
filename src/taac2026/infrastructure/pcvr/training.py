@@ -11,36 +11,28 @@ from typing import Any
 
 import torch
 
-import taac2026.infrastructure.pcvr.data as pcvr_data
-from taac2026.infrastructure.pcvr.config import (
-    DEFAULT_PCVR_TRAIN_CONFIG,
-    PCVRTrainConfig,
+from taac2026.infrastructure.pcvr.config import DENSE_LR_SCHEDULER_TYPE_CHOICES, PCVRTrainConfig
+from taac2026.infrastructure.pcvr.protocol import resolve_schema_path
+from taac2026.infrastructure.pcvr.train_stack import (
+    PCVRTrainContext,
+    PCVRTrainHooks,
 )
-from taac2026.infrastructure.pcvr.protocol import (
-    build_pcvr_model,
-    load_ns_groups,
-    parse_seq_max_lens,
-    resolve_ns_groups_path,
-    resolve_schema_path,
-)
-from taac2026.infrastructure.pcvr.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.training.runtime import (
     AMP_DTYPE_CHOICES,
     BINARY_LOSS_TYPE_CHOICES,
     DENSE_OPTIMIZER_TYPE_CHOICES,
-    EarlyStopping,
     RuntimeExecutionConfig,
     create_logger,
     set_seed,
 )
 
 
-def parse_pcvr_train_args(
-    argv: Sequence[str] | None = None,
+def build_pcvr_train_arg_parser(
     *,
     package_dir: Path,
-    defaults: PCVRTrainConfig = DEFAULT_PCVR_TRAIN_CONFIG,
-) -> argparse.Namespace:
+    defaults: PCVRTrainConfig,
+) -> argparse.ArgumentParser:
+    del package_dir
     default_values = defaults.to_flat_dict()
     parser = argparse.ArgumentParser(description="Train a PCVR experiment")
 
@@ -56,7 +48,7 @@ def parse_pcvr_train_args(
 
     parser.add_argument("--batch_size", type=int, default=default_values["batch_size"])
     parser.add_argument("--lr", type=float, default=default_values["lr"])
-    parser.add_argument("--num_epochs", type=int, default=default_values["num_epochs"])
+    parser.add_argument("--max_steps", type=int, default=default_values["max_steps"])
     parser.add_argument("--patience", type=int, default=default_values["patience"])
     parser.add_argument("--seed", type=int, default=default_values["seed"])
     parser.add_argument(
@@ -70,6 +62,27 @@ def parse_pcvr_train_args(
         dest="dense_optimizer_type",
         default=default_values["dense_optimizer_type"],
         choices=DENSE_OPTIMIZER_TYPE_CHOICES,
+    )
+    parser.add_argument(
+        "--scheduler_type",
+        "--scheduler-type",
+        dest="scheduler_type",
+        default=default_values["scheduler_type"],
+        choices=DENSE_LR_SCHEDULER_TYPE_CHOICES,
+    )
+    parser.add_argument(
+        "--warmup_steps",
+        "--warmup-steps",
+        dest="warmup_steps",
+        type=int,
+        default=default_values["warmup_steps"],
+    )
+    parser.add_argument(
+        "--min_lr_ratio",
+        "--min-lr-ratio",
+        dest="min_lr_ratio",
+        type=float,
+        default=default_values["min_lr_ratio"],
     )
     parser.add_argument(
         "--amp", action=argparse.BooleanOptionalAction, default=default_values["amp"]
@@ -144,6 +157,25 @@ def parse_pcvr_train_args(
         "--use_rope", action="store_true", default=default_values["use_rope"]
     )
     parser.add_argument("--rope_base", type=float, default=default_values["rope_base"])
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["gradient_checkpointing"],
+    )
+    parser.add_argument(
+        "--rms_norm_backend",
+        "--rms-norm-backend",
+        dest="rms_norm_backend",
+        default=default_values["rms_norm_backend"],
+        choices=["torch", "tilelang"],
+    )
+    parser.add_argument(
+        "--rms_norm_block_rows",
+        "--rms-norm-block-rows",
+        dest="rms_norm_block_rows",
+        type=int,
+        default=default_values["rms_norm_block_rows"],
+    )
 
     parser.add_argument(
         "--loss_type",
@@ -178,9 +210,9 @@ def parse_pcvr_train_args(
         default=default_values["sparse_weight_decay"],
     )
     parser.add_argument(
-        "--reinit_sparse_after_epoch",
+        "--reinit_sparse_every_n_steps",
         type=int,
-        default=default_values["reinit_sparse_after_epoch"],
+        default=default_values["reinit_sparse_every_n_steps"],
     )
     parser.add_argument(
         "--reinit_cardinality_threshold",
@@ -195,7 +227,6 @@ def parse_pcvr_train_args(
         "--seq_id_threshold", type=int, default=default_values["seq_id_threshold"]
     )
 
-    parser.add_argument("--ns_groups_json", default=default_values["ns_groups_json"])
     parser.add_argument(
         "--ns_tokenizer_type",
         default=default_values["ns_tokenizer_type"],
@@ -208,101 +239,40 @@ def parse_pcvr_train_args(
         "--item_ns_tokens", type=int, default=default_values["item_ns_tokens"]
     )
 
-    parser.add_argument(
-        "--symbiosis_use_user_item_graph",
-        "--symbiosis-use-user-item-graph",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_user_item_graph"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_fourier_time",
-        "--symbiosis-use-fourier-time",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_fourier_time"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_context_exchange",
-        "--symbiosis-use-context-exchange",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_context_exchange"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_multi_scale",
-        "--symbiosis-use-multi-scale",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_multi_scale"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_domain_gate",
-        "--symbiosis-use-domain-gate",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_domain_gate"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_candidate_decoder",
-        "--symbiosis-use-candidate-decoder",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_candidate_decoder"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_action_conditioning",
-        "--symbiosis-use-action-conditioning",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_action_conditioning"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_compressed_memory",
-        "--symbiosis-use-compressed-memory",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_compressed_memory"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_attention_sink",
-        "--symbiosis-use-attention-sink",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_attention_sink"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_lane_mixing",
-        "--symbiosis-use-lane-mixing",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_lane_mixing"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_semantic_id",
-        "--symbiosis-use-semantic-id",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["symbiosis_use_semantic_id"],
-    )
-    parser.add_argument(
-        "--symbiosis_memory_block_size",
-        "--symbiosis-memory-block-size",
-        dest="symbiosis_memory_block_size",
-        type=int,
-        default=default_values["symbiosis_memory_block_size"],
-    )
-    parser.add_argument(
-        "--symbiosis_memory_top_k",
-        "--symbiosis-memory-top-k",
-        dest="symbiosis_memory_top_k",
-        type=int,
-        default=default_values["symbiosis_memory_top_k"],
-    )
-    parser.add_argument(
-        "--symbiosis_recent_tokens",
-        "--symbiosis-recent-tokens",
-        dest="symbiosis_recent_tokens",
-        type=int,
-        default=default_values["symbiosis_recent_tokens"],
-    )
+    return parser
 
-    args = parser.parse_args(argv)
+
+def apply_pcvr_train_arg_env_overrides(args: argparse.Namespace) -> argparse.Namespace:
     args.data_dir = os.environ.get("TRAIN_DATA_PATH", args.data_dir)
-    args.schema_path = os.environ.get("TRAIN_SCHEMA_PATH", args.schema_path)
+    args.schema_path = os.environ.get("TAAC_SCHEMA_PATH", args.schema_path)
     args.ckpt_dir = os.environ.get("TRAIN_CKPT_PATH", args.ckpt_dir)
     args.log_dir = os.environ.get("TRAIN_LOG_PATH", args.log_dir)
     args.tf_events_dir = os.environ.get("TRAIN_TF_EVENTS_PATH", args.tf_events_dir)
     return args
+
+
+def apply_pcvr_train_non_cli_defaults(
+    args: argparse.Namespace,
+    *,
+    defaults: PCVRTrainConfig,
+) -> argparse.Namespace:
+    ns_defaults = defaults.ns.to_flat_dict()
+    args.ns_grouping_strategy = ns_defaults["ns_grouping_strategy"]
+    args.user_ns_groups = ns_defaults["user_ns_groups"]
+    args.item_ns_groups = ns_defaults["item_ns_groups"]
+    return args
+
+
+def parse_pcvr_train_args(
+    argv: Sequence[str] | None = None,
+    *,
+    package_dir: Path,
+    defaults: PCVRTrainConfig,
+) -> argparse.Namespace:
+    parser = build_pcvr_train_arg_parser(package_dir=package_dir, defaults=defaults)
+    args = parser.parse_args(argv)
+    args = apply_pcvr_train_arg_env_overrides(args)
+    return apply_pcvr_train_non_cli_defaults(args, defaults=defaults)
 
 
 def _required_path(value: str | None, name: str) -> Path:
@@ -316,10 +286,12 @@ def train_pcvr_model(
     model_module: Any,
     model_class_name: str,
     package_dir: Path,
-    defaults: PCVRTrainConfig = DEFAULT_PCVR_TRAIN_CONFIG,
+    defaults: PCVRTrainConfig,
+    arg_parser: Any,
+    train_hooks: PCVRTrainHooks,
     argv: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    args = parse_pcvr_train_args(argv, package_dir=package_dir, defaults=defaults)
+    args = arg_parser(argv, package_dir=package_dir, defaults=defaults)
     data_dir = _required_path(args.data_dir, "data_dir")
     ckpt_dir = _required_path(args.ckpt_dir, "ckpt_dir")
     log_dir = _required_path(args.log_dir, "log_dir")
@@ -353,102 +325,28 @@ def train_pcvr_model(
             Path(args.schema_path) if args.schema_path else None,
             ckpt_dir,
         )
-
-        seq_max_lens = parse_seq_max_lens(str(args.seq_max_lens))
-        if seq_max_lens:
-            logging.info("Seq max_lens override: %s", seq_max_lens)
-
-        logging.info("Using PCVR Parquet data pipeline")
-        train_loader, valid_loader, pcvr_dataset = pcvr_data.get_pcvr_data(
-            data_dir=str(data_dir),
-            schema_path=str(schema_path),
-            batch_size=args.batch_size,
-            valid_ratio=args.valid_ratio,
-            train_ratio=args.train_ratio,
-            num_workers=args.num_workers,
-            buffer_batches=args.buffer_batches,
-            seed=args.seed,
-            seq_max_lens=seq_max_lens,
-            data_pipeline_config=data_pipeline_config,
-        )
-
-        user_ns_groups, item_ns_groups = load_ns_groups(
-            pcvr_dataset, config, package_dir, ckpt_dir
-        )
-        logging.info("User NS groups: %s", user_ns_groups)
-        logging.info("Item NS groups: %s", item_ns_groups)
-
-        model = build_pcvr_model(
+        context = PCVRTrainContext(
             model_module=model_module,
             model_class_name=model_class_name,
-            data_module=pcvr_data,
-            dataset=pcvr_dataset,
-            config=config,
             package_dir=package_dir,
-            checkpoint_dir=ckpt_dir,
-        ).to(args.device)
-
-        num_sequences = len(pcvr_dataset.seq_domains)
-        num_ns = model.num_ns
-        token_count = args.num_queries * num_sequences + num_ns
-        logging.info(
-            "PCVR model created: class=%s, num_ns=%s, T=%s, d_model=%s, rank_mixer_mode=%s",
-            model_class_name,
-            num_ns,
-            token_count,
-            args.d_model,
-            args.rank_mixer_mode,
-        )
-        total_params = sum(parameter.numel() for parameter in model.parameters())
-        logging.info("Total parameters: %s", f"{total_params:,}")
-
-        early_stopping = EarlyStopping(
-            checkpoint_path=ckpt_dir / "placeholder" / "model.safetensors",
-            patience=args.patience,
-            label="model",
-        )
-        checkpoint_params = {
-            "blocks": args.num_blocks,
-            "head": args.num_heads,
-            "hidden": args.d_model,
-        }
-        resolved_ns_groups_path = resolve_ns_groups_path(
-            str(args.ns_groups_json), package_dir, ckpt_dir
-        )
-        trainer = PCVRPointwiseTrainer(
-            model=model,
-            model_input_type=model_module.ModelInput,
-            train_loader=train_loader,
-            valid_loader=valid_loader,
-            lr=args.lr,
-            num_epochs=args.num_epochs,
-            device=args.device,
-            save_dir=ckpt_dir,
-            early_stopping=early_stopping,
-            dense_optimizer_type=args.dense_optimizer_type,
-            loss_type=args.loss_type,
-            focal_alpha=args.focal_alpha,
-            focal_gamma=args.focal_gamma,
-            pairwise_auc_weight=args.pairwise_auc_weight,
-            pairwise_auc_temperature=args.pairwise_auc_temperature,
-            sparse_lr=args.sparse_lr,
-            sparse_weight_decay=args.sparse_weight_decay,
-            reinit_sparse_after_epoch=args.reinit_sparse_after_epoch,
-            reinit_cardinality_threshold=args.reinit_cardinality_threshold,
-            ckpt_params=checkpoint_params,
-            writer=writer,
+            defaults=defaults,
+            args=args,
+            config=config,
+            data_dir=data_dir,
+            ckpt_dir=ckpt_dir,
+            log_dir=log_dir,
+            tf_events_dir=tf_events_dir,
             schema_path=schema_path,
-            ns_groups_path=resolved_ns_groups_path,
-            eval_every_n_steps=args.eval_every_n_steps,
-            train_config=config,
             runtime_execution=runtime_execution,
+            writer=writer,
         )
-        trainer.train()
+        data_bundle = train_hooks.build_data(context)
+        model = train_hooks.build_model(context, data_bundle)
+        trainer = train_hooks.build_trainer(context, data_bundle, model)
+        train_hooks.run_training(context, trainer)
+        summary = dict(train_hooks.build_summary(context, trainer) or {})
     finally:
         writer.close()
 
     logging.info("Training complete!")
-    return {
-        "run_dir": str(ckpt_dir),
-        "checkpoint_root": str(ckpt_dir),
-    }
+    return summary

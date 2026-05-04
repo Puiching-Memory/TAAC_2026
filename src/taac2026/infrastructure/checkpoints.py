@@ -149,7 +149,6 @@ def write_checkpoint_sidecars(
     checkpoint_dir: Path,
     *,
     schema_path: Path | None = None,
-    ns_groups_path: Path | None = None,
     train_config: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -160,17 +159,8 @@ def write_checkpoint_sidecars(
         shutil.copy2(schema_path, target)
         written["schema"] = target
 
-    ns_groups_copied = False
-    if ns_groups_path is not None and ns_groups_path.exists():
-        target = checkpoint_dir / "ns_groups.json"
-        shutil.copy2(ns_groups_path, target)
-        written["ns_groups"] = target
-        ns_groups_copied = True
-
     if train_config is not None:
         config_to_dump = dict(train_config)
-        if ns_groups_copied:
-            config_to_dump["ns_groups_json"] = "ns_groups.json"
         target = checkpoint_dir / "train_config.json"
         write_path(target, config_to_dump, indent=2, trailing_newline=True)
         written["train_config"] = target

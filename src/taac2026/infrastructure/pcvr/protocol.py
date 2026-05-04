@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import inspect
 from pathlib import Path
 from typing import Any
 
 import torch
-
-from taac2026.infrastructure.io.files import read_json
 
 
 def parse_seq_max_lens(value: str) -> dict[str, int]:
@@ -48,29 +47,17 @@ def resolve_schema_path(dataset_path: Path, schema_path: Path | None, checkpoint
     raise FileNotFoundError("schema.json not found from CLI, checkpoint sidecar, or dataset directory")
 
 
-def resolve_ns_groups_path(value: str, package_dir: Path, checkpoint_dir: Path) -> Path | None:
-    if not value:
-        return None
-    candidates: list[Path] = []
-    raw_path = Path(value)
-    if raw_path.is_absolute():
-        candidates.append(raw_path)
-    else:
-        candidates.extend([checkpoint_dir / raw_path, package_dir / raw_path, Path.cwd() / raw_path])
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    raise FileNotFoundError(f"NS groups JSON not found: {value}")
-
-
 def load_ns_groups(dataset: Any, config: dict[str, Any], package_dir: Path, checkpoint_dir: Path) -> tuple[list[list[int]], list[list[int]]]:
-    ns_groups_path = resolve_ns_groups_path(str(config["ns_groups_json"]), package_dir, checkpoint_dir)
-    if ns_groups_path is None:
+    del package_dir, checkpoint_dir
+    if config["ns_grouping_strategy"] == "singleton":
         return (
             [[index] for index in range(len(dataset.user_int_schema.entries))],
             [[index] for index in range(len(dataset.item_int_schema.entries))],
         )
-    ns_groups_config = read_json(ns_groups_path)
+    ns_groups_config = {
+        "user_ns_groups": config["user_ns_groups"],
+        "item_ns_groups": config["item_ns_groups"],
+    }
     user_feature_to_index = {
         feature_id: index for index, (feature_id, _offset, _length) in enumerate(dataset.user_int_schema.entries)
     }
@@ -103,10 +90,20 @@ def build_pcvr_model(
     config: dict[str, Any],
     package_dir: Path,
     checkpoint_dir: Path,
+    extra_model_kwargs: Mapping[str, Any] | None = None,
 ) -> torch.nn.Module:
     user_ns_groups, item_ns_groups = load_ns_groups(dataset, config, package_dir, checkpoint_dir)
     user_int_feature_specs = build_feature_specs(dataset.user_int_schema, dataset.user_int_vocab_sizes)
     item_int_feature_specs = build_feature_specs(dataset.item_int_schema, dataset.item_int_vocab_sizes)
+    configure_rms_norm_runtime = getattr(model_module, "configure_rms_norm_runtime", None)
+    if callable(configure_rms_norm_runtime):
+        rms_norm_block_rows = int(config.get("rms_norm_block_rows", 1))
+        if rms_norm_block_rows < 1:
+            raise ValueError("rms_norm_block_rows must be positive")
+        configure_rms_norm_runtime(
+            rms_norm_backend=str(config.get("rms_norm_backend", "torch")),
+            rms_norm_block_rows=rms_norm_block_rows,
+        )
     model_class = getattr(model_module, model_class_name)
     model_kwargs = dict(
         user_int_feature_specs=user_int_feature_specs,
@@ -133,33 +130,16 @@ def build_pcvr_model(
         rope_base=float(config["rope_base"]),
         emb_skip_threshold=int(config["emb_skip_threshold"]),
         seq_id_threshold=int(config["seq_id_threshold"]),
+        gradient_checkpointing=bool(config["gradient_checkpointing"]),
         ns_tokenizer_type=str(config["ns_tokenizer_type"]),
         user_ns_tokens=int(config["user_ns_tokens"]),
         item_ns_tokens=int(config["item_ns_tokens"]),
     )
-    model_signature = inspect.signature(model_class)
-    for key in (
-        "symbiosis_use_user_item_graph",
-        "symbiosis_use_fourier_time",
-        "symbiosis_use_context_exchange",
-        "symbiosis_use_multi_scale",
-        "symbiosis_use_domain_gate",
-        "symbiosis_use_candidate_decoder",
-        "symbiosis_use_action_conditioning",
-        "symbiosis_use_compressed_memory",
-        "symbiosis_use_attention_sink",
-        "symbiosis_use_lane_mixing",
-        "symbiosis_use_semantic_id",
-    ):
-        if key in model_signature.parameters:
-            model_kwargs[key] = bool(config[key])
-    for key in (
-        "symbiosis_memory_block_size",
-        "symbiosis_memory_top_k",
-        "symbiosis_recent_tokens",
-    ):
-        if key in model_signature.parameters:
-            model_kwargs[key] = int(config[key])
+    if extra_model_kwargs:
+        model_signature = inspect.signature(model_class)
+        for key, value in extra_model_kwargs.items():
+            if key in model_signature.parameters:
+                model_kwargs[key] = value
     return model_class(**model_kwargs)
 
 

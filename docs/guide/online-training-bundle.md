@@ -12,7 +12,7 @@ icon: lucide/package
 
 ```bash
 uv run taac-package-train \
-  --experiment config/symbiosis \
+  --experiment experiments/pcvr/symbiosis \
   --output-dir outputs/bundle
 ```
 
@@ -30,11 +30,10 @@ outputs/bundle/
 code_package.zip
 ├── .taac_training_manifest.json   # Bundle 元信息
 ├── pyproject.toml                 # 依赖声明
-├── config/__init__.py
-├── config/<experiment>/           # 实验包
+├── experiments/__init__.py
+├── experiments/<group>/<experiment>/
 │   ├── __init__.py
-│   ├── model.py / task 入口
-│   └── ns_groups.json             # 仅 PCVR 训练实验需要
+│   └── model.py / task 入口
 └── src/taac2026/                  # 框架源码
 ```
 
@@ -52,18 +51,18 @@ code_package.zip
 
 除 PCVR 模型训练外，以下任务也可打包成同样的双文件 Bundle：
 
-- `config/host_device_info`：采集主机、GPU、网络、依赖源探测等环境信息，结果直接打印到日志
-- `config/online_dataset_eda`：对线上 parquet 做 EDA，结果直接打印到日志
+- `experiments/maintenance/host_device_info`：采集主机、GPU、网络、依赖源探测等环境信息，结果直接打印到日志
+- `experiments/maintenance/online_dataset_eda`：对线上 parquet 做 EDA，结果直接打印到日志
 
 示例：
 
 ```bash
 uv run taac-package-train \
-  --experiment config/host_device_info \
+  --experiment experiments/maintenance/host_device_info \
   --output-dir outputs/bundles/host_device_info
 
 uv run taac-package-train \
-  --experiment config/online_dataset_eda \
+  --experiment experiments/maintenance/online_dataset_eda \
   --output-dir outputs/bundles/online_dataset_eda
 ```
 
@@ -74,12 +73,12 @@ uv run taac-package-train \
 bash run.sh
 
 # online dataset EDA 需要数据集和 schema
-export TAAC_DATASET_PATH=/path/to/train.parquet_or_dir
+export TRAIN_DATA_PATH=/path/to/train.parquet_or_dir
 export TAAC_SCHEMA_PATH=/path/to/schema.json
 bash run.sh
 ```
 
-如需限制扫描行数或调整批大小，请直接编辑 [config/online_dataset_eda/__init__.py](config/online_dataset_eda/__init__.py) 中的 `ONLINE_DATASET_EDA_CONFIG`。
+如需限制扫描行数或调整批大小，请直接编辑 [experiments/maintenance/online_dataset_eda/__init__.py](experiments/maintenance/online_dataset_eda/__init__.py) 中的 `ONLINE_DATASET_EDA_CONFIG`。
 
 ## 推理 Bundle
 
@@ -87,7 +86,7 @@ bash run.sh
 
 ```bash
 uv run taac-package-infer \
-  --experiment config/symbiosis \
+  --experiment experiments/pcvr/symbiosis \
   --output-dir outputs/bundle
 ```
 
@@ -114,19 +113,20 @@ outputs/bundle/
 
 Bundle 格式与官方 Baseline 兼容：
 
-- `run.sh` 支持平台的环境变量约定
+- `run.sh` 保持双文件上传入口，但训练运行统一读取 `TAAC_*` 变量
+- `run.sh` 保持双文件上传入口，训练数据和输出目录直接读取平台官方 `TRAIN_*` 变量
 - `infer.py` 输出标准 `predictions.json` 格式
 - `pyproject.toml` 声明所有必要依赖
 
 ## pyproject 依赖安装
 
-平台使用 `uv` 安装依赖：
+Bundle 模式使用当前 Python 的 `pip` 安装项目 runtime 依赖：
 
 ```bash
-uv sync --extra cuda126
+python -m pip install .
 ```
 
-确保 `pyproject.toml` 中的依赖在平台上可安装。如果使用自定义依赖，需要在 Bundle 中包含。
+确保 `pyproject.toml` 中声明的依赖能在平台当前 Python 环境中安装。如果使用自定义纯 Python 依赖，需要让平台可通过可达镜像安装它们；核心 CUDA / PyTorch 栈应复用平台预装环境，而不是在线执行 `uv sync` 或重装整套 GPU 依赖。
 
 打包后的 `train` 和 `infer` 默认只安装 runtime 依赖，相当于执行 `pip install .`，不会自动安装 `dev` extra。只有在确实需要额外 extra 时，才显式设置：
 
@@ -168,7 +168,7 @@ python outputs/bundle/infer.py
 
 ### 使用了旧代码
 
-重新生成 Bundle：`uv run taac-package-train --experiment config/<name> --output-dir outputs/bundle`
+重新生成 Bundle：`uv run taac-package-train --experiment experiments/pcvr/<name> --output-dir outputs/bundle`
 
 ### 跑错实验包
 

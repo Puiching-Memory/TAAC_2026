@@ -13,7 +13,7 @@ from taac2026.infrastructure.io.json_utils import dumps
 
 def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Train a TAAC 2026 experiment package")
-    parser.add_argument("--experiment", default="config/baseline", help="experiment package path or module")
+    parser.add_argument("--experiment", required=True, help="experiment package path or module")
     parser.add_argument("--dataset-path", default=None, help="parquet file or parquet directory; required for data-driven experiments")
     parser.add_argument("--schema-path", default=None, help="schema.json path; defaults to the dataset directory")
     parser.add_argument("--run-dir", default=None, help="checkpoint/output directory")

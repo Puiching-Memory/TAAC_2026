@@ -8,7 +8,7 @@ icon: lucide/rocket
 
 - Python 3.10 - 3.13
 - CUDA 12.6（GPU 训练需要）
-- `uv` 包管理器（推荐）或 `pip`
+- `uv` 包管理器（推荐）；`pip` 仅适用于已准备好兼容 Python / CUDA / PyTorch 环境的场景
 - Git
 
 ## 安装
@@ -21,18 +21,20 @@ icon: lucide/rocket
     uv sync --extra dev --extra cuda126
     ```
 
-=== "pip"
+=== "pip（仅限已备好兼容 GPU 环境）"
 
     ```bash
     git clone https://github.com/Puiching-Memory/TAAC_2026.git
     cd TAAC_2026
-    pip install -e ".[dev,cuda126]"
+  python -m pip install -e ".[dev]"
+  python -m pip install --extra-index-url https://download.pytorch.org/whl/cu126 \
+    torch==2.7.1+cu126 fbgemm-gpu==1.2.0+cu126 torchrec==1.2.0+cu126
     ```
 
 依赖说明：
 
 - `--extra dev`：Ruff、Pytest、Hypothesis、Benchmark、覆盖率插件、Zensical
-- `--extra cuda126`：PyTorch、TorchRec、FBGEMM
+- `cuda126`：通过 `uv` 的 `pytorch-cu126` 索引解析 PyTorch、TorchRec、FBGEMM；如果不用 `uv`，需要像上面那样单独安装匹配的 CUDA 12.6 wheel，或直接复用已准备好的兼容环境
 
 ## 准备数据
 
@@ -50,7 +52,7 @@ data/sample_1000_raw/
 
 ```bash
 uv run taac-train \
-  --experiment config/baseline \
+  --experiment experiments/pcvr/baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
@@ -61,7 +63,7 @@ uv run taac-train \
 
 ```bash
 uv run taac-evaluate single \
-  --experiment config/baseline \
+  --experiment experiments/pcvr/baseline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
@@ -71,18 +73,18 @@ uv run taac-evaluate single \
 切换 `--experiment` 参数即可：
 
 ```bash
-uv run taac-train --experiment config/symbiosis \
+uv run taac-train --experiment experiments/pcvr/symbiosis \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
 
-所有实验包位于 `config/` 目录下，每个包含 `__init__.py`、`model.py`、`ns_groups.json`。
+PCVR 实验包位于 `experiments/pcvr/` 目录下，每个包含 `__init__.py` 和 `model.py`，其中 NS 分组在 `__init__.py` 的 `PCVRNSConfig` 中显式声明；运维/分析实验位于 `experiments/maintenance/`。
 
 ## 线上训练打包
 
 ```bash
 uv run taac-package-train \
-  --experiment config/symbiosis \
+  --experiment experiments/pcvr/symbiosis \
   --output-dir outputs/bundle
 ```
 
@@ -117,15 +119,15 @@ uv run zensical serve
 | `taac-generate-pcvr-synthetic-dataset` | 生成合成压测数据   |
 | `taac-plot-model-performance`          | 绘制 Pareto 前沿图 |
 
-运维/分析类实验通过 `taac-train --experiment config/<name>` 或同等的 `bash run.sh train --experiment config/<name>` 调用。
+运维/分析类实验通过 `taac-train --experiment experiments/maintenance/<name>` 或同等的 `bash run.sh train --experiment experiments/maintenance/<name>` 调用。
 
 仓库缓存清理和文档结构裁剪保留为 shell 脚本：`bash tools/cache-cleanup.sh`、`bash tools/strip_docs_content.sh docs/<path-or-dir>`。
 
 所有命令均通过 `run.sh` 也可调用：
 
 ```bash
-./run.sh train --experiment config/baseline --dataset-path ...
-./run.sh val   --experiment config/baseline --dataset-path ...
-./run.sh infer --experiment config/baseline --dataset-path ...
-./run.sh package --experiment config/symbiosis
+./run.sh train --experiment experiments/pcvr/baseline --dataset-path ...
+./run.sh val   --experiment experiments/pcvr/baseline --dataset-path ...
+./run.sh infer --experiment experiments/pcvr/baseline --dataset-path ...
+./run.sh package --experiment experiments/pcvr/symbiosis
 ```

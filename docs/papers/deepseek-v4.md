@@ -64,7 +64,7 @@ Overall, DeepSeek-V4 series retain the Transformer (Vaswani et al., 2017) archit
 
 As shown in Figure 2, DeepSeek-V4 series incorporate Manifold-Constrained Hyper-Connections ( _m_ HC) (Xie et al., 2026) to strengthen the conventional residual connections between adjacent Transformer blocks. Compared with naive Hyper-Connections (HC) (Zhu et al., 2025), the core idea of _m_ HC is to constrain the residual mapping onto a specific manifold, and thus enhance the stability of signal propagation across layers while preserving model expressivity. This subsection briefly introduces the standard HC and describes how we design _m_ HC for stable training.
 
-**Standard Hyper-Connections.** The standard HC expands the width of the residual stream by a factor of _n_<sub>hc</sub>. Specifically, the residual stream is expanded from **R**<sup>d</sup> to **R**<sup>n<sub>hc</sub> × d</sup>, where _d_ is the hidden size of the actual layer input. Let _X_<sub>l</sub> = [**x**<sub>l,1</sub>; ...; **x**<sub>l,n<sub>hc</sub></sub>]<sup>T</sup> ∈ **R**<sup>n<sub>hc</sub> × d</sup> be the residual state before the _l_-th layer. HC introduces three linear mappings: an input mapping _A_<sub>l</sub> ∈ **R**<sup>1 × n<sub>hc</sub></sup>, a residual transformation _B_<sub>l</sub> ∈ **R**<sup>n<sub>hc</sub> × n<sub>hc</sub></sup>, and an output mapping _C_<sub>l</sub> ∈ **R**<sup>n<sub>hc</sub> × 1</sup>. The update of the residual state is then formulated as:
+**Standard Hyper-Connections.** The standard HC expands the width of the residual stream by a factor of _n_<sub>hc</sub>. Specifically, the residual stream is expanded from **R**<sup>d</sup> to **R**<sup>n<sub>hc</sub> × d</sup>, where _d_ is the hidden size of the actual layer input. Let _X_<sub>l</sub> = \[**x**<sub>l,1</sub>; ...; **x**<sub>l,n<sub>hc</sub></sub>\]<sup>T</sup> ∈ **R**<sup>n<sub>hc</sub> × d</sup> be the residual state before the _l_-th layer. HC introduces three linear mappings: an input mapping _A_<sub>l</sub> ∈ **R**<sup>1 × n<sub>hc</sub></sup>, a residual transformation _B_<sub>l</sub> ∈ **R**<sup>n<sub>hc</sub> × n<sub>hc</sub></sup>, and an output mapping _C_<sub>l</sub> ∈ **R**<sup>n<sub>hc</sub> × 1</sup>. The update of the residual state is then formulated as:
 
 $$
 X_{l+1} = B_l X_l + C_l F_l(A_l X_l)
@@ -122,7 +122,7 @@ Figure 3 | Core architecture of CSA. It compresses the number of KV entries by a
 
 ### 2.3. Hybrid Attention with CSA and HCA
 
-As the context length reaches extreme scales, attention becomes the dominant computational bottleneck. For DeepSeek-V4, we design two efficient attention architectures — Compressed Sparse Attention (CSA) and Heavily Compressed Attention (HCA) — and interleave them to substantially reduce the cost of long-context attention. CSA combines compression and sparse attention: it first compresses the Key-Value (KV) cache of every $m$ tokens into one entry, and then applies DeepSeek Sparse Attention (DSA) (DeepSeek-AI, 2025), where each query token attends to only $k$ compressed KV entries. HCA aims for more aggressive compression by consolidating the KV cache of every $m'$ tokens, where $m' \gg m$, into a single entry. This hybrid design markedly improves long-context efficiency in the DeepSeek-V4 series and makes one-million-token context practical. We also provide an open-source implementation[1] with further details.
+As the context length reaches extreme scales, attention becomes the dominant computational bottleneck. For DeepSeek-V4, we design two efficient attention architectures — Compressed Sparse Attention (CSA) and Heavily Compressed Attention (HCA) — and interleave them to substantially reduce the cost of long-context attention. CSA combines compression and sparse attention: it first compresses the Key-Value (KV) cache of every $m$ tokens into one entry, and then applies DeepSeek Sparse Attention (DSA) (DeepSeek-AI, 2025), where each query token attends to only $k$ compressed KV entries. HCA aims for more aggressive compression by consolidating the KV cache of every $m'$ tokens, where $m' \gg m$, into a single entry. This hybrid design markedly improves long-context efficiency in the DeepSeek-V4 series and makes one-million-token context practical. We also provide an open-source implementation\[1\] with further details.
 
 > 1 `https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/tree/main/inference`
 
@@ -143,8 +143,8 @@ where $W^{aKV}$, $W^{bKV}$, $W^{aZ}$, and $W^{bZ}$ are trainable parameters in $
 
 $$
 \begin{aligned}
-\left[S^a_{mi:m(i+1)-1}; S^b_{m(i-1):mi-1}\right]
-&= \operatorname{Softmax}_{\mathrm{row}}\left(\left[Z^a_{mi:m(i+1)-1} + B^a; Z^b_{m(i-1):mi-1} + B^b\right]\right), \\
+\left\[S^a_{mi:m(i+1)-1}; S^b_{m(i-1):mi-1}\right\]
+&= \operatorname{Softmax}_{\mathrm{row}}\left(\left\[Z^a_{mi:m(i+1)-1} + B^a; Z^b_{m(i-1):mi-1} + B^b\right\]\right), \\
 C_i^{\mathrm{Comp}}
 &= \sum_{j=mi}^{m(i+1)-1} S_j^a \odot C_j^a + \sum_{j=m(i-1)}^{mi-1} S_j^b \odot C_j^b.
 \end{aligned}
@@ -152,26 +152,26 @@ $$
 
 where $\odot$ denotes the Hadamard product, and $\operatorname{Softmax}_{\mathrm{row}}(\cdot)$ denotes row-wise softmax over the combined $2m$ elements from both $Z^a$ and $Z^b$. When $i = 0$, the slice $Z^b_{m(i-1):mi-1}$ is padded with negative infinity and $C^b_{m(i-1):mi-1}$ is padded with zeros. Each $C_i^{\mathrm{Comp}}$ is thus derived from $2m$ KV entries, but the $C^b$ entries used for $C_i^{\mathrm{Comp}}$ overlap with the $C^a$ entries used for $C_{i-1}^{\mathrm{Comp}}$. Therefore, CSA compresses the sequence length by a factor of $m$.
 
-**Lightning Indexer for Sparse Selection.** After obtaining the compressed KV entries _𝐶_[Comp], CSA applies the DSA strategy to select top-k compressed KV entries for core attention. First, CSA performs the same compression operation used for _𝐶_[Comp] to obtain compressed indexer keys _𝐾_[IComp], where _𝑐[𝐼]_ is the indexer head dimension. Then, for a query token _𝑡_, it produces the indexer queries { **q** _𝑡[𝐼]_,1; **q** _𝑡[𝐼]_,2; ...; **q** _𝑡[𝐼]_, _𝑛ℎ[𝐼]_ } in a low-rank manner:
+**Lightning Indexer for Sparse Selection.** After obtaining the compressed KV entries _𝐶_\[Comp\], CSA applies the DSA strategy to select top-k compressed KV entries for core attention. First, CSA performs the same compression operation used for _𝐶_\[Comp\] to obtain compressed indexer keys _𝐾_\[IComp\], where _𝑐\[𝐼\]_ is the indexer head dimension. Then, for a query token _𝑡_, it produces the indexer queries { **q** _𝑡\[𝐼\]_,1; **q** _𝑡\[𝐼\]_,2; ...; **q** _𝑡\[𝐼\]_, _𝑛ℎ\[𝐼\]_ } in a low-rank manner:
 
 $$
 c_t^Q = h_t \cdot W^{DQ},
 $$
 
 $$
-\left[q_{t,1}^I, q_{t,2}^I, \ldots, q_{t,n_h^I}^I\right] = q_t^I = c_t^Q \cdot W^{IUQ},
+\left\[q_{t,1}^I, q_{t,2}^I, \ldots, q_{t,n_h^I}^I\right\] = q_t^I = c_t^Q \cdot W^{IUQ},
 $$
 
-where **h** _𝑡_ ∈ **R** _[𝑑]_ is the input hidden state of the query token _𝑡_, **c** _𝑡[𝑄]_ ∈ **R** _[𝑑][𝑐]_ is the compressed latent vector for queries, _𝑑𝑐_ denotes the query compression dimension, and _𝑛ℎ[𝐼]_ denotes the number of indexer query heads. _𝑊[𝐷𝑄]_ and _𝑊[𝐼𝑈𝑄]_ are the down-projection and up-projection matrices for indexer queries, respectively. Next, the index score _𝐼𝑡_, _𝑠_ between query token _𝑡_ and a preceding compressed block _𝑠_ is computed by
+where **h** _𝑡_ ∈ **R** _\[𝑑\]_ is the input hidden state of the query token _𝑡_, **c** _𝑡\[𝑄\]_ ∈ **R** _\[𝑑\]\[𝑐\]_ is the compressed latent vector for queries, _𝑑𝑐_ denotes the query compression dimension, and _𝑛ℎ\[𝐼\]_ denotes the number of indexer query heads. _𝑊\[𝐷𝑄\]_ and _𝑊\[𝐼𝑈𝑄\]_ are the down-projection and up-projection matrices for indexer queries, respectively. Next, the index score _𝐼𝑡_, _𝑠_ between query token _𝑡_ and a preceding compressed block _𝑠_ is computed by
 
 $$
 \begin{aligned}
-\left[w_{t,1}^I, w_{t,2}^I, \ldots, w_{t,n_h^I}^I\right] &= w_t^I = h_t \cdot W^w, \\
+\left\[w_{t,1}^I, w_{t,2}^I, \ldots, w_{t,n_h^I}^I\right\] &= w_t^I = h_t \cdot W^w, \\
 I_{t,s} &= \sum_{h=1}^{n_h^I} w_{t,h}^I \cdot \operatorname{ReLU}\left(q_{t,h}^I \cdot K_s^{I\mathrm{Comp}}\right).
 \end{aligned}
 $$
 
-where _𝑊[𝑤]_ is a learnable matrix and _𝑤𝑡[𝐼]_, _ℎ_ is the weight of the _ℎ_-th indexer head. For a query token _𝑡_, given its index scores _𝐼𝑡_,:, we employ a top-k selector to selectively retain a subset of compressed KV entries _𝐶_ _𝑡_[SprsComp] for subsequent core attention:
+where _𝑊\[𝑤\]_ is a learnable matrix and _𝑤𝑡\[𝐼\]_, _ℎ_ is the weight of the _ℎ_-th indexer head. For a query token _𝑡_, given its index scores _𝐼𝑡_,:, we employ a top-k selector to selectively retain a subset of compressed KV entries _𝐶_ _𝑡_\[SprsComp\] for subsequent core attention:
 
 $$
 C_t^{\mathrm{SprsComp}} = \left\{ C_s^{\mathrm{Comp}} \mid I_{t,s} \in \operatorname{Top-k}(I_{t,:}) \right\}.
@@ -179,29 +179,29 @@ $$
 
 ![](img/deepseek-v4/DeepSeek_V4.pdf-0011-00.png)
 
-Figure 4 | Core architectures of HCA. It performs heavier compression, where the KV entries of _𝑚_[′] (≫ _𝑚_ ) tokens will be consolidated into one. Also, we additionally introduce a small set of sliding window KV entries to enhance local fine-grained dependencies.
+Figure 4 | Core architectures of HCA. It performs heavier compression, where the KV entries of _𝑚_\[′\] (≫ _𝑚_ ) tokens will be consolidated into one. Also, we additionally introduce a small set of sliding window KV entries to enhance local fine-grained dependencies.
 
-**Shared Key-Value MQA.** After selecting the sparse KV entries, CSA then performs core attention in a Multi-Query Attention (MQA) (Shazeer, 2019) manner, where each compressed KV entry in C _𝑡_[SprsComp] serves as both attention key and value. To be specific, for a query token _𝑡_ , we first produce attention queries { **q** _𝑡_ ,1; **q** _𝑡_ ,2; ...; **q** _𝑡_ , _𝑛ℎ_ } from the compressed latent vector **c** _𝑡[𝑄]_[:]
+**Shared Key-Value MQA.** After selecting the sparse KV entries, CSA then performs core attention in a Multi-Query Attention (MQA) (Shazeer, 2019) manner, where each compressed KV entry in C _𝑡_\[SprsComp\] serves as both attention key and value. To be specific, for a query token _𝑡_ , we first produce attention queries { **q** _𝑡_ ,1; **q** _𝑡_ ,2; ...; **q** _𝑡_ , _𝑛ℎ_ } from the compressed latent vector **c** _𝑡\[𝑄\]_\[:\]
 
 $$
-\left[q_{t,1}, q_{t,2}, \ldots, q_{t,n_h}\right] = q_t = c_t^Q \cdot W^{UQ},
+\left\[q_{t,1}, q_{t,2}, \ldots, q_{t,n_h}\right\] = q_t = c_t^Q \cdot W^{UQ},
 $$
 
-where _𝑛ℎ_ denotes the number of query heads, and _𝑊[𝑈𝑄]_ is the up-projection matrix for queries. Note that the latent query vector **c** _𝑡[𝑄]_ is shared with the one used for the indexer queries. Next, we perform MQA on { **q** _𝑡_, _𝑖_ } and _𝐶_ _𝑡_[SprsComp]:
+where _𝑛ℎ_ denotes the number of query heads, and _𝑊\[𝑈𝑄\]_ is the up-projection matrix for queries. Note that the latent query vector **c** _𝑡\[𝑄\]_ is shared with the one used for the indexer queries. Next, we perform MQA on { **q** _𝑡_, _𝑖_ } and _𝐶_ _𝑡_\[SprsComp\]:
 
 $$
 o_{t,i} = \operatorname{CoreAttn}\left(\mathrm{query}=q_{t,i},\ \mathrm{key}=C_t^{\mathrm{SprsComp}},\ \mathrm{value}=C_t^{\mathrm{SprsComp}}\right),
 $$
 
-where **o** _𝑡_ , _𝑖_ ∈ **R** _[𝑐]_ is the core attention output of the _𝑖_ -th head at the _𝑡_ -th token; CoreAttn(·) denotes the core attention operation.
+where **o** _𝑡_ , _𝑖_ ∈ **R** _\[𝑐\]_ is the core attention output of the _𝑖_ -th head at the _𝑡_ -th token; CoreAttn(·) denotes the core attention operation.
 
-**Grouped Output Projection.** In DeepSeek-V4, _𝑐𝑛ℎ_ is quite large, so directly projecting the concatenated attention outputs [ **o** _𝑡_,1; **o** _𝑡_,2; ...; **o** _𝑡_, _𝑛ℎ_ ] to a _𝑑_-dimensional hidden state would be expensive. To mitigate this cost, we split the _𝑛ℎ_ outputs into _𝑔_ groups. For each group output **o** _[𝐺] 𝑡_, _𝑖_, we project it to a _𝑑𝑔_-dimensional intermediate output **o** _[𝐺] 𝑡_, _𝑖_[′], where _𝑑𝑔_ is smaller than the original grouped output dimension. The concatenated intermediate outputs are then projected to the final attention output **[ˆo]** _[𝑡]_.
+**Grouped Output Projection.** In DeepSeek-V4, _𝑐𝑛ℎ_ is quite large, so directly projecting the concatenated attention outputs \[ **o** _𝑡_,1; **o** _𝑡_,2; ...; **o** _𝑡_, _𝑛ℎ_ \] to a _𝑑_-dimensional hidden state would be expensive. To mitigate this cost, we split the _𝑛ℎ_ outputs into _𝑔_ groups. For each group output **o** _\[𝐺\] 𝑡_, _𝑖_, we project it to a _𝑑𝑔_-dimensional intermediate output **o** _\[𝐺\] 𝑡_, _𝑖_\[′\], where _𝑑𝑔_ is smaller than the original grouped output dimension. The concatenated intermediate outputs are then projected to the final attention output **\[ˆo\]** _\[𝑡\]_.
 
 #### 2.3.2. Heavily Compressed Attention
 
 The core architecture of HCA is illustrated in Figure 4, which compresses the KV cache in a heavier manner, but does not employ sparse attention.
 
-**Compressed Key-Value Entries.** By and large, the compression strategy of HCA is similar to that of CSA, but it uses a larger compression rate _𝑚_[′] (≫ _𝑚_) and does not perform overlapping compression. Let _𝐻_ ∈ **R** _[𝑛]_[×] _[𝑑]_ be a sequence of input hidden states. HCA first computes the original KV entries _𝐶_ ∈ **R** _[𝑛]_[×] _[𝑐]_ and their corresponding compression weights _𝑍_ ∈ **R** _[𝑛]_[×] _[𝑐]_:
+**Compressed Key-Value Entries.** By and large, the compression strategy of HCA is similar to that of CSA, but it uses a larger compression rate _𝑚_\[′\] (≫ _𝑚_) and does not perform overlapping compression. Let _𝐻_ ∈ **R** _\[𝑛\]_\[×\] _\[𝑑\]_ be a sequence of input hidden states. HCA first computes the original KV entries _𝐶_ ∈ **R** _\[𝑛\]_\[×\] _\[𝑐\]_ and their corresponding compression weights _𝑍_ ∈ **R** _\[𝑛\]_\[×\] _\[𝑐\]_:
 
 $$
 \begin{aligned}
@@ -210,7 +210,7 @@ Z &= H \cdot W^Z.
 \end{aligned}
 $$
 
-where _𝑊[𝐾𝑉]_ and _𝑊[𝑍]_ are trainable parameters. Next, each _𝑚_[′] KV entries in _𝐶_ are compressed into one according to the compression weights and learnable positional biases _𝐵_, producing _𝐶_[Comp]. Each compressed entry _𝐶𝑖_[Comp] is computed by
+where _𝑊\[𝐾𝑉\]_ and _𝑊\[𝑍\]_ are trainable parameters. Next, each _𝑚_\[′\] KV entries in _𝐶_ are compressed into one according to the compression weights and learnable positional biases _𝐵_, producing _𝐶_\[Comp\]. Each compressed entry _𝐶𝑖_\[Comp\] is computed by
 
 $$
 \begin{aligned}
@@ -219,7 +219,7 @@ C_i^{\mathrm{Comp}} &= \sum_{j=m'i}^{m'(i+1)-1} S_j \odot C_j.
 \end{aligned}
 $$
 
-Through this compression operation, HCA compresses the sequence length by a factor of _m_[′].
+Through this compression operation, HCA compresses the sequence length by a factor of _m_\[′\].
 
 **Shared Key-Value MQA and Grouped Output Projection.** HCA also employs the shared KV MQA and grouped output projection strategies as CSA does. After the KV compression, for a query token _𝑡_ , HCA first produces attention queries { **q** _𝑡_ ,1; **q** _𝑡_ ,2; ...; **q** _𝑡_ , _𝑛ℎ_ } in a low-rank manner:
 
@@ -228,16 +228,16 @@ c_t^Q = h_t \cdot W^{DQ},
 $$
 
 $$
-\left[q_{t,1}, q_{t,2}, \ldots, q_{t,n_h}\right] = q_t = c_t^Q \cdot W^{UQ},
+\left\[q_{t,1}, q_{t,2}, \ldots, q_{t,n_h}\right\] = q_t = c_t^Q \cdot W^{UQ},
 $$
 
-where **h** _𝑡_ ∈ **R** _[𝑑]_ is the input hidden state of the query token _𝑡_ ; _𝑛ℎ_ denotes the number of query heads; _𝑊[𝐷𝑄]_ ∈ **R** _[𝑑]_[×] _[𝑑][𝑐]_ and _𝑊[𝑈𝑄]_ ∈ **R** _[𝑑][𝑐]_[×] _[𝑐𝑛][ℎ]_ are the down-projection and up-projection matrices for queries, respectively. Next, we perform MQA on { **q** _𝑡_ , _𝑖_ } and _𝐶_[Comp] :
+where **h** _𝑡_ ∈ **R** _\[𝑑\]_ is the input hidden state of the query token _𝑡_ ; _𝑛ℎ_ denotes the number of query heads; _𝑊\[𝐷𝑄\]_ ∈ **R** _\[𝑑\]_\[×\] _\[𝑑\]\[𝑐\]_ and _𝑊\[𝑈𝑄\]_ ∈ **R** _\[𝑑\]\[𝑐\]_\[×\] _\[𝑐𝑛\]\[ℎ\]_ are the down-projection and up-projection matrices for queries, respectively. Next, we perform MQA on { **q** _𝑡_ , _𝑖_ } and _𝐶_\[Comp\] :
 
 $$
 o_{t,i} = \operatorname{CoreAttn}\left(\mathrm{query}=q_{t,i},\ \mathrm{key}=C^{\mathrm{Comp}},\ \mathrm{value}=C^{\mathrm{Comp}}\right),
 $$
 
-where **o** _𝑡_, _𝑖_ ∈ **R** _[𝑐]_ is the core attention output of the _𝑖_-th head at the _𝑡_-th token. As in CSA, HCA then splits the _𝑛ℎ_ outputs into _𝑔_ groups, projects each group to a _𝑑𝑔_-dimensional intermediate output, and finally projects the concatenated intermediate outputs to the final attention output **[ˆo]** _[𝑡]_.
+where **o** _𝑡_, _𝑖_ ∈ **R** _\[𝑐\]_ is the core attention output of the _𝑖_-th head at the _𝑡_-th token. As in CSA, HCA then splits the _𝑛ℎ_ outputs into _𝑔_ groups, projects each group to a _𝑑𝑔_-dimensional intermediate output, and finally projects the concatenated intermediate outputs to the final attention output **\[ˆo\]** _\[𝑡\]_.
 
 #### 2.3.3. Other Details
 
@@ -249,7 +249,7 @@ In addition to the core architectures of CSA and HCA described above, our hybrid
 
 **Additional Branch of Sliding Window Attention.** In order to strictly preserve causality in CSA and HCA, each query attends to only preceding compressed KV blocks. Consequently, a query cannot access information from other tokens within its own compressed block. Meanwhile, recent tokens usually possess greater relevance to the query token in language modeling. For these reasons, we introduce a supplementary attention branch to both CSA and HCA in a sliding window manner, for better modeling of local dependencies. To be specific, for each query token, we additionally produce _𝑛_ win uncompressed KV entries corresponding to the recent _𝑛_ win tokens. In the core attention of CSA and HCA, these KV entries in the sliding window will be used along with the compressed KV entries.
 
-**Attention Sink.** In the core attention of CSA and HCA, we employ the attention-sink trick (OpenAI, 2025; Xiao et al., 2024). Specifically, we set a series of learnable sink logits { _𝑧_<sub>1</sub>[′], _𝑧_<sub>2</sub>[′], ..., _𝑧_<sub>𝑛ℎ</sub>[′] }. For the _ℎ_-th attention head, exp(_𝑧_<sub>ℎ</sub>[′]) is added to the denominator of the attention score:
+**Attention Sink.** In the core attention of CSA and HCA, we employ the attention-sink trick (OpenAI, 2025; Xiao et al., 2024). Specifically, we set a series of learnable sink logits { _𝑧_<sub>1</sub>\[′\], _𝑧_<sub>2</sub>\[′\], ..., _𝑧_<sub>𝑛ℎ</sub>\[′\] }. For the _ℎ_-th attention head, exp(_𝑧_<sub>ℎ</sub>\[′\]) is added to the denominator of the attention score:
 
 $$
 s_{h,i,j} = \frac{\exp(z_{h,i,j})}{\sum_k \exp(z_{h,i,k}) + \exp(z_h')},
@@ -267,10 +267,10 @@ Taking BF16 GQA8 (Ainslie et al., 2023) with a head dimension of 128 as the base
 
 **Require:** Learning rate _𝜂_, momentum _𝜇_, weight decay _𝜆_, and update rescaling factor _𝛾_.
 
-1. For each training step _𝑡_, and for each logically independent weight _𝑊_ ∈ **R** _[𝑛]_[×] _[𝑚]_, compute gradients _𝐺𝑡_ = ∇ _𝑊_ L _𝑡_ ( _𝑊𝑡_ −1).
+1. For each training step _𝑡_, and for each logically independent weight _𝑊_ ∈ **R** _\[𝑛\]_\[×\] _\[𝑚\]_, compute gradients _𝐺𝑡_ = ∇ _𝑊_ L _𝑡_ ( _𝑊𝑡_ −1).
 2. Update the momentum buffer as _𝑀𝑡_ = _𝜇𝑀𝑡_ −1 + _𝐺𝑡_.
-3. Compute _𝑂𝑡_[′] = HybridNewtonSchulz( _𝜇𝑀𝑡_ + _𝐺𝑡_ ), which combines the Nesterov trick with hybrid Newton-Schulz iterations.
-4. Rescale the update as _𝑂𝑡_ = _𝑂𝑡_[′] · √︁max( _𝑛_, _𝑚_ ) · _𝛾_.
+3. Compute _𝑂𝑡_\[′\] = HybridNewtonSchulz( _𝜇𝑀𝑡_ + _𝐺𝑡_ ), which combines the Nesterov trick with hybrid Newton-Schulz iterations.
+4. Rescale the update as _𝑂𝑡_ = _𝑂𝑡_\[′\] · √︁max( _𝑛_, _𝑚_ ) · _𝛾_.
 5. Perform weight decay and the parameter update: _𝑊𝑡_ = _𝑊𝑡_ −1 · (1 − _𝜂𝜆_ ) − _𝜂𝑂𝑡_.
 
 Moreover, even when compared with DeepSeek-V3.2 (DeepSeek-AI, 2025) — already an efficient baseline — DeepSeek-V4 series still exhibits substantial advantages in efficiency. A comparison of their inference FLOPs and KV cache size is provided in the right part of Figure 1.
@@ -281,7 +281,7 @@ We employ the Muon (Jordan et al., 2024; Liu et al., 2025) optimizer for the maj
 
 **Basic Configurations.** We maintain the AdamW (Loshchilov and Hutter, 2017) optimizer for the embedding module, the prediction head module, the static biases and gating factors of _m_ HC modules, and the weights of all RMSNorm modules. All other modules are updated with Muon. Following Liu et al. (2025), we also apply weight decay to Muon parameters, use the Nesterov (Jordan et al., 2024; Nesterov, 1983) trick, and rescale the Root Mean Square (RMS) of the update matrix for reutilization of our AdamW hyper-parameters. Different from them, we use hybrid Newton-Schulz iterations for orthogonalization.
 
-**Hybrid Newton-Schulz Iterations.** For a given matrix _𝑀_ , let its Singular Value Decomposition (SVD) be _𝑀_ = _𝑈_ Σ _𝑉[𝑇]_ . The Newton-Schulz iterations aim to approximately orthogonalize _𝑀_ to be _𝑈𝑉[𝑇]_ . Usually, _𝑀_ will be first normalized as _𝑀_ 0 = _𝑀_ /|| _𝑀_ || _𝐹_ to ensure its maximum singular value does not exceed 1. Then, each Newton-Schulz iteration performs the following operation:
+**Hybrid Newton-Schulz Iterations.** For a given matrix _𝑀_ , let its Singular Value Decomposition (SVD) be _𝑀_ = _𝑈_ Σ _𝑉\[𝑇\]_ . The Newton-Schulz iterations aim to approximately orthogonalize _𝑀_ to be _𝑈𝑉\[𝑇\]_ . Usually, _𝑀_ will be first normalized as _𝑀_ 0 = _𝑀_ /|| _𝑀_ || _𝐹_ to ensure its maximum singular value does not exceed 1. Then, each Newton-Schulz iteration performs the following operation:
 
 $$
 M_k = a M_{k-1} + b \left(M_{k-1} M_{k-1}^{\top}\right) M_{k-1} + c \left(M_{k-1} M_{k-1}^{\top}\right)^2 M_{k-1}.
@@ -307,7 +307,7 @@ Figure 5 | Illustration of our EP scheme with related works. Comet (Zhang et al.
 
 performance on extreme cases such as Reinforcement Learning (RL) rollout, which usually encounters long-tail small batches.
 
-**Performance and Open-Sourced Mega-Kernel.** We validated the fine-grained EP scheme on both NVIDIA GPUs and HUAWEI Ascend NPUs platforms. Compared against strong non-fused baselines, it achieves 1.50 ∼ 1.73× speedup for general inference workloads, and up to 1.96× for latency-sensitive scenarios such as RL rollouts and high-speed agent serving. We have open-sourced the CUDA-based mega-kernel implementation named **MegaMoE**[2] as a component of DeepGEMM.
+**Performance and Open-Sourced Mega-Kernel.** We validated the fine-grained EP scheme on both NVIDIA GPUs and HUAWEI Ascend NPUs platforms. Compared against strong non-fused baselines, it achieves 1.50 ∼ 1.73× speedup for general inference workloads, and up to 1.96× for latency-sensitive scenarios such as RL rollouts and high-speed agent serving. We have open-sourced the CUDA-based mega-kernel implementation named **MegaMoE**\[2\] as a component of DeepGEMM.
 
 **Observations and Proposals.** We share observations and lessons from kernel development and offer some proposals to hardware vendors, in the hope of aiding efficient hardware design and achieving better software-hardware co-design:
 
@@ -353,7 +353,7 @@ To enable efficient training and inference, we develop a comprehensive set of hi
 
 **Batch Invariance.** Batch invariance ensures that the output of any given token remains bitwise identical, regardless of its position within a batch. To implement batch invariance, the primary challenges are listed as follows:
 
-- **Attention.** To achieve batch invariance, we cannot use the split-KV method (Dao et al., 2023), which distributes the attention computation for a single sequence across multiple Stream Multiprocessors (SMs) to balance the load of SMs. However, abandoning this technique will lead to severe wave-quantization problems[3] , which can adversely affect GPU utilization. To address this, we develop a dual-kernel strategy for batch-invariant decoding. The first kernel computes the attention output for an entire sequence within a single SM, ensuring high throughput for fully occupied waves. The second kernel, to minimize the latency of the final partially-filled wave and thus alleviate wave-quantization, uses multiple SMs for a single sequence. For the bitwise identity of these two kernels, we carefully design the calculation path of the second kernel to ensure its accumulation order is the same as that of the first kernel. Additionally, the second kernel utilizes distributed shared memory[4] within thread-block clusters, enabling high-speed data exchange across SMs. This dual-kernel method effectively confines the overhead of batch-invariant decoding to be negligible.
+- **Attention.** To achieve batch invariance, we cannot use the split-KV method (Dao et al., 2023), which distributes the attention computation for a single sequence across multiple Stream Multiprocessors (SMs) to balance the load of SMs. However, abandoning this technique will lead to severe wave-quantization problems\[3\] , which can adversely affect GPU utilization. To address this, we develop a dual-kernel strategy for batch-invariant decoding. The first kernel computes the attention output for an entire sequence within a single SM, ensuring high throughput for fully occupied waves. The second kernel, to minimize the latency of the final partially-filled wave and thus alleviate wave-quantization, uses multiple SMs for a single sequence. For the bitwise identity of these two kernels, we carefully design the calculation path of the second kernel to ensure its accumulation order is the same as that of the first kernel. Additionally, the second kernel utilizes distributed shared memory\[4\] within thread-block clusters, enabling high-speed data exchange across SMs. This dual-kernel method effectively confines the overhead of batch-invariant decoding to be negligible.
 
 - **Matrix Multiplication.** Traditional cuBLAS library (NVIDIA Corporation, 2024) cannot achieve batch invariance. Therefore, we replace it end-to-end with DeepGEMM (Zhao et al., 2025). Furthermore, for very small batch sizes, conventional implementation usually employs split-k (Osama et al., 2023) techniques to improve performance. Unfortunately, split-k techniques cannot guarantee batch invariance, a pivotal feature in DeepSeek-V4.
 
@@ -405,7 +405,7 @@ Collectively, these optimizations constrain the wall-time overhead of _m_ HC to 
 
 #### 3.5.3. Contextual Parallelism for Long-Context Attention
 
-Conventional Context Parallelism (CP) partitions the sequence dimension, with each rank maintaining contiguous _𝑠_ tokens. This introduces two challenges to our compressed attention mechanisms. On the one hand, training samples are packed from multiple sequences, and each sequence is compressed independently by a factor of _𝑚_ (or _𝑚_[′]), with trailing groups shorter than the compression length discarded. Consequently, the number of compressed KV entries varies across ranks. On the other hand, the compression itself requires consecutive KV entries, which may straddle the boundary between two neighboring CP ranks.
+Conventional Context Parallelism (CP) partitions the sequence dimension, with each rank maintaining contiguous _𝑠_ tokens. This introduces two challenges to our compressed attention mechanisms. On the one hand, training samples are packed from multiple sequences, and each sequence is compressed independently by a factor of _𝑚_ (or _𝑚_\[′\]), with trailing groups shorter than the compression length discarded. Consequently, the number of compressed KV entries varies across ranks. On the other hand, the compression itself requires consecutive KV entries, which may straddle the boundary between two neighboring CP ranks.
 
 To address these challenges, we design a two-stage communication approach. In the first stage, each rank _𝑖_ sends its last _𝑚_ uncompressed KV entries to rank _𝑖_ + 1. Rank _𝑖_ + 1 then compresses the received entries together with its local _𝑠_ uncompressed KV entries, producing a fixed-length set of compressed entries plus possible padding. In the second stage, an all-gather operation across all CP ranks collects the locally compressed KV entries, and a fused select-and-pad operator reorganizes them into the full compressed sequence, placing any padding entries at the tail. For HCA and the indexer in CSA, the visible range of compressed KV entries for each query token can be precomputed. For the sparse attention in CSA, the top-_𝑘_ selector explicitly specifies the visible compressed KV indices for each query.
 
@@ -427,7 +427,7 @@ Our inference framework largely inherits from that of DeepSeek-V3, with some dif
 
 To efficiently manage the heterogeneous KV caches arising from the hybrid attention mechanism in DeepSeek-V4, we design a customized KV cache layout. The layout is illustrated in Figure 6, and we will elaborate on it in detail as follows.
 
-**Heterogeneous KV Entries in DeepSeek-V4.** The hybrid attention mechanism in DeepSeek-V4 series introduces multiple types of KV entries with different Key-Value (KV) cache sizes and update rules. The lightning indexer for sparse selection adds extra KV dimensions whose embedding sizes differ from those in the primary attention. The compression techniques used in CSA and HCA reduce the sequence length by factors of _𝑚_ and _𝑚_[′], respectively, so KV cache sizes vary across layers. Furthermore, Sliding Window Attention (SWA) layers operate with distinct KV cache sizes and separate cache-hit and eviction policies. In the compression branch, one KV entry is generated for every _𝑚_ tokens. When the remaining tokens are insufficient for compression, all pending tokens and their associated hidden states must be retained in a buffer until the compression operation can be executed. These buffered tokens represent a sequence state determined by positional context and are also managed within the KV cache framework.
+**Heterogeneous KV Entries in DeepSeek-V4.** The hybrid attention mechanism in DeepSeek-V4 series introduces multiple types of KV entries with different Key-Value (KV) cache sizes and update rules. The lightning indexer for sparse selection adds extra KV dimensions whose embedding sizes differ from those in the primary attention. The compression techniques used in CSA and HCA reduce the sequence length by factors of _𝑚_ and _𝑚_\[′\], respectively, so KV cache sizes vary across layers. Furthermore, Sliding Window Attention (SWA) layers operate with distinct KV cache sizes and separate cache-hit and eviction policies. In the compression branch, one KV entry is generated for every _𝑚_ tokens. When the remaining tokens are insufficient for compression, all pending tokens and their associated hidden states must be retained in a buffer until the compression operation can be executed. These buffered tokens represent a sequence state determined by positional context and are also managed within the KV cache framework.
 
 **Challenges in Managing Hybrid Attention KV Cache.** The hybrid attention mechanism violates fundamental assumptions behind PagedAttention and its variants. Although recent hybrid KV cache managing algorithms (e.g., Jenga (Zhang et al., 2025a), Hymba (Dong et al., 2025)) target general hybrid attention models or specific structures, two principal obstacles prevent consolidating KV caches across all layers under the PagedAttention framework:
 
@@ -437,13 +437,13 @@ To efficiently manage the heterogeneous KV caches arising from the hybrid attent
 
 ![](img/deepseek-v4/DeepSeek_V4.pdf-0023-00.png)
 
-Figure 6 | Illustration of the KV cache layout for DeepSeek-V4. The KV cache is organized into two primary components: a classical KV cache for CSA/HCA, and a state cache for SWA and unready-for-compression tokens in CSA/HCA. In the state cache, each request is assigned a fixed-size cache block. Within this block, the SWA segment stores the KV entries corresponding to the most recent _𝑛_ win tokens, while the CSA/HCA segment stores uncompressed tail states that are not yet ready for compression. In the classical KV cache, we allocate multiple blocks per request. Each cache block covers lcm(_𝑚_, _𝑚_[′]) original tokens and produces the corresponding batches of CSA- and HCA-compressed tokens.
+Figure 6 | Illustration of the KV cache layout for DeepSeek-V4. The KV cache is organized into two primary components: a classical KV cache for CSA/HCA, and a state cache for SWA and unready-for-compression tokens in CSA/HCA. In the state cache, each request is assigned a fixed-size cache block. Within this block, the SWA segment stores the KV entries corresponding to the most recent _𝑛_ win tokens, while the CSA/HCA segment stores uncompressed tail states that are not yet ready for compression. In the classical KV cache, we allocate multiple blocks per request. Each cache block covers lcm(_𝑚_, _𝑚_\[′\]) original tokens and produces the corresponding batches of CSA- and HCA-compressed tokens.
 
 For efficient KV cache management of DeepSeek-V4, we design corresponding strategies to overcome these two challenges.
 
 **State Cache for SWA and Uncompressed Tail Tokens.** To address the first obstacle, we adopt an alternative cache management mechanism. Since SWA is designed to enhance performance under a limited KV cache size, it is reasonable to treat it, along with the uncompressed tail tokens from the compression branch, as a state-space model. The corresponding KV cache can thus be regarded as a sequence-specific state that depends solely on the current position. Accordingly, we pre-allocate a fixed- and limited-size pool of state caches, and dynamically assign it to each sequence.
 
-**Sparse Attention Kernel Co-Design.** Regarding the second obstacle, conventional highperformance attention kernels typically assume a fixed number _𝐵_ of tokens per block to optimize performance, corresponding to _𝐵_ · _𝑚_ original tokens in CSA and _𝐵_ · _𝑚_[′] in HCA. Through employing a high-performance sparse-attention kernel, different layers can accommodate variable tokens per block without performance degradation. Achieving this requires co-designing the KV cache layout and the sparse attention kernel. For instance, padding blocks to align with cache lines can improve performance. Thus, for CSA with compression ratio _𝑚_ and HCA with ratio _𝑚_[′] , the number of original tokens per block can be any multiple of lcm( _𝑚_ , _𝑚_[′] ), the least common multiple of these two compression ratios.
+**Sparse Attention Kernel Co-Design.** Regarding the second obstacle, conventional highperformance attention kernels typically assume a fixed number _𝐵_ of tokens per block to optimize performance, corresponding to _𝐵_ · _𝑚_ original tokens in CSA and _𝐵_ · _𝑚_\[′\] in HCA. Through employing a high-performance sparse-attention kernel, different layers can accommodate variable tokens per block without performance degradation. Achieving this requires co-designing the KV cache layout and the sparse attention kernel. For instance, padding blocks to align with cache lines can improve performance. Thus, for CSA with compression ratio _𝑚_ and HCA with ratio _𝑚_\[′\] , the number of original tokens per block can be any multiple of lcm( _𝑚_ , _𝑚_\[′\] ), the least common multiple of these two compression ratios.
 
 #### 3.6.2. On-Disk KV Cache Storage
 
@@ -475,9 +475,9 @@ V3. For tokenization, on top of the DeepSeek-V3 tokenizer, we introduce a few sp
 
 #### 4.2.1. Model Setups
 
-**DeepSeek-V4-Flash.** We set the number of Transformer layers to 43 and the hidden dimension _𝑑_ to 4096. For the first two layers, we use pure sliding-window attention. For the subsequent layers, CSA and HCA are used in an interleaved manner. For CSA, we set the compression rate _𝑚_ to 4, the number of indexer query heads _𝑛ℎ[𝐼]_ to 64, the indexer head dimension _𝑐[𝐼]_ to 128, and the number of KV entries selected for sparse attention (i.e., attention top-k) to 512. For HCA, we set the compression rate _𝑚_[′] to 128. For both CSA and HCA, we set the number of query heads _𝑛ℎ_ to 64, the head dimension _𝑐_ to 512, and the query compression dimension _𝑑𝑐_ to 1024. The number of output projection groups _𝑔_ is set to 8, and the dimension of each intermediate attention output _𝑑𝑔_ is set to 1024. For the additional branch of sliding-window attention, the window size _𝑛_ win is set to 128. We employ MoE layers in all Transformer blocks, but use the Hash routing strategy for the first 3 MoE layers. Each MoE layer consists of 1 shared expert and 256 routed experts, where the intermediate hidden dimension of each expert is 2048. Among the routed experts, 6 experts are activated for each token. The multi-token prediction depth is set to 1. As for _m_ HC, the expansion factor _𝑛_ hc is set to 4, and the number of Sinkhorn-Knopp iterations _𝑡_ max is set to 20. Under this configuration, DeepSeek-V4-Flash comprises 284B total parameters, of which 13B are activated for each token.
+**DeepSeek-V4-Flash.** We set the number of Transformer layers to 43 and the hidden dimension _𝑑_ to 4096. For the first two layers, we use pure sliding-window attention. For the subsequent layers, CSA and HCA are used in an interleaved manner. For CSA, we set the compression rate _𝑚_ to 4, the number of indexer query heads _𝑛ℎ\[𝐼\]_ to 64, the indexer head dimension _𝑐\[𝐼\]_ to 128, and the number of KV entries selected for sparse attention (i.e., attention top-k) to 512. For HCA, we set the compression rate _𝑚_\[′\] to 128. For both CSA and HCA, we set the number of query heads _𝑛ℎ_ to 64, the head dimension _𝑐_ to 512, and the query compression dimension _𝑑𝑐_ to 1024. The number of output projection groups _𝑔_ is set to 8, and the dimension of each intermediate attention output _𝑑𝑔_ is set to 1024. For the additional branch of sliding-window attention, the window size _𝑛_ win is set to 128. We employ MoE layers in all Transformer blocks, but use the Hash routing strategy for the first 3 MoE layers. Each MoE layer consists of 1 shared expert and 256 routed experts, where the intermediate hidden dimension of each expert is 2048. Among the routed experts, 6 experts are activated for each token. The multi-token prediction depth is set to 1. As for _m_ HC, the expansion factor _𝑛_ hc is set to 4, and the number of Sinkhorn-Knopp iterations _𝑡_ max is set to 20. Under this configuration, DeepSeek-V4-Flash comprises 284B total parameters, of which 13B are activated for each token.
 
-**DeepSeek-V4-Pro.** We set the number of Transformer layers to 61 and the hidden dimension _𝑑_ to 7168. For the first two layers, we use HCA. For the subsequent layers, CSA and HCA are used in an interleaved manner. For CSA, we set the compression rate _𝑚_ to 4, the number of indexer query heads _𝑛ℎ[𝐼]_ to 64, the indexer head dimension _𝑐[𝐼]_ to 128, and the number of KV entries selected for sparse attention (i.e., attention top-k) to 1024. For HCA, we set the compression rate _𝑚_[′] to 128. For both CSA and HCA, we set the number of query heads _𝑛ℎ_ to 128, the head dimension _𝑐_ to 512, and the query compression dimension _𝑑𝑐_ to 1536. The number of output projection groups _𝑔_ is set to 16, and the dimension of each intermediate attention output _𝑑𝑔_ is set to 1024. For the additional branch of sliding-window attention, the window size _𝑛_ win is set to 128. We employ MoE layers in all Transformer blocks, but use the Hash routing strategy for the first 3 MoE layers. Each MoE layer consists of 1 shared expert and 384 routed experts, where the intermediate hidden dimension of each expert is 3072. Among the routed experts, 6 experts are activated for each token. The multi-token prediction depth is set to 1. As for _m_ HC, the expansion factor _𝑛_ hc is set to 4, and the number of Sinkhorn-Knopp iterations _𝑡_ max is set to 20. Under this configuration, DeepSeek-V4-Pro comprises 1.6T total parameters, of which 49B are activated for each token.
+**DeepSeek-V4-Pro.** We set the number of Transformer layers to 61 and the hidden dimension _𝑑_ to 7168. For the first two layers, we use HCA. For the subsequent layers, CSA and HCA are used in an interleaved manner. For CSA, we set the compression rate _𝑚_ to 4, the number of indexer query heads _𝑛ℎ\[𝐼\]_ to 64, the indexer head dimension _𝑐\[𝐼\]_ to 128, and the number of KV entries selected for sparse attention (i.e., attention top-k) to 1024. For HCA, we set the compression rate _𝑚_\[′\] to 128. For both CSA and HCA, we set the number of query heads _𝑛ℎ_ to 128, the head dimension _𝑐_ to 512, and the query compression dimension _𝑑𝑐_ to 1536. The number of output projection groups _𝑔_ is set to 16, and the dimension of each intermediate attention output _𝑑𝑔_ is set to 1024. For the additional branch of sliding-window attention, the window size _𝑛_ win is set to 128. We employ MoE layers in all Transformer blocks, but use the Hash routing strategy for the first 3 MoE layers. Each MoE layer consists of 1 shared expert and 384 routed experts, where the intermediate hidden dimension of each expert is 3072. Among the routed experts, 6 experts are activated for each token. The multi-token prediction depth is set to 1. As for _m_ HC, the expansion factor _𝑛_ hc is set to 4, and the number of Sinkhorn-Knopp iterations _𝑡_ max is set to 20. Under this configuration, DeepSeek-V4-Pro comprises 1.6T total parameters, of which 49B are activated for each token.
 
 #### 4.2.2. Training Setups
 
@@ -493,7 +493,7 @@ Training trillion-parameter MoE models presents significant stability challenges
 
 **Anticipatory Routing.** We found that decoupling the synchronous updates of the backbone network and the routing network significantly improves training stability. Consequently, at step _𝑡_ , we use the current network parameters _𝜃𝑡_ for feature computation, but the routing indices are computed and applied using the historical network parameters _𝜃𝑡_ −Δ _𝑡_ . In practice, to circumvent the overhead of loading model parameters twice, we fetch the data for step _𝑡_ in advance at step _𝑡_ − Δ _𝑡_ . We "anticipatorily" compute and cache the routing indices to be used later at step _𝑡_ , which is why we name this approach Anticipatory Routing. We also heavily optimized this at the infrastructure level. First, given that pre-computing the routing indices only requires a single forward pass over the data, we carefully orchestrated the pipeline execution and the overlapping of computation with Expert Parallelism (EP) communication, successfully bounding the additional wall-clock time overhead of Anticipatory Routing to approximately 20%. Second, we introduced an automatic detection mechanism that triggers a short rollback and activates Anticipatory Routing exclusively when a loss spike occurs; after operating in this mode for a certain period, the system reverts to standard training. Ultimately, this dynamic application allows us to avert loss spikes with negligible overall additional training overhead, all without compromising model performance.
 
-**SwiGLU Clamping.** In previous literature (Bello et al., 2017; Riviere et al., 2024), clamping has been explicitly utilized to constrain numerical ranges, thereby enhancing training stability. In our actual training runs, we empirically found that applying SwiGLU clamping (OpenAI, 2025) effectively eliminates outliers and substantially aids in stabilizing the training process, without compromising performance. Throughout the training of both DeepSeek-V4-Flash and DeepSeek-V4-Pro, we clamped the linear component of SwiGLU to the range of [−10, 10], while capping the upper bound of the gate component at 10.
+**SwiGLU Clamping.** In previous literature (Bello et al., 2017; Riviere et al., 2024), clamping has been explicitly utilized to constrain numerical ranges, thereby enhancing training stability. In our actual training runs, we empirically found that applying SwiGLU clamping (OpenAI, 2025) effectively eliminates outliers and substantially aids in stabilizing the training process, without compromising performance. Throughout the training of both DeepSeek-V4-Flash and DeepSeek-V4-Pro, we clamped the linear component of SwiGLU to the range of \[−10, 10\], while capping the upper bound of the gate component at 10.
 
 ### 4.3. Evaluations
 
@@ -974,7 +974,7 @@ MiniMax. Meet minimax-m2, 2025. URL `https://github.com/MiniMax-AI/MiniMax-M2` .
 
 - L. d. Moura and S. Ullrich. The lean 4 theorem prover and programming language. In International Conference on Automated Deduction, pages 625–635. Springer, 2021.
 
-- Y. Nesterov. A method of solving a convex programming problem with convergence rate _𝑂_ (1/ _𝑘_[2] ). Soviet Mathematics Doklady, 27:372–376, 1983.
+- Y. Nesterov. A method of solving a convex programming problem with convergence rate _𝑂_ (1/ _𝑘_\[2\] ). Soviet Mathematics Doklady, 27:372–376, 1983.
 
 - NVIDIA Corporation. cublas documentation, 2024. URL `https://docs.nvidia.com/cuda/cublas/` . Version 12.4. Accessed: 2024-09-16.
 

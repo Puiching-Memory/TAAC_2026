@@ -38,7 +38,7 @@ HyFormer 实验包，使用 RankMixer NS Tokenizer 和多查询解码机制。
 
 ```bash
 uv run taac-train \
-  --experiment config/hyformer \
+  --experiment experiments/pcvr/hyformer \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
@@ -49,6 +49,6 @@ uv run taac-train \
 
 ## 来源
 
-- 模型源码：`config/hyformer/model.py`
-- NS Groups：`config/hyformer/ns_groups.json`
+- 模型源码：`experiments/pcvr/hyformer/model.py`
+- NS Groups：`experiments/pcvr/hyformer/__init__.py` 中的 `USER_NS_GROUPS` / `ITEM_NS_GROUPS`
 - HyFormer 论文解读：[papers/hyformer.md](../papers/hyformer.md)

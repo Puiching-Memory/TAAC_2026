@@ -57,7 +57,7 @@ import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     manifest = json.load(handle)
-print(manifest.get("bundled_experiment_path", "config/baseline"))
+print(manifest.get("bundled_experiment_path", ""))
 PY
 		return
 	fi
@@ -91,30 +91,18 @@ if [[ -z "${RUNNER_MODE}" ]]; then
 	fi
 fi
 
-DEFAULT_EXPERIMENT="config/baseline"
+MANIFEST_EXPERIMENT=""
 MANIFEST_PATH="${PROJECT_DIR}/.taac_training_manifest.json"
 if [[ -f "${MANIFEST_PATH}" ]]; then
-	DEFAULT_EXPERIMENT="$(read_bundled_experiment "${MANIFEST_PATH}")"
+	MANIFEST_EXPERIMENT="$(read_bundled_experiment "${MANIFEST_PATH}")"
 fi
 
 ensure_uv() {
 	if command -v uv >/dev/null 2>&1; then
 		return
 	fi
-	if [[ "${TAAC_INSTALL_UV:-1}" != "1" ]]; then
-		echo "uv is required but not found in PATH" >&2
-		exit 127
-	fi
-	if ! command -v curl >/dev/null 2>&1; then
-		echo "uv is required and curl is unavailable for installation" >&2
-		exit 127
-	fi
-	curl -LsSf https://astral.sh/uv/install.sh | sh
-	export PATH="${HOME}/.local/bin:${PATH}"
-	command -v uv >/dev/null 2>&1 || {
-		echo "uv installation finished but uv is still not in PATH" >&2
-		exit 127
-	}
+	echo "uv is required but not found in PATH" >&2
+	exit 127
 }
 
 ensure_python() {
@@ -275,10 +263,15 @@ case "${COMMAND}" in
 	train)
 		extract_cuda_profile "${SUPPORTED_CUDA_PROFILE}" "$@"
 		sync_runtime "${CUDA_PROFILE}"
-		TRAIN_ARGS=(--experiment "${TAAC_EXPERIMENT:-${DEFAULT_EXPERIMENT}}")
-		DATASET_PATH="${TAAC_DATASET_PATH:-${TRAIN_DATA_PATH:-}}"
-		SCHEMA_PATH="${TAAC_SCHEMA_PATH:-${TRAIN_SCHEMA_PATH:-}}"
-		OUTPUT_DIR="${TAAC_OUTPUT_DIR:-${TRAIN_CKPT_PATH:-}}"
+		TRAIN_ARGS=()
+		if [[ -n "${TAAC_EXPERIMENT:-}" ]]; then
+			TRAIN_ARGS+=(--experiment "${TAAC_EXPERIMENT}")
+		elif [[ -n "${MANIFEST_EXPERIMENT}" ]]; then
+			TRAIN_ARGS+=(--experiment "${MANIFEST_EXPERIMENT}")
+		fi
+		DATASET_PATH="${TRAIN_DATA_PATH:-}"
+		SCHEMA_PATH="${TAAC_SCHEMA_PATH:-}"
+		OUTPUT_DIR="${TRAIN_CKPT_PATH:-}"
 		if [[ -n "${DATASET_PATH}" ]]; then
 			TRAIN_ARGS+=(--dataset-path "${DATASET_PATH}")
 		fi
@@ -287,18 +280,21 @@ case "${COMMAND}" in
 		fi
 		if [[ -n "${OUTPUT_DIR}" ]]; then
 			TRAIN_ARGS+=(--run-dir "${OUTPUT_DIR}")
-		elif [[ -f "${CODE_PACKAGE}" ]]; then
-			TRAIN_ARGS+=(--run-dir "${SCRIPT_DIR}/outputs")
 		fi
 		run_console_script taac-train taac2026.application.training.cli "${TRAIN_ARGS[@]}" "${REMAINING_ARGS[@]}"
 		;;
 	val|eval)
 		extract_cuda_profile "${SUPPORTED_CUDA_PROFILE}" "$@"
 		sync_runtime "${CUDA_PROFILE}"
-		EVAL_ARGS=(single --experiment "${TAAC_EXPERIMENT:-${DEFAULT_EXPERIMENT}}")
-		DATASET_PATH="${TAAC_DATASET_PATH:-${TRAIN_DATA_PATH:-}}"
-		SCHEMA_PATH="${TAAC_SCHEMA_PATH:-${TRAIN_SCHEMA_PATH:-}}"
-		OUTPUT_DIR="${TAAC_OUTPUT_DIR:-${TRAIN_CKPT_PATH:-}}"
+		EVAL_ARGS=(single)
+		if [[ -n "${TAAC_EXPERIMENT:-}" ]]; then
+			EVAL_ARGS+=(--experiment "${TAAC_EXPERIMENT}")
+		elif [[ -n "${MANIFEST_EXPERIMENT}" ]]; then
+			EVAL_ARGS+=(--experiment "${MANIFEST_EXPERIMENT}")
+		fi
+		DATASET_PATH="${TRAIN_DATA_PATH:-}"
+		SCHEMA_PATH="${TAAC_SCHEMA_PATH:-}"
+		OUTPUT_DIR="${TRAIN_CKPT_PATH:-}"
 		if [[ -n "${DATASET_PATH}" ]]; then
 			EVAL_ARGS+=(--dataset-path "${DATASET_PATH}")
 		fi
@@ -313,10 +309,16 @@ case "${COMMAND}" in
 	infer)
 		extract_cuda_profile "${SUPPORTED_CUDA_PROFILE}" "$@"
 		sync_runtime "${CUDA_PROFILE}"
-		INFER_ARGS=(infer --experiment "${TAAC_EXPERIMENT:-${DEFAULT_EXPERIMENT}}")
-		DATASET_PATH="${TAAC_DATASET_PATH:-${TRAIN_DATA_PATH:-}}"
-		SCHEMA_PATH="${TAAC_SCHEMA_PATH:-${TRAIN_SCHEMA_PATH:-}}"
-		RESULT_DIR="${TAAC_RESULT_DIR:-}"
+		INFER_ARGS=(infer)
+		if [[ -n "${TAAC_EXPERIMENT:-}" ]]; then
+			INFER_ARGS+=(--experiment "${TAAC_EXPERIMENT}")
+		elif [[ -n "${MANIFEST_EXPERIMENT}" ]]; then
+			INFER_ARGS+=(--experiment "${MANIFEST_EXPERIMENT}")
+		fi
+		DATASET_PATH="${EVAL_DATA_PATH:-}"
+		SCHEMA_PATH="${TAAC_SCHEMA_PATH:-}"
+		RESULT_DIR="${EVAL_RESULT_PATH:-}"
+		CHECKPOINT_PATH="${MODEL_OUTPUT_PATH:-}"
 		if [[ -n "${DATASET_PATH}" ]]; then
 			INFER_ARGS+=(--dataset-path "${DATASET_PATH}")
 		fi
@@ -325,6 +327,9 @@ case "${COMMAND}" in
 		fi
 		if [[ -n "${RESULT_DIR}" ]]; then
 			INFER_ARGS+=(--result-dir "${RESULT_DIR}")
+		fi
+		if [[ -n "${CHECKPOINT_PATH}" ]]; then
+			INFER_ARGS+=(--checkpoint "${CHECKPOINT_PATH}")
 		fi
 		run_console_script taac-evaluate taac2026.application.evaluation.cli "${INFER_ARGS[@]}" "${REMAINING_ARGS[@]}"
 		;;

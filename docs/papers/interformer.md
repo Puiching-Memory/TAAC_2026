@@ -34,20 +34,20 @@ Click-through rate (CTR) prediction estimates the probability that a user will c
 
 ## 1. Introduction
 
-Click-through rate prediction is a fundamental task in online advertising and recommender systems [zhang2022dhen; zhang2024wukong]. The quality of CTR prediction directly affects both business revenue and user experience, so it has received sustained attention from both academia and industry [zhou2018deep; zhou2019deep; liu2024collaborative; liang2025external; yoo2024ensuring; liu2023class; liu2024aim; liu2025breaking]. In ad bidding, CTR models help advertisers set better bids and reach more relevant audiences. In content recommendation, they determine which content is surfaced to which users.
+Click-through rate prediction is a fundamental task in online advertising and recommender systems \[zhang2022dhen; zhang2024wukong\]. The quality of CTR prediction directly affects both business revenue and user experience, so it has received sustained attention from both academia and industry \[zhou2018deep; zhou2019deep; liu2024collaborative; liang2025external; yoo2024ensuring; liu2023class; liu2024aim; liu2025breaking\]. In ad bidding, CTR models help advertisers set better bids and reach more relevant audiences. In content recommendation, they determine which content is surfaced to which users.
 
-Accurate CTR prediction depends on understanding user interests in a changing environment [zhou2018deep; lyu2020deep; wang2019sequential]. Heterogeneous information creates both opportunity and difficulty. Non-sequential features such as user profile and context provide a relatively static view of general user preference, while behavior sequences reveal dynamic and often short-term interests [zhang2017joint; wang2019sequential]. Because these data modes behave differently, they usually require different modeling strategies and careful integration [zhang2017joint]. Feature interaction is central for non-sequential information [rendle2010factorization; lian2018xdeepfm; wang2021dcn], whereas sequence modeling is central for user behavior history [sun2019bert4rec; chen2019behavior].
+Accurate CTR prediction depends on understanding user interests in a changing environment \[zhou2018deep; lyu2020deep; wang2019sequential\]. Heterogeneous information creates both opportunity and difficulty. Non-sequential features such as user profile and context provide a relatively static view of general user preference, while behavior sequences reveal dynamic and often short-term interests \[zhang2017joint; wang2019sequential\]. Because these data modes behave differently, they usually require different modeling strategies and careful integration \[zhang2017joint\]. Feature interaction is central for non-sequential information \[rendle2010factorization; lian2018xdeepfm; wang2021dcn\], whereas sequence modeling is central for user behavior history \[sun2019bert4rec; chen2019behavior\].
 
-Most existing CTR models still fall into two broad categories: non-sequential models and sequential models. Non-sequential models focus on feature interaction using inner products [lian2018xdeepfm; sun2021fm2], MLP-based architectures [wang2017deep; wang2021dcn], or deep structured semantic models [huang2013learning; elkahky2015multi], but they ignore user behavior sequences. Sequential models add dedicated components such as CNNs [tang2018personalized], RNNs [sun2019bert4rec; zhou2018deep], or attention mechanisms [lyu2020deep; zhou2019deep; zhai2024actions] to capture dependencies in user behavior. Even so, most sequential methods still rely on a mostly unidirectional information flow: non-sequential context guides sequence learning, but sequence information rarely feeds back into non-sequence representation learning. That restriction leads to insufficient interaction between data modes. For example, non-sequential features may encode long-term interests, while the recent sequence may reveal a sudden short-term preference that should refine the non-sequential context.
+Most existing CTR models still fall into two broad categories: non-sequential models and sequential models. Non-sequential models focus on feature interaction using inner products \[lian2018xdeepfm; sun2021fm2\], MLP-based architectures \[wang2017deep; wang2021dcn\], or deep structured semantic models \[huang2013learning; elkahky2015multi\], but they ignore user behavior sequences. Sequential models add dedicated components such as CNNs \[tang2018personalized\], RNNs \[sun2019bert4rec; zhou2018deep\], or attention mechanisms \[lyu2020deep; zhou2019deep; zhai2024actions\] to capture dependencies in user behavior. Even so, most sequential methods still rely on a mostly unidirectional information flow: non-sequential context guides sequence learning, but sequence information rarely feeds back into non-sequence representation learning. That restriction leads to insufficient interaction between data modes. For example, non-sequential features may encode long-term interests, while the recent sequence may reveal a sudden short-term preference that should refine the non-sequential context.
 
-Another weakness is aggressive information aggregation. Because direct interaction among many non-sequence features and long sequences is expensive, many systems summarize sequences early through summation [zhou2018deep], pooling [xiao2020deep], or concatenation [zhou2019deep]. That early compression is efficient, but it also causes irreversible information loss.
+Another weakness is aggressive information aggregation. Because direct interaction among many non-sequence features and long sequences is expensive, many systems summarize sequences early through summation \[zhou2018deep\], pooling \[xiao2020deep\], or concatenation \[zhou2019deep\]. That early compression is efficient, but it also causes irreversible information loss.
 
 InterFormer is proposed to address both issues. The design follows two principles:
 
 - Avoid insufficient inter-mode interaction by enabling bidirectional information flow, so non-sequence and sequence learning proceed in an interleaving manner.
 - Avoid aggressive information aggregation by retaining full representations in each mode and using a dedicated Cross Arch for selective information exchange and summarization.
 
-More concretely, InterFormer uses non-sequence summarization to guide sequence modeling through Personalized FeedForward Network (PFFN) and Multi-Head Attention (MHA) [vaswani2017attention]. It also uses sequence summarization to guide non-sequence learning through an interaction module. The framework is compatible with multiple interaction backbones, including DCNv2 [wang2021dcn] and DHEN [zhang2022dhen].
+More concretely, InterFormer uses non-sequence summarization to guide sequence modeling through Personalized FeedForward Network (PFFN) and Multi-Head Attention (MHA) \[vaswani2017attention\]. It also uses sequence summarization to guide non-sequence learning through an interaction module. The framework is compatible with multiple interaction backbones, including DCNv2 \[wang2021dcn\] and DHEN \[zhang2022dhen\].
 
 The main contributions are as follows:
 
@@ -57,15 +57,15 @@ The main contributions are as follows:
 
 ## 2. Related Works
 
-Recommender systems have received extensive attention in the broader big-data and AI era [yan2021dynamic; yan2021bright; yan2023trainable; yan2023reconciling; yan2022dissecting; yan2024pacer; yan2024topological; yan2024thegcn; yanred; xu2024slog; yu2025joint; yu2025planetalign; zeng2024graph; zeng2025pave; zeng2023parrot; zeng2023generative; zeng2024hierarchical; bao2024matcha; xu2024discrete; lin2024duquant; lin2025quantization; lin2025toklip]. This section groups prior work into non-sequential and sequential CTR methods.
+Recommender systems have received extensive attention in the broader big-data and AI era \[yan2021dynamic; yan2021bright; yan2023trainable; yan2023reconciling; yan2022dissecting; yan2024pacer; yan2024topological; yan2024thegcn; yanred; xu2024slog; yu2025joint; yu2025planetalign; zeng2024graph; zeng2025pave; zeng2023parrot; zeng2023generative; zeng2024hierarchical; bao2024matcha; xu2024discrete; lin2024duquant; lin2025quantization; lin2025toklip\]. This section groups prior work into non-sequential and sequential CTR methods.
 
 ### 2.1 Non-Sequential Methods
 
-Most non-sequential CTR models are built on top of Factorization Machines (FM) [rendle2010factorization; lian2018xdeepfm; sun2021fm2], which model user-item interaction through low-dimensional embeddings [zhang2019deep]. The original FM model captures pairwise interactions [rendle2010factorization]. To model higher-order interactions, later work combines FMs with deep networks, where the FM component handles low-order interaction and the neural network captures higher-order patterns. Typical examples include MLP-based architectures [lian2018xdeepfm; yang2017bridging; wang2021dcn; sun2021fm2; zhou2020can] and attention-based approaches [song2019autoint; xiao2017attentional; xin2019cfm]. These models support end-to-end training and can accommodate heterogeneous signals such as text, image, and video [zhang2019deep]. Recent large-scale work also studies scaling behavior. DHEN [zhang2022dhen] ensembles multiple interaction modules, and Wukong [zhang2024wukong] stacks FM-style modules into a hierarchy. Even so, non-sequential models do not directly model sequential dependencies, which limits performance whenever user behavior history matters.
+Most non-sequential CTR models are built on top of Factorization Machines (FM) \[rendle2010factorization; lian2018xdeepfm; sun2021fm2\], which model user-item interaction through low-dimensional embeddings \[zhang2019deep\]. The original FM model captures pairwise interactions \[rendle2010factorization\]. To model higher-order interactions, later work combines FMs with deep networks, where the FM component handles low-order interaction and the neural network captures higher-order patterns. Typical examples include MLP-based architectures \[lian2018xdeepfm; yang2017bridging; wang2021dcn; sun2021fm2; zhou2020can\] and attention-based approaches \[song2019autoint; xiao2017attentional; xin2019cfm\]. These models support end-to-end training and can accommodate heterogeneous signals such as text, image, and video \[zhang2019deep\]. Recent large-scale work also studies scaling behavior. DHEN \[zhang2022dhen\] ensembles multiple interaction modules, and Wukong \[zhang2024wukong\] stacks FM-style modules into a hierarchy. Even so, non-sequential models do not directly model sequential dependencies, which limits performance whenever user behavior history matters.
 
 ### 2.2 Sequential Methods
 
-Sequential recommendation methods aim to capture evolving user interests from interaction histories. A core challenge is how to combine sequential and non-sequential information in a mutually beneficial way. Earlier methods used Markov-style assumptions [shani2005mdp; he2016fusing; yang2020hybrid], but those assumptions are often too restrictive for long-term dependency modeling [quadrana2018sequence]. More recent approaches use RNNs and attention. Various attention-based architectures [zhou2019deep; lyu2020deep] and Transformer-style models [devlin2018bert; vaswani2017attention; lin2025cats; sun2019bert4rec; chen2019behavior] have been proposed for sequential recommendation. Some methods also model multiple user interests or multiple behavior sequences [xiao2020deep; han2024efficient]. Industrial ranking systems such as TransAct [xia2023transact], LiRank [borisyuk2024lirank], and CARL [chen2024cache] push this direction further.
+Sequential recommendation methods aim to capture evolving user interests from interaction histories. A core challenge is how to combine sequential and non-sequential information in a mutually beneficial way. Earlier methods used Markov-style assumptions \[shani2005mdp; he2016fusing; yang2020hybrid\], but those assumptions are often too restrictive for long-term dependency modeling \[quadrana2018sequence\]. More recent approaches use RNNs and attention. Various attention-based architectures \[zhou2019deep; lyu2020deep\] and Transformer-style models \[devlin2018bert; vaswani2017attention; lin2025cats; sun2019bert4rec; chen2019behavior\] have been proposed for sequential recommendation. Some methods also model multiple user interests or multiple behavior sequences \[xiao2020deep; han2024efficient\]. Industrial ranking systems such as TransAct \[xia2023transact\], LiRank \[borisyuk2024lirank\], and CARL \[chen2024cache\] push this direction further.
 
 The paper argues that most existing sequential methods still mainly use non-sequential information to personalize sequence modeling, while the reverse direction is underexplored. That one-way design reduces the expressiveness of the learned representations and motivates a bidirectional framework such as InterFormer.
 
@@ -86,14 +86,14 @@ The paper uses bold uppercase letters for matrices such as $\mathbf{X}$, bold lo
 | $T, d$                         | sequence length and embedding dimension        |
 | $\odot$                        | Hadamard product                               |
 | $\langle \cdot, \cdot \rangle$ | inner product                                  |
-| $[\cdot \Vert \cdot]$          | horizontal concatenation of vectors            |
+| $\[\cdot \Vert \cdot\]$          | horizontal concatenation of vectors            |
 
 ### 3.2 Click-Through Rate Prediction
 
 CTR prediction estimates the probability that a user clicks an item given heterogeneous information such as static context and behavior sequences. Let $\mathcal{U}$ be the user set and $\mathcal{I}$ the item set. For a user $u \in \mathcal{U}$, define the interaction sequence as:
 
 $$
-S^u = [i_1^u, i_2^u, \dots, i_T^u],
+S^u = \[i_1^u, i_2^u, \dots, i_T^u\],
 $$
 
 where each $i_t^u \in \mathcal{I}$ is the interacted item at time step $t$. The goal is to estimate the click probability for a new item $i_{T+1}^u$:
@@ -138,11 +138,11 @@ This layered ensemble lets DHEN combine the strengths of multiple interaction me
 
 ### 3.4 Attention Mechanism
 
-Attention is a core tool for sequence modeling [bahdanau2014neural; vaswani2017attention; devlin2018bert]. The paper highlights Multi-Head Attention and Pooling by Multi-Head Attention.
+Attention is a core tool for sequence modeling \[bahdanau2014neural; vaswani2017attention; devlin2018bert\]. The paper highlights Multi-Head Attention and Pooling by Multi-Head Attention.
 
 #### 3.4.1 Multi-Head Attention
 
-Given a sequence $\mathbf{S} = [\mathbf{s}_1, \dots, \mathbf{s}_T]$, self-attention is defined as:
+Given a sequence $\mathbf{S} = \[\mathbf{s}_1, \dots, \mathbf{s}_T\]$, self-attention is defined as:
 
 $$
 \mathrm{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \mathrm{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^{\mathsf{T}}}{\sqrt{d_k}}\right)\mathbf{V},
@@ -151,7 +151,7 @@ $$
 where $\mathbf{Q}$, $\mathbf{K}$, and $\mathbf{V}$ are projected queries, keys, and values. Multi-Head Attention then aggregates $h$ parallel heads:
 
 $$
-\mathrm{MHA}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = [\mathbf{head}_1 \Vert \cdots \Vert \mathbf{head}_h] \mathbf{W}^O,
+\mathrm{MHA}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \[\mathbf{head}_1 \Vert \cdots \Vert \mathbf{head}_h\] \mathbf{W}^O,
 $$
 
 with
@@ -187,7 +187,7 @@ The model handles two types of non-sequence features: dense features such as use
 Dense features are concatenated into
 
 $$
-\mathbf{x}_{\mathrm{dense}}^{(0)} = [x_{\mathrm{dense}_1}^{(0)}, \dots, x_{\mathrm{dense}_m}^{(0)}]^{\mathsf{T}},
+\mathbf{x}_{\mathrm{dense}}^{(0)} = \[x_{\mathrm{dense}_1}^{(0)}, \dots, x_{\mathrm{dense}_m}^{(0)}\]^{\mathsf{T}},
 $$
 
 and then mapped to a dense embedding:
@@ -199,7 +199,7 @@ $$
 Each sparse feature is encoded as a one-hot vector and projected into the same $d$-dimensional space. Concatenating dense and sparse embeddings yields the non-sequence feature matrix:
 
 $$
-\mathbf{X}^{(1)} = [\mathbf{x}_{\mathrm{dense}}^{(1)} \Vert \mathbf{x}_{\mathrm{sparse}_1}^{(1)} \Vert \dots \Vert \mathbf{x}_{\mathrm{sparse}_n}^{(1)}].
+\mathbf{X}^{(1)} = \[\mathbf{x}_{\mathrm{dense}}^{(1)} \Vert \mathbf{x}_{\mathrm{sparse}_1}^{(1)} \Vert \dots \Vert \mathbf{x}_{\mathrm{sparse}_n}^{(1)}\].
 $$
 
 #### 4.1.2 Sequence Feature Preprocessing
@@ -207,10 +207,10 @@ $$
 Each item in the behavior sequence is embedded into $\mathbb{R}^d$, producing:
 
 $$
-\mathbf{S}^{(0)} = [\mathbf{s}_1^{(0)} \Vert \dots \Vert \mathbf{s}_T^{(0)}] \in \mathbb{R}^{d \times T}.
+\mathbf{S}^{(0)} = \[\mathbf{s}_1^{(0)} \Vert \dots \Vert \mathbf{s}_T^{(0)}\] \in \mathbb{R}^{d \times T}.
 $$
 
-In real systems, users may have multiple behavior sequences from different actions or platforms. These sequences are often noisy. To unify them and suppress irrelevant information, the paper uses MaskNet [wang2021masknet]. Given $k$ sequences $\mathbf{S}_1, \dots, \mathbf{S}_k$, the combined representation is:
+In real systems, users may have multiple behavior sequences from different actions or platforms. These sequences are often noisy. To unify them and suppress irrelevant information, the paper uses MaskNet \[wang2021masknet\]. Given $k$ sequences $\mathbf{S}_1, \dots, \mathbf{S}_k$, the combined representation is:
 
 $$
 \mathrm{MaskNet}(\mathbf{S}) = \mathrm{MLP}_{\mathrm{lce}}\left(\mathbf{S} \odot \mathrm{MLP}_{\mathrm{mask}}(\mathbf{S})\right),
@@ -220,10 +220,10 @@ where $\mathrm{MLP}_{\mathrm{mask}}$ learns a self-mask and $\mathrm{MLP}_{\math
 
 ### 4.2 Interaction Arch: Behavior-Aware Interaction Learning
 
-Non-sequence features encode static user preference, while behavior sequences provide dynamic preference information [lian2018xdeepfm; zhang2022dhen; zhou2019deep]. InterFormer uses sequence summarization to improve non-sequence feature interaction learning. Given non-sequence input $\mathbf{X}^{(l)}$ and sequence summary $\mathbf{S}_{\mathrm{sum}}^{(l)}$ at layer $l$, the Interaction Arch produces:
+Non-sequence features encode static user preference, while behavior sequences provide dynamic preference information \[lian2018xdeepfm; zhang2022dhen; zhou2019deep\]. InterFormer uses sequence summarization to improve non-sequence feature interaction learning. Given non-sequence input $\mathbf{X}^{(l)}$ and sequence summary $\mathbf{S}_{\mathrm{sum}}^{(l)}$ at layer $l$, the Interaction Arch produces:
 
 $$
-\mathbf{X}^{(l+1)} = \mathrm{MLP}^{(l)}\left(\mathrm{Interaction}^{(l)}\left([\mathbf{X}^{(l)} \Vert \mathbf{S}_{\mathrm{sum}}^{(l)}]\right)\right).
+\mathbf{X}^{(l+1)} = \mathrm{MLP}^{(l)}\left(\mathrm{Interaction}^{(l)}\left(\[\mathbf{X}^{(l)} \Vert \mathbf{S}_{\mathrm{sum}}^{(l)}\]\right)\right).
 $$
 
 The interaction backbone is not fixed. Inner product, DCNv2, DHEN, and similar models can all serve as the Interaction Arch. Appending sequence summary allows the model to capture both explicit non-sequence interactions and implicit interactions between non-sequence context and user behavior.
@@ -243,10 +243,10 @@ where $f(\cdot)$ is an MLP that learns a sequence projection conditioned on non-
 To capture token-to-token dependencies, the Sequence Arch applies MHA after PFFN. Before the first InterFormer layer, the non-sequence summary $\mathbf{X}_{\mathrm{sum}}^{(1)}$ is prepended to the sequence as a CLS token:
 
 $$
-\mathbf{S}^{(1)} = [\mathbf{X}_{\mathrm{sum}}^{(1)} \Vert \mathbf{S}^{(1)}].
+\mathbf{S}^{(1)} = \[\mathbf{X}_{\mathrm{sum}}^{(1)} \Vert \mathbf{S}^{(1)}\].
 $$
 
-This lets MHA use non-sequence information as a query for sequence aggregation. Rotary position embeddings [su2024roformer] are also applied. Overall, the Sequence Arch is:
+This lets MHA use non-sequence information as a query for sequence aggregation. Rotary position embeddings \[su2024roformer\] are also applied. Overall, the Sequence Arch is:
 
 $$
 \mathbf{S}^{(l+1)} = \mathrm{MHA}^{(l)}\left(\mathrm{PFFN}(\mathbf{X}_{\mathrm{sum}}^{(l)}, \mathbf{S}^{(l)})\right).
@@ -273,12 +273,12 @@ For sequential information, the Cross Arch combines three summaries:
 
 - CLS tokens $\mathbf{S}_{\mathrm{CLS}}$, which are learned by MHA and already incorporate non-sequence context.
 - PMA tokens $\mathbf{S}_{\mathrm{PMA}}$, which summarize the sequence through learnable queries.
-- The $K$ most recent interacted tokens $\mathbf{S}_{\mathrm{recent}}$, which capture short-term interest [borisyuk2024lirank; xia2023transact].
+- The $K$ most recent interacted tokens $\mathbf{S}_{\mathrm{recent}}$, which capture short-term interest \[borisyuk2024lirank; xia2023transact\].
 
 The final sequence summary is:
 
 $$
-\mathbf{S}_{\mathrm{sum}}^{(l)} = \mathrm{Gating}\left([\mathbf{S}_{\mathrm{CLS}}^{(l)} \Vert \mathbf{S}_{\mathrm{PMA}}^{(l)} \Vert \mathbf{S}_{\mathrm{recent}}^{(l)}]\right).
+\mathbf{S}_{\mathrm{sum}}^{(l)} = \mathrm{Gating}\left(\[\mathbf{S}_{\mathrm{CLS}}^{(l)} \Vert \mathbf{S}_{\mathrm{PMA}}^{(l)} \Vert \mathbf{S}_{\mathrm{recent}}^{(l)}\]\right).
 $$
 
 The Cross Arch therefore serves two purposes: it avoids aggressive aggregation inside the main arches, and it enables efficient, low-dimensional information exchange across data modes.
@@ -291,7 +291,7 @@ The experiments cover both public benchmark datasets and a large internal indust
 
 #### 5.1.1 Datasets
 
-The paper evaluates on AmazonElectronics [he2016ups], TaobaoAds [Tianchi], KuaiVideo [li2019routing], and a large internal dataset. The three public benchmark datasets are summarized below.
+The paper evaluates on AmazonElectronics \[he2016ups\], TaobaoAds \[Tianchi\], KuaiVideo \[li2019routing\], and a large internal dataset. The three public benchmark datasets are summarized below.
 
 | Dataset   | #Samples | #Feat. (Seq/Non-Seq) | Seq Length |
 | --------- | -------: | -------------------- | ---------: |
@@ -305,23 +305,23 @@ InterFormer is compared against strong non-sequential methods and sequential met
 
 Non-sequential baselines:
 
-- FM [rendle2010factorization]
-- xDeepFM [lian2018xdeepfm]
-- AutoInt+ [song2019autoint]
-- DCNv2 [wang2021dcn]
-- FmFM [sun2021fm2]
+- FM \[rendle2010factorization\]
+- xDeepFM \[lian2018xdeepfm\]
+- AutoInt+ \[song2019autoint\]
+- DCNv2 \[wang2021dcn\]
+- FmFM \[sun2021fm2\]
 - DOT product
-- DHEN [zhang2022dhen]
-- Wukong [zhang2024wukong]
+- DHEN \[zhang2022dhen\]
+- Wukong \[zhang2024wukong\]
 
 Sequential baselines:
 
-- DIN [zhou2018deep]
-- DIEN [zhou2019deep]
-- BST [chen2019behavior]
-- DMIN [xiao2020deep]
-- DMR [lyu2020deep]
-- TransAct [xia2023transact]
+- DIN \[zhou2018deep\]
+- DIEN \[zhou2019deep\]
+- BST \[chen2019behavior\]
+- DMIN \[xiao2020deep\]
+- DMR \[lyu2020deep\]
+- TransAct \[xia2023transact\]
 
 The reported experiments instantiate InterFormer's Interaction Arch with DHEN.
 
@@ -330,7 +330,7 @@ The reported experiments instantiate InterFormer's Interaction Arch with DHEN.
 - AUC measures the model's global ranking quality. Higher is better.
 - gAUC measures personalized AUC, weighting users by click count. Higher is better.
 - LogLoss is cross-entropy loss: $L(y, \hat{y}) = -\left(y\log(\hat{y}) + (1-y)\log(1-\hat{y})\right)$. Lower is better.
-- NE, or Normalized Entropy [he2014practical], is LogLoss normalized by the entropy of the average training CTR. Lower is better.
+- NE, or Normalized Entropy \[he2014practical\], is LogLoss normalized by the entropy of the average training CTR. Lower is better.
 
 ### 5.2 Evaluation on Benchmark Datasets
 
@@ -482,7 +482,7 @@ Overall, the two scaling plots show that InterFormer benefits both from more seq
 
 The paper highlights two optimizations that improve overall training efficiency by more than 30%:
 
-- Communication overhead reduction. The DHEN-based Interaction Arch is communication-bound under FSDP [zhao2023pytorch], while the Transformer-based Sequence Arch is more computation-bound. Since the two arches run in parallel, exposed communication from the Interaction Arch can overlap with sequence computation, yielding about 20% QPS improvement over a sequential execution schedule.
+- Communication overhead reduction. The DHEN-based Interaction Arch is communication-bound under FSDP \[zhao2023pytorch\], while the Transformer-based Sequence Arch is more computation-bound. Since the two arches run in parallel, exposed communication from the Interaction Arch can overlap with sequence computation, yielding about 20% QPS improvement over a sequential execution schedule.
 - Computation efficiency. The system reallocates FLOPs from low-return modules to higher-return modules and fuses smaller kernels for better GPU utilization. The paper reports that these changes improve MFU for interaction modules from 11% to 16%, DHEN from 38% to 45%, and the overall InterFormer layer by 19%.
 
 #### 5.3.3 Online Impact
@@ -512,7 +512,7 @@ The original appendix presents the following high-level procedure for InterForme
 6. Produce the final CTR prediction:
 
 $$
-\hat{y} = \mathrm{MLP}\left([\mathbf{X}_{\mathrm{sum}}^{(L)} \Vert \mathbf{S}_{\mathrm{sum}}^{(L)}]\right).
+\hat{y} = \mathrm{MLP}\left(\[\mathbf{X}_{\mathrm{sum}}^{(L)} \Vert \mathbf{S}_{\mathrm{sum}}^{(L)}\]\right).
 $$
 
 7. Return $\hat{y}$.
@@ -547,13 +547,13 @@ Unlike a standard Transformer FFN, this version explicitly injects information f
 
 ### B. Experiment Pipeline
 
-The benchmark experiments use the public BARS evaluation framework [zhu2022bars]. Optimization uses Adam [kingma2014adam] with a learning-rate scheduler. The initial learning rate is tuned over $\{10^{-1}, 10^{-2}, 10^{-3}\}$. Training uses a batch size of 2048 and runs for up to 100 epochs with early stopping. Swish [ramachandran2017searching] is used as the activation function. NVIDIA A100 GPUs are used for benchmark experiments and NVIDIA H100 GPUs are used for internal experiments.
+The benchmark experiments use the public BARS evaluation framework \[zhu2022bars\]. Optimization uses Adam \[kingma2014adam\] with a learning-rate scheduler. The initial learning rate is tuned over $\{10^{-1}, 10^{-2}, 10^{-3}\}$. Training uses a batch size of 2048 and runs for up to 100 epochs with early stopping. Swish \[ramachandran2017searching\] is used as the activation function. NVIDIA A100 GPUs are used for benchmark experiments and NVIDIA H100 GPUs are used for internal experiments.
 
 #### B.1 Datasets
 
-- AmazonElectronics [he2016ups]. Contains product reviews and metadata from Amazon with 192,403 users, 63,001 goods, 801 categories, and 1,689,188 samples. Non-sequence features include user ID, item ID, and item category. Sequence features include interacted items and their categories with length 100. The split used in the paper contains 2.60M training samples and 0.38M test samples.
-- TaobaoAds [Tianchi]. Contains 8 days of Taobao ad click-through data, about 26 million records from 1,140,000 users. Non-sequence features include item-related features such as ad ID, category, and price, plus user-related features such as user ID, gender, and age. Sequence features include interacted-item brands, interacted-item categories, and user behaviors with length 50. The paper uses 22.0M training samples and 3.1M test samples.
-- KuaiVideo [li2019routing]. Contains 10,000 users and 3,239,534 interacted micro-videos. Non-sequence features include user ID, video ID, and visual video embeddings. Sequence features include multiple behaviors such as click, like, and not-click, with length 100. The split used in the paper contains 10.9M training samples and 2.7M test samples.
+- AmazonElectronics \[he2016ups\]. Contains product reviews and metadata from Amazon with 192,403 users, 63,001 goods, 801 categories, and 1,689,188 samples. Non-sequence features include user ID, item ID, and item category. Sequence features include interacted items and their categories with length 100. The split used in the paper contains 2.60M training samples and 0.38M test samples.
+- TaobaoAds \[Tianchi\]. Contains 8 days of Taobao ad click-through data, about 26 million records from 1,140,000 users. Non-sequence features include item-related features such as ad ID, category, and price, plus user-related features such as user ID, gender, and age. Sequence features include interacted-item brands, interacted-item categories, and user behaviors with length 50. The paper uses 22.0M training samples and 3.1M test samples.
+- KuaiVideo \[li2019routing\]. Contains 10,000 users and 3,239,534 interacted micro-videos. Non-sequence features include user ID, video ID, and visual video embeddings. Sequence features include multiple behaviors such as click, like, and not-click, with length 100. The split used in the paper contains 10.9M training samples and 2.7M test samples.
 - Internal. Contains 70B entries, hundreds of non-sequence features, and 10 sequences of length 200 to 1,000.
 
 #### B.2 Model Configuration
