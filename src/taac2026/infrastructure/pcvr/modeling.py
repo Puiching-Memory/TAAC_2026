@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import math
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import torch
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
+
+from taac2026.infrastructure.pcvr.tilelang_ops import flash_attention as run_flash_attention
 
 
 class ModelInput(NamedTuple):
@@ -78,18 +80,31 @@ def scaled_dot_product_attention(
     attn_mask: torch.Tensor | None,
     dropout_p: float,
     training: bool,
+    backend: Literal["torch", "tilelang"] = "torch",
+    is_causal: bool = False,
+    block_m: int = 64,
+    block_n: int = 64,
+    num_stages: int = 1,
+    threads: int = 128,
 ) -> torch.Tensor:
     batch_size, query_len, d_model = q.shape
     head_dim = d_model // num_heads
     q = q.view(batch_size, query_len, num_heads, head_dim).transpose(1, 2)
     k = k.view(batch_size, k.shape[1], num_heads, head_dim).transpose(1, 2)
     v = v.view(batch_size, v.shape[1], num_heads, head_dim).transpose(1, 2)
-    output = F.scaled_dot_product_attention(
+    output = run_flash_attention(
         q,
         k,
         v,
+        backend=backend,
         attn_mask=attn_mask,
-        dropout_p=dropout_p if training else 0.0,
+        dropout_p=dropout_p,
+        training=training,
+        is_causal=is_causal,
+        block_m=block_m,
+        block_n=block_n,
+        num_stages=num_stages,
+        threads=threads,
     )
     return output.transpose(1, 2).contiguous().view(batch_size, query_len, d_model)
 

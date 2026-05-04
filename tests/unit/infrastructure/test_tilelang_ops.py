@@ -3,8 +3,149 @@ from __future__ import annotations
 import pytest
 import torch
 import taac2026.infrastructure.pcvr.tilelang_ops as tilelang_ops
+import torch.nn.functional as F
 
-from taac2026.infrastructure.pcvr.tilelang_ops import resolved_rms_norm_backend, rms_norm
+from taac2026.infrastructure.pcvr.tilelang_ops import (
+    flash_attention,
+    resolved_flash_attention_backend,
+    resolved_rms_norm_backend,
+    rms_norm,
+)
+
+
+def _causal_valid_mask(lengths: torch.Tensor, num_heads: int) -> torch.Tensor:
+    token_count = int(lengths.shape[1]) if lengths.ndim == 2 else int(lengths.numel())
+    padding_mask = lengths if lengths.ndim == 2 else torch.arange(token_count).unsqueeze(0) >= lengths.unsqueeze(1)
+    causal = torch.ones(token_count, token_count, dtype=torch.bool, device=padding_mask.device).tril()
+    key_valid = ~padding_mask
+    mask = causal.unsqueeze(0) & key_valid.unsqueeze(1)
+    query_invalid = padding_mask.unsqueeze(-1)
+    fallback = torch.eye(token_count, dtype=torch.bool, device=padding_mask.device).unsqueeze(0)
+    mask = torch.where(query_invalid, fallback, mask)
+    return mask.unsqueeze(1).expand(padding_mask.shape[0], num_heads, token_count, token_count)
+
+
+def test_flash_attention_matches_reference_on_cpu_torch_backend() -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 7, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 7, 8, dtype=torch.float32)
+
+    output = flash_attention(q, k, v, backend="torch")
+    reference = F.scaled_dot_product_attention(q, k, v)
+
+    torch.testing.assert_close(output, reference)
+
+
+def test_resolved_flash_attention_backend_falls_back_to_torch_on_cpu() -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+
+    assert resolved_flash_attention_backend(q, k, v, "torch") == "torch"
+
+
+def test_resolved_flash_attention_backend_rejects_tilelang_on_cpu() -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+
+    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+        resolved_flash_attention_backend(q, k, v, "tilelang")
+
+
+def test_resolved_flash_attention_backend_rejects_unstructured_attention_mask() -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    attn_mask = torch.tensor(
+        [
+            [
+                [
+                    [True, False, True, False, False],
+                    [True, False, True, False, False],
+                    [True, False, True, False, False],
+                    [True, False, True, False, False],
+                    [True, False, True, False, False],
+                ]
+            ]
+        ],
+        dtype=torch.bool,
+    ).expand(2, 3, 5, 5)
+
+    with pytest.raises(RuntimeError, match="requires bool key masks to be prefix-valid"):
+        resolved_flash_attention_backend(q, k, v, "tilelang", attn_mask=attn_mask)
+
+
+def test_plan_tilelang_flash_attention_mask_extracts_prefix_key_lengths() -> None:
+    q = torch.randn(2, 3, 4, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 6, 8, dtype=torch.float32)
+    key_valid = torch.tensor(
+        [
+            [True, True, True, True, False, False],
+            [True, True, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    attn_mask = key_valid[:, None, None, :].expand(2, 3, 4, 6)
+
+    plan = tilelang_ops._plan_tilelang_flash_attention_mask(q, k, attn_mask, is_causal=False)
+
+    assert torch.equal(plan.key_lengths.cpu(), torch.tensor([4, 2], dtype=torch.int32))
+    assert plan.query_self_mask is None
+    assert plan.is_causal is False
+
+
+def test_plan_tilelang_flash_attention_mask_extracts_causal_valid_mask() -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    padding_mask = torch.tensor(
+        [
+            [False, False, False, True, True],
+            [False, True, True, True, True],
+        ],
+        dtype=torch.bool,
+    )
+    attn_mask = _causal_valid_mask(padding_mask, q.shape[1])
+
+    plan = tilelang_ops._plan_tilelang_flash_attention_mask(q, k, attn_mask, is_causal=False)
+
+    assert torch.equal(plan.key_lengths.cpu(), torch.tensor([3, 1], dtype=torch.int32))
+    assert torch.equal(
+        plan.query_self_mask.cpu(),
+        torch.tensor(
+            [
+                [False, False, False, True, True],
+                [False, True, True, True, True],
+            ],
+            dtype=torch.bool,
+        ),
+    )
+    assert plan.is_causal is True
+
+
+def test_resolved_flash_attention_backend_rejects_training_dropout() -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+
+    with pytest.raises(RuntimeError, match="without dropout"):
+        resolved_flash_attention_backend(q, k, v, "tilelang", dropout_p=0.1, training=True)
+
+
+def test_flash_attention_tilelang_raises_when_compile_fails(monkeypatch) -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+
+    monkeypatch.setattr(tilelang_ops, "_resolve_flash_attention_backend", lambda *_args, **_kwargs: "tilelang")
+    monkeypatch.setattr(
+        tilelang_ops,
+        "compile_flash_attention_kernel",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("compile failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="compile failed"):
+        flash_attention(q, k, v, backend="tilelang")
 
 
 def test_rms_norm_matches_reference_on_cpu_torch_backend() -> None:
@@ -101,6 +242,47 @@ def test_ensure_tilelang_cuda_fp8_compatibility_skips_patch_when_cuda_has_e8m0(t
 
     assert patched is False
     assert tilelang_header.read_text(encoding="utf-8") == tilelang_ops._TILELANG_E8M0_ORIGINAL_GUARD
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
+def test_flash_attention_tilelang_matches_torch_forward_on_cuda() -> None:
+    if not tilelang_ops.tilelang_available():
+        pytest.skip("tilelang is not installed")
+
+    tilelang_ops.clear_tilelang_kernel_cache()
+    q = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda")
+    k = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda")
+    v = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda")
+
+    output = flash_attention(q, k, v, backend="tilelang", is_causal=False)
+    reference = flash_attention(q, k, v, backend="torch", is_causal=False)
+
+    torch.testing.assert_close(output.float(), reference.float(), atol=1e-2, rtol=1e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
+def test_flash_attention_tilelang_matches_torch_forward_with_causal_valid_mask_on_cuda() -> None:
+    if not tilelang_ops.tilelang_available():
+        pytest.skip("tilelang is not installed")
+
+    tilelang_ops.clear_tilelang_kernel_cache()
+    q = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda")
+    k = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda")
+    v = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda")
+    padding_mask = torch.tensor(
+        [
+            [False] * 20 + [True] * 12,
+            [False] * 11 + [True] * 21,
+        ],
+        dtype=torch.bool,
+        device="cuda",
+    )
+    attn_mask = _causal_valid_mask(padding_mask, q.shape[1])
+
+    output = flash_attention(q, k, v, backend="tilelang", attn_mask=attn_mask)
+    reference = flash_attention(q, k, v, backend="torch", attn_mask=attn_mask)
+
+    torch.testing.assert_close(output.float(), reference.float(), atol=2e-2, rtol=2e-2)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
