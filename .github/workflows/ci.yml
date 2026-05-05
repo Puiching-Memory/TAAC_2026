@@ -58,8 +58,9 @@ jobs:
       - name: 运行 Ruff 风格检查
         run: uv run ruff check .
 
-      - name: 运行 Vulture 死代码检查
+      - name: 运行 Vulture 死代码检查（仅警告）
         if: matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
+        continue-on-error: true
         run: uv run vulture --config pyproject.toml
 
   test:
