@@ -35,6 +35,7 @@ dev = [
 	"pytest-benchmark==5.2.3",
 	"pytest-cov==7.1.0",
 	"ruff==0.15.12",
+	"vulture==2.16",
 	"zensical==0.0.38",
 ]
 cuda126 = [
@@ -107,6 +108,10 @@ extend-select = ["B", "UP", "PTH", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/gpu_env_support.py" = ["E402"]
+
+[tool.vulture]
+paths = ["src", "experiments", "tests"]
+min_confidence = 100
 
 [tool.coverage.run]
 branch = true

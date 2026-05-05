@@ -32,7 +32,7 @@ uv sync --locked --extra dev --extra cuda126
 说明：
 
 - `cuda126` 是当前仓库唯一支持的本地 CUDA profile。
-- `dev` extra 包含 Ruff、Pytest、Coverage 和 Zensical。
+- `dev` extra 包含 Ruff、Vulture、Pytest、Coverage 和 Zensical。
 - 线上 Bundle 运行模式不依赖 `uv`；那部分见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
 
 ## 准备示例数据

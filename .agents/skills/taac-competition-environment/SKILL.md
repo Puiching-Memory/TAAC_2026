@@ -71,7 +71,7 @@ uv run taac-package-infer --experiment experiments/interformer --output-dir /tmp
 Local defaults:
 
 - All local `run.sh` commands use CUDA profile `cuda126`; setting `TAAC_CUDA_PROFILE` or `--cuda-profile` to any other value is treated as an error.
-- Training, evaluation, inference, and local CLI tooling all reuse the same `cuda126` environment; pytest, coverage, Ruff, benchmark tooling, and Zensical live in the `dev` extra and should be installed with `uv sync --locked --extra dev --extra cuda126` when needed.
+- Training, evaluation, inference, and local CLI tooling all reuse the same `cuda126` environment; pytest, coverage, Ruff, Vulture, benchmark tooling, and Zensical live in the `dev` extra and should be installed with `uv sync --locked --extra dev --extra cuda126` when needed.
 - `TAAC_SKIP_UV_SYNC=1` skips automatic `uv sync` when the environment is already prepared.
 
 ## Dependency Profiles
@@ -80,7 +80,7 @@ The project requires Python `>=3.10,<3.14`.
 
 Important extras:
 
-- `dev`: Ruff, pytest, hypothesis, benchmark tooling, coverage helpers, and Zensical for local testing and docs work.
+- `dev`: Ruff, Vulture, pytest, hypothesis, benchmark tooling, coverage helpers, and Zensical for local testing and docs work.
 - `cuda126`: CUDA 12.6 PyTorch, FBGEMM, and TorchRec runtime for the repository.
 
 Do not point `uv` at an alternate package index unless you are intentionally updating dependency resolution. The lockfile is expected to resolve against the indexes declared in `pyproject.toml`.

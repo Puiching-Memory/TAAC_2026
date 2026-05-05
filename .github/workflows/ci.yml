@@ -52,8 +52,15 @@ jobs:
       - name: 设置 uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
+      - name: 同步开发工具环境
+        run: uv sync --locked --extra dev
+
       - name: 运行 Ruff 风格检查
-        run: uv run --with ruff ruff check .
+        run: uv run ruff check .
+
+      - name: 运行 Vulture 死代码检查
+        if: matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
+        run: uv run vulture --config pyproject.toml
 
   test:
     name: CPU 单元测试 (Python ${{ matrix.python-version }})
