@@ -22,6 +22,7 @@ from taac2026.infrastructure.pcvr.config import PCVRTrainConfig
 from taac2026.infrastructure.pcvr.experiment_runtime import PCVRExperimentRuntimeMixin
 from taac2026.infrastructure.pcvr.prediction_stack import PCVRPredictionHooks, _log_prediction_progress
 from taac2026.infrastructure.pcvr.runtime_stack import PCVRRuntimeHooks
+from taac2026.infrastructure.pcvr.sample_dataset import resolve_default_pcvr_sample_paths
 from taac2026.infrastructure.pcvr.train_stack import PCVRTrainHooks
 from taac2026.infrastructure.pcvr.training import train_pcvr_model
 
@@ -88,15 +89,17 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
                     sys.modules[module_name] = module
 
     def train(self, request: TrainRequest) -> Mapping[str, Any]:
-        if request.dataset_path is None:
-            raise ValueError(f"PCVR experiment {self.name!r} requires --dataset-path")
+        resolved_dataset_path, resolved_schema_override = resolve_default_pcvr_sample_paths(
+            request.dataset_path,
+            request.schema_path,
+        )
         run_dir = request.run_dir.expanduser().resolve()
         train_log_dir = Path(os.environ.get("TRAIN_LOG_PATH", str(run_dir / "logs"))).expanduser().resolve()
         tensorboard_dir = Path(os.environ.get("TRAIN_TF_EVENTS_PATH", str(run_dir / "tensorboard"))).expanduser().resolve()
 
         forwarded_args = [
             "--data_dir",
-            str(request.dataset_path.expanduser().resolve()),
+            str(resolved_dataset_path),
             "--ckpt_dir",
             str(run_dir),
             "--log_dir",
@@ -104,8 +107,8 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             "--tf_events_dir",
             str(tensorboard_dir),
         ]
-        if request.schema_path is not None:
-            forwarded_args.extend(["--schema_path", str(request.schema_path.expanduser().resolve())])
+        if resolved_schema_override is not None:
+            forwarded_args.extend(["--schema_path", str(resolved_schema_override)])
         forwarded_args.extend(request.extra_args)
 
         with self._module_context():
@@ -125,7 +128,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
 
         observed_schema_payload = self.runtime_hooks.write_train_split_observed_schema_reports(
             self,
-            dataset_path=request.dataset_path,
+            dataset_path=resolved_dataset_path,
             schema_path=resolved_schema_path,
             run_dir=run_dir,
             valid_ratio=float(summary["valid_ratio"]),
@@ -141,14 +144,18 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
         return payload
 
     def evaluate(self, request: EvalRequest) -> Mapping[str, Any]:
+        resolved_dataset_path, resolved_schema_override = resolve_default_pcvr_sample_paths(
+            request.dataset_path,
+            request.schema_path,
+        )
         checkpoint = self.runtime_hooks.resolve_evaluation_checkpoint(self, request)
         output_path = request.output_path or (request.run_dir / "evaluation.json")
         predictions_path = request.predictions_path or (request.run_dir / "validation_predictions.jsonl")
         config = self.runtime_hooks.load_train_config(self, checkpoint.parent)
         resolved_schema_path, resolved_schema = self.runtime_hooks.load_runtime_schema(
             self,
-            dataset_path=request.dataset_path,
-            schema_path=request.schema_path,
+            dataset_path=resolved_dataset_path,
+            schema_path=resolved_schema_override,
             checkpoint_dir=checkpoint.parent,
             mode="evaluation",
         )
@@ -178,7 +185,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
 
         with self._module_context():
             evaluation = self._run_prediction_loop(
-                dataset_path=request.dataset_path,
+                dataset_path=resolved_dataset_path,
                 schema_path=resolved_schema_path,
                 checkpoint_path=checkpoint,
                 batch_size=effective_batch_size,
@@ -208,13 +215,13 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             "schema_path": str(resolved_schema_path),
             "schema": resolved_schema,
             "metrics": metrics,
-            "data_diagnostics": self.runtime_hooks.build_evaluation_data_diagnostics(self, request.dataset_path),
+            "data_diagnostics": self.runtime_hooks.build_evaluation_data_diagnostics(self, resolved_dataset_path),
             "validation_predictions_path": str(predictions_path),
         }
         observed_schema_path = output_path.with_name("evaluation_observed_schema.json")
         self.runtime_hooks.write_observed_schema_report(
             self,
-            dataset_path=request.dataset_path,
+            dataset_path=resolved_dataset_path,
             schema_path=resolved_schema_path,
             output_path=observed_schema_path,
             dataset_role="eval",
@@ -224,12 +231,16 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
         return payload
 
     def infer(self, request: InferRequest) -> Mapping[str, Any]:
+        resolved_dataset_path, resolved_schema_override = resolve_default_pcvr_sample_paths(
+            request.dataset_path,
+            request.schema_path,
+        )
         checkpoint = self.runtime_hooks.resolve_inference_checkpoint(self, request)
         config = self.runtime_hooks.load_train_config(self, checkpoint.parent)
         resolved_schema_path, resolved_schema = self.runtime_hooks.load_runtime_schema(
             self,
-            dataset_path=request.dataset_path,
-            schema_path=request.schema_path,
+            dataset_path=resolved_dataset_path,
+            schema_path=resolved_schema_override,
             checkpoint_dir=checkpoint.parent,
             mode="inference",
         )
@@ -259,7 +270,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
 
         with self._module_context():
             evaluation = self._run_prediction_loop(
-                dataset_path=request.dataset_path,
+                dataset_path=resolved_dataset_path,
                 schema_path=resolved_schema_path,
                 checkpoint_path=checkpoint,
                 batch_size=effective_batch_size,

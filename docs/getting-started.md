@@ -37,7 +37,7 @@ uv sync --locked --extra dev --extra cuda126
 
 ## 准备示例数据
 
-仓库附带 1000 行示例数据，可直接做本地 smoke：
+本地 smoke 默认会通过 `datasets` 下载并缓存 Hugging Face 上的 1000 行样例 parquet；仓库保留一份同步的 schema 快照供默认 smoke 使用。仓库内对应的快照布局如下：
 
 ```text
 data/sample_1000_raw/
@@ -46,6 +46,7 @@ data/sample_1000_raw/
 ```
 
 正式比赛数据只需要保持相同的 parquet + `schema.json` 约定。
+本地 PCVR 训练、评估和推理入口会固定使用默认 HF 样例 parquet，不再支持显式 `--dataset-path`；`schema.json` 默认复用仓库内快照，只有切换 schema 快照时才需要显式传 `--schema-path`。线上 Bundle 仍按平台约定接收外部数据路径。
 
 ## 训练第一个实验包
 
@@ -54,8 +55,6 @@ data/sample_1000_raw/
 ```bash
 bash run.sh train \
   --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/quickstart_baseline
 ```
 
@@ -64,8 +63,6 @@ bash run.sh train \
 ```bash
 uv run taac-train \
   --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/quickstart_baseline
 ```
 
@@ -78,8 +75,6 @@ uv run taac-train \
 ```bash
 bash run.sh val \
   --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/quickstart_baseline
 ```
 
@@ -88,8 +83,6 @@ bash run.sh val \
 ```bash
 uv run taac-evaluate single \
   --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --checkpoint outputs/quickstart_baseline/best_model/model.safetensors
 ```
 
@@ -100,8 +93,6 @@ uv run taac-evaluate single \
 ```bash
 bash run.sh infer \
   --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --checkpoint outputs/quickstart_baseline/best_model/model.safetensors \
   --result-dir outputs/quickstart_infer
 ```
@@ -113,8 +104,6 @@ PCVR 模型实验位于 `experiments/pcvr/`，维护 / 分析类实验位于 `ex
 ```bash
 bash run.sh train \
   --experiment experiments/pcvr/symbiosis \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/quickstart_symbiosis
 ```
 

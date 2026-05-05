@@ -54,8 +54,7 @@ icon: lucide/bar-chart
 
 ```bash
 uv run taac-train --experiment experiments/maintenance/online_dataset_eda \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --dataset-path data/sample_1000_raw/demo_1000.parquet
 ```
 
 支持目录（含多个 `.parquet` 文件）或单文件路径。schema.json 自动从数据集同级目录推导，也可通过 `--schema-path` 或 `TAAC_SCHEMA_PATH` 显式指定。

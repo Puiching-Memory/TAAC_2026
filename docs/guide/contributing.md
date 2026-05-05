@@ -167,8 +167,6 @@ uv run python -c "from taac2026.infrastructure.experiments.loader import load_ex
 # 3. 训练 Smoke Test
 uv run taac-train \
       --experiment experiments/pcvr/my_experiment \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
       --run-dir outputs/my_experiment_smoke \
       --device cpu \
       --num_workers 0 \

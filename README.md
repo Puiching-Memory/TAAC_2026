@@ -75,23 +75,19 @@ uv sync --locked --extra dev --extra cuda126
 ```bash
 # 训练 baseline
 bash run.sh train --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/readme_baseline
 
 # 评估训练输出目录中的 checkpoint
 bash run.sh val --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/readme_baseline
 
 # 生成 predictions.json
 bash run.sh infer --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --checkpoint outputs/readme_baseline/best_model/model.safetensors \
   --result-dir outputs/readme_infer
 ```
+
+PCVR 本地 smoke 会通过 `datasets` 从 Hugging Face 缓存 `TAAC2026/data_sample_1000` 的 `demo_1000.parquet`，不再接受显式 `--dataset-path`。默认 schema 会复用仓库内的 `data/sample_1000_raw/schema.json`；只有切换 schema 快照时，才需要显式传 `--schema-path`。线上 Bundle 仍由平台注入真实数据路径。
 
 ### 生成线上 Bundle
 
@@ -222,7 +218,7 @@ print(df.shape)       # (1000, 120)
 print(df.columns)     # ['user_id', 'item_id', 'label_type', ...]
 ```
 
-如果你按仓库当前文档做本地 smoke，推荐目录布局如下：
+仓库仍保留与 HF demo 对齐的快照布局，便于检查 schema 与维护脚本：
 
 ```text
 data/sample_1000_raw/

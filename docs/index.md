@@ -42,12 +42,10 @@ icon: lucide/house
 uv sync --extra dev --extra cuda126
 
 # 训练
-uv run taac-train --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+uv run taac-train --experiment experiments/pcvr/baseline
 
 # 评估
-uv run taac-evaluate single --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+uv run taac-evaluate single --experiment experiments/pcvr/baseline
 ```
+
+PCVR quick preview 默认会通过 `datasets` 拉取 Hugging Face 上的 `demo_1000.parquet`，本地不再支持显式 `--dataset-path`；线上 Bundle 仍由平台提供真实数据路径。

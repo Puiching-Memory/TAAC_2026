@@ -107,6 +107,115 @@ def test_training_main_rejects_missing_dataset_for_dataset_experiment(tmp_path: 
         main(["--experiment", str(experiment_dir), "--run-dir", str(tmp_path / "outputs")])
 
 
+def test_training_main_allows_missing_dataset_for_pcvr_kind_experiment(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    experiment_dir = tmp_path / "experiments" / "pcvr" / "pcvr_exp"
+    experiment_dir.mkdir(parents=True)
+    (experiment_dir / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "from taac2026.domain.experiment import ExperimentSpec\n"
+        "\n"
+        "\n"
+        "def _train(request):\n"
+        "    return {\"dataset_path\": None if request.dataset_path is None else str(request.dataset_path), \"run_dir\": str(request.run_dir)}\n"
+        "\n"
+        "\n"
+        "EXPERIMENT = ExperimentSpec(\n"
+        "    name=\"pcvr_exp\",\n"
+        "    package_dir=Path(__file__).resolve().parent,\n"
+        "    train_fn=_train,\n"
+        "    metadata={\"requires_dataset\": True, \"kind\": \"pcvr\"},\n"
+        ")\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main([
+        "--experiment",
+        str(experiment_dir),
+        "--run-dir",
+        str(tmp_path / "outputs"),
+    ])
+
+    captured = capsys.readouterr()
+    payload = loads(captured.out)
+    assert exit_code == 0
+    assert payload["dataset_path"] is None
+
+
+def test_training_main_rejects_explicit_dataset_for_local_pcvr_kind_experiment(tmp_path: Path) -> None:
+    experiment_dir = tmp_path / "experiments" / "pcvr" / "pcvr_exp"
+    experiment_dir.mkdir(parents=True)
+    (experiment_dir / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "from taac2026.domain.experiment import ExperimentSpec\n"
+        "\n"
+        "\n"
+        "def _train(request):\n"
+        "    return {}\n"
+        "\n"
+        "\n"
+        "EXPERIMENT = ExperimentSpec(\n"
+        "    name=\"pcvr_exp\",\n"
+        "    package_dir=Path(__file__).resolve().parent,\n"
+        "    train_fn=_train,\n"
+        "    metadata={\"requires_dataset\": True, \"kind\": \"pcvr\"},\n"
+        ")\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="local PCVR runs no longer accept --dataset-path"):
+        main([
+            "--experiment",
+            str(experiment_dir),
+            "--dataset-path",
+            "/tmp/custom.parquet",
+        ])
+
+
+def test_training_main_allows_explicit_dataset_for_bundle_pcvr_kind_experiment(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment_dir = tmp_path / "experiments" / "pcvr" / "pcvr_exp"
+    experiment_dir.mkdir(parents=True)
+    (experiment_dir / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "from taac2026.domain.experiment import ExperimentSpec\n"
+        "\n"
+        "\n"
+        "def _train(request):\n"
+        "    return {\"dataset_path\": None if request.dataset_path is None else str(request.dataset_path)}\n"
+        "\n"
+        "\n"
+        "EXPERIMENT = ExperimentSpec(\n"
+        "    name=\"pcvr_exp\",\n"
+        "    package_dir=Path(__file__).resolve().parent,\n"
+        "    train_fn=_train,\n"
+        "    metadata={\"requires_dataset\": True, \"kind\": \"pcvr\"},\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TAAC_BUNDLE_MODE", "1")
+
+    exit_code = main([
+        "--experiment",
+        str(experiment_dir),
+        "--dataset-path",
+        "/tmp/custom.parquet",
+    ])
+
+    captured = capsys.readouterr()
+    payload = loads(captured.out)
+    assert exit_code == 0
+    assert payload["dataset_path"] == "/tmp/custom.parquet"
+
+
 def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
     args = parse_pcvr_train_args(
         ["--amp", "--amp-dtype", "float16", "--compile", "--gradient-checkpointing"],

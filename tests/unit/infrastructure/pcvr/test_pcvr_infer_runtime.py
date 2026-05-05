@@ -211,6 +211,89 @@ def test_train_writes_split_observed_schema_reports(
     assert valid_report["schema"]["user_int"] == [[1, 1, 1], [2, 3, 3]]
 
 
+def test_train_defaults_missing_dataset_to_hf_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    experiment = _make_experiment(tmp_path)
+    run_dir = tmp_path / "outputs"
+    resolved_dataset_path = tmp_path / "hf_cache" / "demo_1000.parquet"
+    resolved_schema_path = tmp_path / "hf_cache" / "schema.json"
+    resolved_dataset_path.parent.mkdir(parents=True)
+    _write_observed_schema_fixture(resolved_schema_path, resolved_dataset_path)
+    captured_argv: dict[str, object] = {}
+
+    def fake_train_pcvr_model(**kwargs):
+        captured_argv["argv"] = kwargs["argv"]
+        return {
+            "run_dir": str(run_dir.resolve()),
+            "checkpoint_root": str(run_dir.resolve()),
+            "schema_path": str(resolved_schema_path.resolve()),
+            "train_ratio": 1.0,
+            "valid_ratio": 0.1,
+        }
+
+    monkeypatch.setattr(
+        experiment_module,
+        "resolve_default_pcvr_sample_paths",
+        lambda dataset_path, schema_path: (resolved_dataset_path, resolved_schema_path),
+    )
+    monkeypatch.setattr(experiment_module, "train_pcvr_model", fake_train_pcvr_model)
+
+    payload = experiment.train(
+        TrainRequest(
+            experiment="config/symbiosis",
+            dataset_path=None,
+            schema_path=None,
+            run_dir=run_dir,
+        )
+    )
+
+    assert "--data_dir" in captured_argv["argv"]
+    assert str(resolved_dataset_path) in captured_argv["argv"]
+    assert "--schema_path" in captured_argv["argv"]
+    assert str(resolved_schema_path) in captured_argv["argv"]
+    assert set(payload["observed_schema_paths"]) == {"train_split", "valid_split"}
+
+
+def test_infer_defaults_missing_dataset_to_hf_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    experiment = _make_experiment(tmp_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "model.safetensors").write_bytes(b"checkpoint")
+    _write_train_config(checkpoint_dir, {"batch_size": 32, "num_workers": 1})
+    resolved_dataset_path = tmp_path / "hf_cache" / "demo_1000.parquet"
+    resolved_dataset_path.parent.mkdir(parents=True)
+    resolved_dataset_path.write_bytes(b"parquet")
+    schema_payload = {"features": [{"name": "user_id"}]}
+    resolved_schema_path = tmp_path / "hf_cache" / "schema.json"
+    resolved_schema_path.write_text(dumps(schema_payload), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_bound_run_prediction_loop(self, **kwargs):
+        del self
+        captured.update(kwargs)
+        return {"records": [{"user_id": "u1", "score": 0.5, "target": 0.0, "timestamp": None}]}
+
+    monkeypatch.setenv("MODEL_OUTPUT_PATH", str(checkpoint_dir))
+    monkeypatch.setattr(
+        experiment_module,
+        "resolve_default_pcvr_sample_paths",
+        lambda dataset_path, schema_path: (resolved_dataset_path, resolved_schema_path),
+    )
+    monkeypatch.setattr(PCVRExperiment, "_run_prediction_loop", fake_bound_run_prediction_loop)
+
+    request = InferRequest(
+        experiment="config/symbiosis",
+        dataset_path=None,
+        schema_path=None,
+        checkpoint_path=None,
+        result_dir=tmp_path / "results",
+    )
+
+    payload = experiment.infer(request)
+
+    assert captured["dataset_path"] == resolved_dataset_path
+    assert payload["schema_path"] == str(resolved_schema_path.resolve())
+
+
 def test_resolve_prediction_runtime_execution_requires_train_config_values(tmp_path: Path) -> None:
     experiment = _make_experiment(
         tmp_path,

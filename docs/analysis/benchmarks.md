@@ -25,17 +25,14 @@ icon: lucide/gauge
 ```bash
 uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --preset none
 
 uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --preset cache
 
 uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --preset augment
 ```
 
@@ -48,7 +45,6 @@ mkdir -p outputs/benchmarks
 
 uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --preset none \
   > outputs/benchmarks/none.json
 ```

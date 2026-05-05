@@ -36,9 +36,7 @@ HyFormer 是一个多查询混合 Transformer，核心组件：
 
 ```bash
 uv run taac-train \
-  --experiment experiments/pcvr/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --experiment experiments/pcvr/baseline
 ```
 
 ## 输出目录

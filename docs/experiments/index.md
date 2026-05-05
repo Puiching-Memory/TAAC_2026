@@ -102,8 +102,6 @@ experiments/maintenance/<tool_name>/
 
 ```bash
 bash run.sh train --experiment experiments/pcvr/<name> \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/<name>
 ```
 

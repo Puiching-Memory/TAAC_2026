@@ -18,7 +18,7 @@ class TrainRequest:
 @dataclass(slots=True)
 class EvalRequest:
     experiment: str
-    dataset_path: Path
+    dataset_path: Path | None
     schema_path: Path | None
     run_dir: Path
     checkpoint_path: Path | None = None
@@ -37,7 +37,7 @@ class EvalRequest:
 @dataclass(slots=True)
 class InferRequest:
     experiment: str
-    dataset_path: Path
+    dataset_path: Path | None
     schema_path: Path | None
     checkpoint_path: Path | None
     result_dir: Path

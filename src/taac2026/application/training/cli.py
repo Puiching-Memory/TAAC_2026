@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -28,10 +29,24 @@ def _experiment_requires_dataset(experiment: object) -> bool:
     return bool(requires_dataset) if isinstance(requires_dataset, bool) else True
 
 
+def _experiment_kind(experiment: object) -> str | None:
+    metadata = getattr(experiment, "metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+    kind = metadata.get("kind")
+    return kind if isinstance(kind, str) else None
+
+
+def _is_bundle_mode() -> bool:
+    return os.environ.get("TAAC_BUNDLE_MODE") == "1"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args, extra_args = parse_train_args(argv)
     experiment = load_experiment_package(args.experiment)
-    if args.dataset_path is None and _experiment_requires_dataset(experiment):
+    if _experiment_kind(experiment) == "pcvr" and not _is_bundle_mode() and args.dataset_path is not None:
+        raise ValueError("local PCVR runs no longer accept --dataset-path; demo data is managed automatically")
+    if args.dataset_path is None and _experiment_requires_dataset(experiment) and (_experiment_kind(experiment) != "pcvr" or _is_bundle_mode()):
         raise ValueError(f"experiment {args.experiment!r} requires --dataset-path")
     run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.experiment)
     request = TrainRequest(

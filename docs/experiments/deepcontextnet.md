@@ -39,9 +39,7 @@ experiments/pcvr/deepcontextnet/
 
 ```bash
 uv run taac-train \
-  --experiment experiments/pcvr/deepcontextnet \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --experiment experiments/pcvr/deepcontextnet
 ```
 
 ## 打包

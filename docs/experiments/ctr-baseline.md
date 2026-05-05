@@ -34,9 +34,7 @@ CTRBaseline 是一个精简的 CTR 模型，设计目标是验证最基本的 Tr
 
 ```bash
 uv run taac-train \
-  --experiment experiments/pcvr/ctr_baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+  --experiment experiments/pcvr/ctr_baseline
 ```
 
 ## 输出目录
