@@ -8,7 +8,7 @@ from typing import NamedTuple
 import pytest
 import torch
 
-from taac2026.application.maintenance.package_training import build_training_bundle
+from taac2026.application.maintenance.bundle_packaging import build_training_bundle
 from taac2026.infrastructure.checkpoints import (
     build_checkpoint_dir_name,
     checkpoint_step,
@@ -682,7 +682,7 @@ def test_experiment_package_contracts(loaded_experiment, experiment_case: Experi
 def test_model_module_contracts(loaded_model_module, experiment_case: ExperimentCase) -> None:
     assert hasattr(loaded_model_module, "ModelInput")
     assert hasattr(loaded_model_module, experiment_case.model_class)
-    if experiment_case.path not in {"experiments/pcvr/baseline", "experiments/pcvr/hyformer"}:
+    if experiment_case.path != "experiments/pcvr/baseline":
         assert not hasattr(loaded_model_module, "PCVRHyFormer")
 
 

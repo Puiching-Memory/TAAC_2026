@@ -66,7 +66,7 @@ icon: lucide/book-open
 | 2025 | **Foundation-Expert** | Meta 提出 Foundation-Expert 范式，首次大规模部署推荐基础模型，日服务数百亿请求                  | —                                                                |
 | 2025 | **HoMer**           | 美团提出统一 Encoder-Decoder，序列 + 集合建模消除三重异构性，节省 27% GPU                      | —                                                                |
 | 2025 | **MTmixAtt**        | 美团提出 MoE + AutoToken + Multi-Mix Attention，缩放至 1B 参数实现跨场景统一排序               | —                                                                |
-| 2026 | **HyFormer**        | 字节提出混合 Transformer，统一长序列建模与特征交叉                                             | [论文](hyformer.md) · [实验包](../experiments/hyformer.md)       |
+| 2026 | **HyFormer**        | 字节提出混合 Transformer，统一长序列建模与特征交叉                                             | [论文](hyformer.md) · [Baseline](../experiments/baseline.md)     |
 
 ## 生成式推荐（2023–2026）
 

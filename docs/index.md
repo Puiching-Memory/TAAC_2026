@@ -18,14 +18,9 @@ icon: lucide/house
 | 实验包                                          | 模型           | NS Tokenizer | 亮点                       |
 | ----------------------------------------------- | -------------- | ------------ | -------------------------- |
 | [Baseline](experiments/baseline.md)             | HyFormer       | group        | 基准参考                   |
-| [CTR Baseline](experiments/ctr-baseline.md)     | CTRBaseline    | group        | 低 Dropout                 |
-| [DeepContextNet](experiments/deepcontextnet.md) | DeepContextNet | group        | 3 层 Transformer           |
-| [HyFormer](experiments/hyformer.md)             | HyFormer       | rankmixer    | 多查询解码                 |
 | [InterFormer](experiments/interformer.md)       | InterFormer    | group        | 交叉注意力                 |
 | [OneTrans](experiments/onetrans.md)             | OneTrans       | rankmixer    | 单 Transformer             |
 | [Symbiosis](experiments/symbiosis.md)           | Symbiosis      | rankmixer    | AMP + RoPE + 11 项特性开关 |
-| [UniRec](experiments/unirec.md)                 | UniRec         | rankmixer    | 统一推荐                   |
-| [UniScaleFormer](experiments/uniscaleformer.md) | UniScaleFormer | rankmixer    | 4 层最深栈                 |
 
 ## 技术栈
 

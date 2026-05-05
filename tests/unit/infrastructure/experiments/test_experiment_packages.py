@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,22 @@ from tests.unit.infrastructure.pcvr._pcvr_experiment_matrix import discover_pcvr
 
 
 EXPERIMENT_CASES = discover_pcvr_experiment_cases()
+
+
+def _load_package_module(experiment_path: str):
+    experiment_case = get_experiment_case(experiment_path)
+    init_path = experiment_case.package_dir / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        experiment_case.module,
+        init_path,
+        submodule_search_locations=[str(experiment_case.package_dir)],
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _sample_model_input(model_module):
@@ -124,7 +141,7 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
 @pytest.mark.parametrize("experiment_case", EXPERIMENT_CASES, ids=lambda case: case.path)
 def test_discovered_experiment_models_forward_and_predict(experiment_case) -> None:
     model_module = load_model_module(experiment_case)
-    if experiment_case.path not in {"experiments/pcvr/baseline", "experiments/pcvr/hyformer"}:
+    if experiment_case.path != "experiments/pcvr/baseline":
         assert not hasattr(model_module, "PCVRHyFormer")
     assert hasattr(model_module, experiment_case.model_class)
     model = _make_model(experiment_case, model_module)
@@ -149,7 +166,7 @@ def test_discovered_experiment_models_forward_and_predict(experiment_case) -> No
 def test_symbiosis_enables_amp_and_compile_by_default() -> None:
     experiment = load_experiment_package("experiments/pcvr/symbiosis")
     train_defaults = experiment.train_defaults.to_flat_dict()
-    symbiosis_module = importlib.import_module("experiments.pcvr.symbiosis")
+    symbiosis_module = _load_package_module("experiments/pcvr/symbiosis")
     symbiosis_args = symbiosis_module.parse_symbiosis_train_args(
         [],
         package_dir=symbiosis_module.EXPERIMENT.package_dir,
@@ -174,7 +191,7 @@ def test_symbiosis_enables_amp_and_compile_by_default() -> None:
 
 
 def test_symbiosis_runtime_config_requires_package_specific_keys(tmp_path: Path) -> None:
-    symbiosis_module = importlib.import_module("experiments.pcvr.symbiosis")
+    symbiosis_module = _load_package_module("experiments/pcvr/symbiosis")
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     (checkpoint_dir / "train_config.json").write_text(

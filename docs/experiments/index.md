@@ -18,14 +18,9 @@ icon: lucide/folder-open
 | 实验包         | 路径                              | 说明                                 |
 | -------------- | --------------------------------- | ------------------------------------ |
 | Baseline       | `experiments/pcvr/baseline`       | 共享 PCVR 运行时上的基准 HyFormer 包 |
-| CTR Baseline   | `experiments/pcvr/ctr_baseline`   | CTR 风格 baseline                    |
-| DeepContextNet | `experiments/pcvr/deepcontextnet` | 深层上下文建模实验                   |
-| HyFormer       | `experiments/pcvr/hyformer`       | HyFormer 变体                        |
 | InterFormer    | `experiments/pcvr/interformer`    | InterFormer 结构实验                 |
 | OneTrans       | `experiments/pcvr/onetrans`       | OneTrans 结构实验                    |
 | Symbiosis      | `experiments/pcvr/symbiosis`      | 带包内辅助层和额外训练参数的融合实验 |
-| UniRec         | `experiments/pcvr/unirec`         | 统一推荐方向实验                     |
-| UniScaleFormer | `experiments/pcvr/uniscaleformer` | 更深层 unified stack 变体            |
 
 ### 维护工具包
 

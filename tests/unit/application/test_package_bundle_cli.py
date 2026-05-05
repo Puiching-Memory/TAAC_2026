@@ -6,8 +6,7 @@ from types import ModuleType
 
 import pytest
 
-import taac2026.application.maintenance.package_inference as package_inference
-import taac2026.application.maintenance.package_training as package_training
+import taac2026.application.maintenance.bundle_packaging as bundle_packaging
 from taac2026.infrastructure.bundles.common import BundleResult
 from taac2026.infrastructure.io.json_utils import loads
 
@@ -17,6 +16,7 @@ class BundleCliCase:
     name: str
     module: ModuleType
     builder_name: str
+    main_name: str
     entrypoint_name: str
     bundle_format: str
     runtime_env: dict[str, str]
@@ -25,8 +25,9 @@ class BundleCliCase:
 CASES = (
     BundleCliCase(
         name="training",
-        module=package_training,
+        module=bundle_packaging,
         builder_name="build_training_bundle",
+        main_name="training_main",
         entrypoint_name="run.sh",
         bundle_format="taac2026-training-v2",
         runtime_env={
@@ -39,8 +40,9 @@ CASES = (
     ),
     BundleCliCase(
         name="inference",
-        module=package_inference,
+        module=bundle_packaging,
         builder_name="build_inference_bundle",
+        main_name="inference_main",
         entrypoint_name="infer.py",
         bundle_format="taac2026-inference-v1",
         runtime_env={
@@ -78,7 +80,7 @@ def test_package_main_prints_human_readable_summary_by_default(
     result = _make_result(case, output_dir, runtime_env=case.runtime_env)
     monkeypatch.setattr(case.module, case.builder_name, lambda *args, **kwargs: result)
 
-    exit_code = case.module.main(["--experiment", "experiments/pcvr/baseline"])
+    exit_code = getattr(case.module, case.main_name)(["--experiment", "experiments/pcvr/baseline"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -116,7 +118,7 @@ def test_package_main_passes_force_flag(
     argv = ["--experiment", "experiments/pcvr/baseline"]
     if not force_flag:
         argv.append("--no-force")
-    exit_code = case.module.main(argv)
+    exit_code = getattr(case.module, case.main_name)(argv)
 
     assert exit_code == 0
     assert calls == [
@@ -140,7 +142,7 @@ def test_package_main_prints_json_when_requested(
     result = _make_result(case, output_dir)
     monkeypatch.setattr(case.module, case.builder_name, lambda *args, **kwargs: result)
 
-    exit_code = case.module.main(["--experiment", "experiments/pcvr/baseline", "--json"])
+    exit_code = getattr(case.module, case.main_name)(["--experiment", "experiments/pcvr/baseline", "--json"])
 
     captured = capsys.readouterr()
     assert exit_code == 0

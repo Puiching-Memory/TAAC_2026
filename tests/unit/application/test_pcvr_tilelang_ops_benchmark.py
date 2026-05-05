@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from taac2026.application.reporting.pcvr_tilelang_ops_benchmark import (
+from taac2026.application.benchmarking.pcvr_tilelang_ops_benchmark import (
     OperatorBenchmarkResult,
     _summarize_runs,
     parse_args,

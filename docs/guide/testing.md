@@ -56,7 +56,6 @@ uv run --with coverage coverage report --fail-under=70 \
 | `tests/unit/application/test_package_training.py`                         | 训练 Bundle 打包结构、manifest 和运行时约定                   |
 | `tests/unit/application/test_package_inference.py`                        | 推理 Bundle 打包结构、manifest 和运行时约定                   |
 | `tests/unit/application/test_run_sh_commands.py`                          | `run.sh` 只支持 `train` / `val` / `eval` / `infer` 的命令契约 |
-| `tests/unit/application/test_model_performance_reporting.py`              | 报表与可视化汇总逻辑                                          |
 | `tests/unit/application/test_pcvr_optimizer_benchmark.py`                 | 优化器 benchmark 报表逻辑                                     |
 | `tests/unit/application/test_pcvr_tilelang_ops_benchmark.py`              | TileLang benchmark 报表逻辑                                   |
 | `tests/unit/domain/test_metrics.py`                                       | AUC、LogLoss、GAUC、诊断指标                                  |
@@ -86,8 +85,7 @@ uv run --with coverage coverage report --fail-under=70 \
 | `src/taac2026/application/training/cli.py`                  | `tests/unit/application/test_training_cli.py`                                                                                                                                                               |
 | `src/taac2026/application/evaluation/cli.py`                | `tests/unit/application/test_evaluation_cli.py`                                                                                                                                                             |
 | `src/taac2026/application/evaluation/infer.py`              | `tests/unit/application/test_evaluation_infer_entrypoint.py`                                                                                                                                                |
-| `src/taac2026/application/maintenance/package_training.py`  | `tests/unit/application/test_package_training.py`                                                                                                                                                           |
-| `src/taac2026/application/maintenance/package_inference.py` | `tests/unit/application/test_package_inference.py`                                                                                                                                                          |
+| `src/taac2026/application/maintenance/bundle_packaging.py`  | `tests/unit/application/test_package_bundle_cli.py`、`tests/unit/application/test_package_training.py`、`tests/unit/application/test_package_inference.py`                                                |
 | `src/taac2026/infrastructure/pcvr/protocol.py`              | `tests/unit/infrastructure/pcvr/test_pcvr_protocol.py`、`tests/unit/infrastructure/pcvr/test_runtime_contract_matrix.py`                                                                                    |
 | `src/taac2026/infrastructure/pcvr/trainer.py`               | `tests/unit/infrastructure/pcvr/test_pcvr_trainer.py`                                                                                                                                                       |
 | `src/taac2026/infrastructure/pcvr/data.py`                  | `tests/unit/infrastructure/pcvr/test_pcvr_data_split.py`                                                                                                                                                    |

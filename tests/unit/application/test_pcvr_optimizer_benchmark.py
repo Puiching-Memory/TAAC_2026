@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from taac2026.application.reporting.pcvr_optimizer_benchmark import parse_args, run_benchmark
+from taac2026.application.benchmarking.pcvr_optimizer_benchmark import parse_args, run_benchmark
 
 
 def test_parse_pcvr_optimizer_benchmark_args_accepts_optimizer_subset() -> None:

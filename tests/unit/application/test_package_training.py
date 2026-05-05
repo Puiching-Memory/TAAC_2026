@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from taac2026.application.maintenance.package_training import build_training_bundle
+from taac2026.application.maintenance.bundle_packaging import build_training_bundle
 from taac2026.infrastructure.io.json_utils import loads
 from tests.unit.application._bundle_test_support import (
     assert_pip_install_args,

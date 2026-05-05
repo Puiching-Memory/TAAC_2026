@@ -20,39 +20,52 @@ src/taac2026/
 │   │   ├── cli.py          # taac-evaluate single / infer
 │   │   └── infer.py        # 推理 Bundle 入口
 │   ├── maintenance/
-│   │   ├── package_training.py
-│   │   ├── package_inference.py
+│   │   ├── bundle_packaging.py   # taac-package-train / taac-package-infer
 │   │   └── generate_pcvr_synthetic_dataset.py
-│   └── reporting/
-│       ├── cli.py
-│       ├── placeholders.py
+│   └── benchmarking/
 │       └── *_benchmark.py
 └── infrastructure/
-    ├── bundles/            # 训练/推理 Bundle 组装
-    ├── checkpoints.py      # checkpoint 解析与保存
-    ├── experiments/        # 实验包发现与加载
-    ├── io/                 # 文件 / JSON 工具
-    ├── platform/           # 本地 uv 与线上 Python Bundle 运行适配
-    ├── training/           # 通用训练运行时工具
-    └── pcvr/               # 共享 PCVR 运行时
-        ├── config.py
-        ├── data.py
-        ├── data_observation.py
-        ├── data_pipeline.py
-        ├── data_schema.py
-        ├── experiment.py
-        ├── experiment_runtime.py
-        ├── modeling.py
-        ├── prediction_stack.py
-        ├── protocol.py
-        ├── runtime_stack.py
-        ├── tensors.py
-        ├── tilelang_kernels.py
-        ├── tilelang_ops.py
-        ├── train_stack.py
-        ├── trainer.py
-        ├── trainer_support.py
-        └── training.py
+  ├── bundles/
+  │   ├── common.py       # code_package.zip 组装与摘要输出
+  │   └── manifest.py     # 训练/推理 Bundle manifest 契约
+  ├── checkpoints.py      # checkpoint 解析与保存
+  ├── experiments/
+  │   ├── discovery.py    # 实验包扫描
+  │   └── loader.py       # 实验包加载
+  ├── io/
+  │   ├── files.py        # repo_root / 文件工具
+  │   └── json_utils.py   # JSON 读写
+  ├── platform/
+  │   ├── adapters.py     # 本地 / 线上运行适配选择
+  │   ├── bundle_runtime.py
+  │   ├── inference_bundle.py
+  │   └── run_sh.py       # run.sh 共享入口
+  ├── training/
+  │   ├── muon.py         # Muon 优化器支持
+  │   └── runtime.py      # 通用训练 runtime 配置
+  └── pcvr/               # 共享 PCVR 运行时
+    ├── config.py
+    ├── config_sidecar.py
+    ├── data.py
+    ├── data_observation.py
+    ├── data_pipeline.py
+    ├── data_schema.py
+    ├── experiment.py
+    ├── experiment_runtime.py
+    ├── factory.py
+    ├── flash_qla/
+    ├── modeling.py
+    ├── prediction_stack.py
+    ├── protocol.py
+    ├── runtime_stack.py
+    ├── sample_dataset.py
+    ├── tensors.py
+    ├── tilelang_kernels.py
+    ├── tilelang_ops.py
+    ├── train_stack.py
+    ├── trainer.py
+    ├── trainer_support.py
+    └── training.py
 ```
 
 仓库外层的 `experiments/` 目录是插件层，不是框架核心的一部分：
@@ -67,13 +80,9 @@ experiments/
 │   │   ├── __init__.py
 │   │   ├── layers.py       # 兼容 re-export，真实 primitives 在共享 modeling.py
 │   │   └── model.py
-│   ├── ctr_baseline/
-│   ├── deepcontextnet/
-│   ├── hyformer/
 │   ├── interformer/
 │   ├── onetrans/
-│   ├── unirec/
-│   └── uniscaleformer/
+│   └── ...
 └── maintenance/
   ├── host_device_info/
   └── online_dataset_eda/
@@ -97,8 +106,8 @@ experiments/
 
 - `taac-train` 只解析训练命令和额外参数，然后把请求交给实验包
 - `taac-evaluate single` 和 `taac-evaluate infer` 负责本地评估与推理入口
-- `package_training.py` / `package_inference.py` 负责生成线上上传文件
-- `reporting` 下的命令负责 benchmark、timeline 和汇总报表
+- `bundle_packaging.py` 负责生成训练 / 推理线上上传文件
+- `benchmarking` 下的命令负责 benchmark CLI
 
 ### Infrastructure
 
@@ -130,6 +139,8 @@ experiments/
 | --------------- | ------------------------------------------ |
 | `taac-train`    | `taac2026.application.training.cli:main`   |
 | `taac-evaluate` | `taac2026.application.evaluation.cli:main` |
+| `taac-package-train` | `taac2026.application.maintenance.bundle_packaging:training_main` |
+| `taac-package-infer` | `taac2026.application.maintenance.bundle_packaging:inference_main` |
 
 其中 `taac-evaluate` 暴露两个子命令：
 
@@ -192,11 +203,14 @@ PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 | 模块                                      | 作用                                                              |
 | ----------------------------------------- | ----------------------------------------------------------------- |
 | `config.py`                               | 训练、模型、优化器、数据和 NS 配置                                |
+| `config_sidecar.py`                       | 训练配置 sidecar 的版本化读写                                     |
 | `data.py`                                 | parquet 读取、Row Group 切分、数据集工具                          |
 | `data_observation.py` / `data_schema.py`  | observed schema 和 schema 解析                                    |
 | `data_pipeline.py`                        | 数据增强和流水线拼装                                              |
+| `sample_dataset.py`                       | 合成 / 示例数据集生成                                             |
 | `modeling.py`                             | `ModelInput`、mask/pooling/attention helpers、共享 tokenizer / embedding / RMSNorm primitives |
 | `protocol.py`                             | `ModelInput`、模型构建协议和 schema -> 构造参数转换               |
+| `factory.py`                              | 实验默认配置与共享栈装配入口                                      |
 | `training.py`                             | 训练入口拼装                                                      |
 | `train_stack.py`                          | 训练 hooks 和共享训练流程                                         |
 | `trainer.py` / `trainer_support.py`       | trainer 循环和训练辅助逻辑                                        |
@@ -204,6 +218,7 @@ PCVR 实验包位于 `experiments/pcvr/`。最小契约是：
 | `prediction_stack.py`                     | 评估 / 推理 loop 和 predictor 准备                                |
 | `experiment_runtime.py`                   | `PCVRExperiment` 的运行时 mixin                                   |
 | `tilelang_ops.py` / `tilelang_kernels.py` | TileLang / Torch 算子适配                                         |
+| `flash_qla/`                              | Flash QLA 相关 CUDA/Triton 实验算子                               |
 
 `run.sh` 和推理 Bundle 里的 `infer.py` 现在只做最小 bootstrap：定位 / 解压 `code_package.zip`，设置 `PYTHONPATH`，再把 manifest 读取、依赖安装、实验包默认值和 CLI 分发交给 `taac2026.infrastructure.platform`。本地仓库模式默认走 `uv`，线上 Bundle 模式默认走当前 Python / Conda 环境。
 

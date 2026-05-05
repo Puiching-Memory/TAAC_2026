@@ -135,13 +135,8 @@ uv run zensical serve
 | -------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | Baseline       | [experiments/pcvr/baseline](experiments/pcvr/baseline)             | 官方 DHyFormer baseline                                                                                                                       |
 | Symbiosis      | [experiments/pcvr/symbiosis](experiments/pcvr/symbiosis)           | 本仓库维护的比赛用融合实验模型                                                                                                                |
-| CTR Baseline   | [experiments/pcvr/ctr_baseline](experiments/pcvr/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       |
-| DeepContextNet | [experiments/pcvr/deepcontextnet](experiments/pcvr/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) |
 | InterFormer    | [experiments/pcvr/interformer](experiments/pcvr/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
 | OneTrans       | [experiments/pcvr/onetrans](experiments/pcvr/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
-| HyFormer       | [experiments/pcvr/hyformer](experiments/pcvr/hyformer)             | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            |
-| UniRec         | [experiments/pcvr/unirec](experiments/pcvr/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     |
-| UniScaleFormer | [experiments/pcvr/uniscaleformer](experiments/pcvr/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             |
 
 更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/testing.md](docs/guide/testing.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。官方平台规则和赛题说明可再参考 [docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)。
 
