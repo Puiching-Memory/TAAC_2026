@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,59 @@ from taac2026.infrastructure.training.runtime import (
     create_logger,
     set_seed,
 )
+
+
+def _argument_flags(name: str) -> list[str]:
+    flags = [f"--{name}"]
+    hyphenated = name.replace("_", "-")
+    if hyphenated != name:
+        flags.append(f"--{hyphenated}")
+    return flags
+
+
+def add_flat_config_arguments(parser: argparse.ArgumentParser, defaults: Mapping[str, Any]) -> None:
+    for name, default in defaults.items():
+        flags = _argument_flags(name)
+        if isinstance(default, bool):
+            parser.add_argument(*flags, dest=name, action=argparse.BooleanOptionalAction, default=default)
+            continue
+        kwargs: dict[str, Any] = {"dest": name, "default": default}
+        if isinstance(default, int):
+            kwargs["type"] = int
+        elif isinstance(default, float):
+            kwargs["type"] = float
+        elif isinstance(default, str):
+            kwargs["type"] = str
+        elif default is not None:
+            raise TypeError(f"unsupported flat config default for {name}: {type(default).__name__}")
+        parser.add_argument(*flags, **kwargs)
+
+
+def resolve_flat_config_values(
+    config: Mapping[str, Any],
+    defaults: Mapping[str, Any],
+    *,
+    config_name: str = "config",
+) -> dict[str, Any]:
+    missing_keys = sorted(key for key in defaults if key not in config)
+    if missing_keys:
+        joined = ", ".join(missing_keys)
+        raise KeyError(f"{config_name} is missing required key(s): {joined}")
+
+    resolved: dict[str, Any] = {}
+    for key, default in defaults.items():
+        value = config[key]
+        if isinstance(default, bool):
+            resolved[key] = bool(value)
+        elif isinstance(default, int):
+            resolved[key] = int(value)
+        elif isinstance(default, float):
+            resolved[key] = float(value)
+        elif isinstance(default, str):
+            resolved[key] = str(value)
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def build_pcvr_train_arg_parser(

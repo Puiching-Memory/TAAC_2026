@@ -3,95 +3,23 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 import pytest
 
-import taac2026.application.maintenance.package_inference as package_inference
-from taac2026.application.maintenance.package_inference import BundleResult, build_inference_bundle
-from taac2026.infrastructure.io.json_utils import dump_bytes, loads
+from taac2026.application.maintenance.package_inference import build_inference_bundle
+from taac2026.infrastructure.io.json_utils import loads
+from tests.unit.application._bundle_test_support import (
+    assert_pip_install_args,
+    code_package_manifest,
+    code_package_names,
+    write_minimal_inference_runtime_package,
+    write_fake_pip_package,
+)
 from tests.unit.infrastructure.pcvr._pcvr_experiment_matrix import discover_nonbaseline_pcvr_experiment_paths
 
 
 NON_BASELINE_EXPERIMENTS = discover_nonbaseline_pcvr_experiment_paths()
-REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _code_package_names(code_package_path: Path) -> set[str]:
-    with zipfile.ZipFile(code_package_path) as code_archive:
-        return set(code_archive.namelist())
-
-
-def _code_package_manifest(code_package_path: Path) -> dict[str, object]:
-    with zipfile.ZipFile(code_package_path) as code_archive:
-        payload = code_archive.read("project/.taac_inference_manifest.json")
-    return loads(payload)
-
-
-def _write_platform_runtime(code_archive: zipfile.ZipFile) -> None:
-    runtime_files = [
-        Path("src/taac2026/infrastructure/__init__.py"),
-        *sorted(Path("src/taac2026/infrastructure/platform").glob("*.py")),
-    ]
-    for relative_path in runtime_files:
-        code_archive.write(REPO_ROOT / relative_path, f"project/{relative_path.as_posix()}")
-
-
-def _write_minimal_runtime_package(code_package_path: Path) -> None:
-    with zipfile.ZipFile(code_package_path, mode="w", compression=zipfile.ZIP_DEFLATED) as code_archive:
-        code_archive.writestr(
-            "project/.taac_inference_manifest.json",
-            dump_bytes({"bundled_experiment_path": "experiments/pcvr/minimal"}, indent=2, trailing_newline=True),
-        )
-        code_archive.writestr(
-            "project/pyproject.toml",
-            "[project]\nname = \"minimal\"\nversion = \"0.0.0\"\n",
-        )
-        for package_init in (
-            "project/src/taac2026/__init__.py",
-            "project/src/taac2026/application/__init__.py",
-            "project/src/taac2026/application/evaluation/__init__.py",
-        ):
-            code_archive.writestr(package_init, "")
-        _write_platform_runtime(code_archive)
-        code_archive.writestr(
-            "project/src/taac2026/application/evaluation/infer.py",
-            "from __future__ import annotations\n"
-            "\n"
-            "import orjson\n"
-            "import os\n"
-            "from pathlib import Path\n"
-            "\n"
-            "\n"
-            "def main() -> None:\n"
-            "    print(orjson.dumps({\"cwd\": str(Path.cwd()), \"experiment\": os.environ.get(\"TAAC_EXPERIMENT\")}).decode())\n",
-        )
-
-
-def _write_fake_pip_package(root: Path, log_path: Path) -> Path:
-    fake_pip = root / "fake_pip"
-    pip_package = fake_pip / "pip"
-    pip_package.mkdir(parents=True)
-    (pip_package / "__init__.py").write_text("", encoding="utf-8")
-    (pip_package / "__main__.py").write_text(
-        "from __future__ import annotations\n"
-        "\n"
-        "import orjson\n"
-        "import sys\n"
-        "from pathlib import Path\n"
-        "\n"
-        f"Path({str(log_path)!r}).write_bytes(orjson.dumps(sys.argv[1:]))\n",
-        encoding="utf-8",
-    )
-    return fake_pip
-
-
-def _assert_pip_install_args(pip_args: list[str], *, expected_target: str) -> None:
-    assert pip_args[:2] == ["install", "--disable-pip-version-check"]
-    assert "-q" in pip_args
-    assert expected_target in pip_args
-
 
 def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline_bundle"
@@ -107,9 +35,9 @@ def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None
     infer_script = result.run_script_path.read_text(encoding="utf-8")
     assert "TAAC_INSTALL_PROJECT_DEPS" in infer_script
     assert "TAAC_BUNDLE_PIP_EXTRAS" in infer_script
-    assert "taac2026.application.evaluation.infer" in infer_script
+    assert "run_inference_bundle" in infer_script
 
-    manifest = _code_package_manifest(result.code_package_path)
+    manifest = code_package_manifest(result.code_package_path, ".taac_inference_manifest.json")
     assert manifest["manifest_version"] == 1
     assert manifest["bundle_kind"] == "inference"
     assert manifest["bundle_format"] == "taac2026-inference-v1"
@@ -122,7 +50,7 @@ def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None
     assert manifest["runtime_env"]["pip_extras"].startswith("TAAC_BUNDLE_PIP_EXTRAS")
     assert manifest["compatibility"]["requires_uv_online"] is False
 
-    names = _code_package_names(result.code_package_path)
+    names = code_package_names(result.code_package_path)
     assert "project/.taac_inference_manifest.json" in names
     assert "project/pyproject.toml" in names
     assert "project/uv.lock" not in names
@@ -146,7 +74,7 @@ def test_build_inference_bundle_contains_experiment_ns_groups(tmp_path: Path, ex
 
     result = build_inference_bundle(experiment, output_dir=output_dir)
 
-    names = _code_package_names(result.code_package_path)
+    names = code_package_names(result.code_package_path)
     assert f"project/{experiment}/__init__.py" in names
     assert f"project/{experiment}/model.py" in names
     assert f"project/{experiment}/ns_groups.json" not in names
@@ -174,7 +102,7 @@ def test_build_inference_bundle_force_replaces_two_file_output(tmp_path: Path) -
 def test_generated_infer_script_requires_user_cache_path_without_workdir_override(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline_bundle"
     result = build_inference_bundle("experiments/pcvr/baseline", output_dir=output_dir)
-    _write_minimal_runtime_package(result.code_package_path)
+    write_minimal_inference_runtime_package(result.code_package_path)
 
     env = os.environ.copy()
     for variable in (
@@ -208,7 +136,7 @@ def test_generated_infer_script_prefers_user_cache_path_when_available(tmp_path:
     output_dir = tmp_path / "baseline_bundle"
     user_cache_path = tmp_path / "user_cache"
     result = build_inference_bundle("experiments/pcvr/baseline", output_dir=output_dir)
-    _write_minimal_runtime_package(result.code_package_path)
+    write_minimal_inference_runtime_package(result.code_package_path)
 
     env = os.environ.copy()
     for variable in (
@@ -247,9 +175,9 @@ def test_generated_infer_script_installs_project_dependencies_before_entrypoint(
     output_dir = tmp_path / "baseline_bundle"
     user_cache_path = tmp_path / "user_cache"
     result = build_inference_bundle("experiments/pcvr/baseline", output_dir=output_dir)
-    _write_minimal_runtime_package(result.code_package_path)
+    write_minimal_inference_runtime_package(result.code_package_path)
     pip_args_path = tmp_path / "pip_args.json"
-    fake_pip = _write_fake_pip_package(tmp_path, pip_args_path)
+    fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
     env = os.environ.copy()
     for variable in (
@@ -287,7 +215,7 @@ def test_generated_infer_script_installs_project_dependencies_before_entrypoint(
 
     assert payload["experiment"] == "experiments/pcvr/minimal"
     assert Path(payload["cwd"]).resolve().is_relative_to(user_cache_path.resolve())
-    _assert_pip_install_args(pip_args, expected_target=".")
+    assert_pip_install_args(pip_args, expected_target=".")
     assert "Installing TAAC project dependencies from pyproject.toml" in completed.stderr
 
 
@@ -295,9 +223,9 @@ def test_generated_infer_script_accepts_explicit_bundle_pip_extras(tmp_path: Pat
     output_dir = tmp_path / "baseline_bundle"
     user_cache_path = tmp_path / "user_cache"
     result = build_inference_bundle("experiments/pcvr/baseline", output_dir=output_dir)
-    _write_minimal_runtime_package(result.code_package_path)
+    write_minimal_inference_runtime_package(result.code_package_path)
     pip_args_path = tmp_path / "pip_args.json"
-    fake_pip = _write_fake_pip_package(tmp_path, pip_args_path)
+    fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
     env = os.environ.copy()
     for variable in (
@@ -332,146 +260,4 @@ def test_generated_infer_script_accepts_explicit_bundle_pip_extras(tmp_path: Pat
 
     pip_args = loads(pip_args_path.read_bytes())
 
-    _assert_pip_install_args(pip_args, expected_target=".[dev]")
-
-
-def test_package_inference_main_prints_human_readable_summary_by_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    output_dir = tmp_path / "bundle"
-    result = BundleResult(
-        output_dir=output_dir,
-        run_script_path=output_dir / "infer.py",
-        code_package_path=output_dir / "code_package.zip",
-        manifest={
-            "bundle_format": "taac2026-inference-v1",
-            "bundled_experiment_path": "experiments/pcvr/baseline",
-            "runtime_env": {
-                "model_path": "MODEL_OUTPUT_PATH",
-                "dataset_path": "EVAL_DATA_PATH",
-                "result_path": "EVAL_RESULT_PATH",
-                "schema_path": "TAAC_SCHEMA_PATH",
-                "pip_extras": "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)",
-            },
-        },
-    )
-    monkeypatch.setattr(package_inference, "build_inference_bundle", lambda *args, **kwargs: result)
-
-    exit_code = package_inference.main(["--experiment", "experiments/pcvr/baseline"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    assert "Built TAAC online inference bundle" in captured.out
-    assert "Experiment: experiments/pcvr/baseline" in captured.out
-    assert f"infer.py: {result.run_script_path}" in captured.out
-    assert f"code_package.zip: {result.code_package_path}" in captured.out
-    assert "Upload the two files above: infer.py and code_package.zip" in captured.out
-
-
-def test_package_inference_main_overwrites_existing_bundle_by_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    output_dir = tmp_path / "bundle"
-    calls: list[dict[str, object]] = []
-    result = BundleResult(
-        output_dir=output_dir,
-        run_script_path=output_dir / "infer.py",
-        code_package_path=output_dir / "code_package.zip",
-        manifest={
-            "bundle_format": "taac2026-inference-v1",
-            "bundled_experiment_path": "experiments/pcvr/baseline",
-            "runtime_env": {},
-        },
-    )
-
-    def fake_build_inference_bundle(experiment: str, *, output_dir: Path | None = None, force: bool = False, root: Path | None = None):
-        calls.append({
-            "experiment": experiment,
-            "output_dir": output_dir,
-            "force": force,
-            "root": root,
-        })
-        return result
-
-    monkeypatch.setattr(package_inference, "build_inference_bundle", fake_build_inference_bundle)
-
-    exit_code = package_inference.main(["--experiment", "experiments/pcvr/baseline"])
-
-    assert exit_code == 0
-    assert calls == [{
-        "experiment": "experiments/pcvr/baseline",
-        "output_dir": None,
-        "force": True,
-        "root": None,
-    }]
-
-
-def test_package_inference_main_honors_no_force(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    output_dir = tmp_path / "bundle"
-    calls: list[dict[str, object]] = []
-    result = BundleResult(
-        output_dir=output_dir,
-        run_script_path=output_dir / "infer.py",
-        code_package_path=output_dir / "code_package.zip",
-        manifest={
-            "bundle_format": "taac2026-inference-v1",
-            "bundled_experiment_path": "experiments/pcvr/baseline",
-            "runtime_env": {},
-        },
-    )
-
-    def fake_build_inference_bundle(experiment: str, *, output_dir: Path | None = None, force: bool = False, root: Path | None = None):
-        calls.append({
-            "experiment": experiment,
-            "output_dir": output_dir,
-            "force": force,
-            "root": root,
-        })
-        return result
-
-    monkeypatch.setattr(package_inference, "build_inference_bundle", fake_build_inference_bundle)
-
-    exit_code = package_inference.main(["--experiment", "experiments/pcvr/baseline", "--no-force"])
-
-    assert exit_code == 0
-    assert calls == [{
-        "experiment": "experiments/pcvr/baseline",
-        "output_dir": None,
-        "force": False,
-        "root": None,
-    }]
-
-
-def test_package_inference_main_prints_json_when_requested(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    output_dir = tmp_path / "bundle"
-    result = BundleResult(
-        output_dir=output_dir,
-        run_script_path=output_dir / "infer.py",
-        code_package_path=output_dir / "code_package.zip",
-        manifest={
-            "bundle_format": "taac2026-inference-v1",
-            "bundled_experiment_path": "experiments/pcvr/baseline",
-            "runtime_env": {},
-        },
-    )
-    monkeypatch.setattr(package_inference, "build_inference_bundle", lambda *args, **kwargs: result)
-
-    exit_code = package_inference.main(["--experiment", "experiments/pcvr/baseline", "--json"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 0
-    payload = loads(captured.out)
-    assert payload["output_dir"] == str(result.output_dir)
-    assert payload["run_script_path"] == str(result.run_script_path)
-    assert payload["code_package_path"] == str(result.code_package_path)
-    assert payload["manifest"]["bundled_experiment_path"] == "experiments/pcvr/baseline"
+    assert_pip_install_args(pip_args, expected_target=".[dev]")

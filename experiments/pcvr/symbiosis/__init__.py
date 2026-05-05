@@ -35,9 +35,11 @@ from taac2026.infrastructure.pcvr.train_stack import (
     PCVRTrainDataBundle,
 )
 from taac2026.infrastructure.pcvr.training import (
+    add_flat_config_arguments,
     apply_pcvr_train_arg_env_overrides,
     apply_pcvr_train_non_cli_defaults,
     build_pcvr_train_arg_parser,
+    resolve_flat_config_values,
 )
 from taac2026.infrastructure.training.runtime import BinaryClassificationLossConfig, RuntimeExecutionConfig
 
@@ -83,94 +85,7 @@ SYMBIOSIS_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
 
 
 def _add_symbiosis_train_args(parser: argparse.ArgumentParser) -> None:
-    defaults = SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict()
-    parser.add_argument(
-        "--symbiosis_use_user_item_graph",
-        "--symbiosis-use-user-item-graph",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_user_item_graph"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_fourier_time",
-        "--symbiosis-use-fourier-time",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_fourier_time"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_context_exchange",
-        "--symbiosis-use-context-exchange",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_context_exchange"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_multi_scale",
-        "--symbiosis-use-multi-scale",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_multi_scale"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_domain_gate",
-        "--symbiosis-use-domain-gate",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_domain_gate"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_candidate_decoder",
-        "--symbiosis-use-candidate-decoder",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_candidate_decoder"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_action_conditioning",
-        "--symbiosis-use-action-conditioning",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_action_conditioning"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_compressed_memory",
-        "--symbiosis-use-compressed-memory",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_compressed_memory"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_attention_sink",
-        "--symbiosis-use-attention-sink",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_attention_sink"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_lane_mixing",
-        "--symbiosis-use-lane-mixing",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_lane_mixing"],
-    )
-    parser.add_argument(
-        "--symbiosis_use_semantic_id",
-        "--symbiosis-use-semantic-id",
-        action=argparse.BooleanOptionalAction,
-        default=defaults["symbiosis_use_semantic_id"],
-    )
-    parser.add_argument(
-        "--symbiosis_memory_block_size",
-        "--symbiosis-memory-block-size",
-        dest="symbiosis_memory_block_size",
-        type=int,
-        default=defaults["symbiosis_memory_block_size"],
-    )
-    parser.add_argument(
-        "--symbiosis_memory_top_k",
-        "--symbiosis-memory-top-k",
-        dest="symbiosis_memory_top_k",
-        type=int,
-        default=defaults["symbiosis_memory_top_k"],
-    )
-    parser.add_argument(
-        "--symbiosis_recent_tokens",
-        "--symbiosis-recent-tokens",
-        dest="symbiosis_recent_tokens",
-        type=int,
-        default=defaults["symbiosis_recent_tokens"],
-    )
+    add_flat_config_arguments(parser, SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
 
 
 def parse_symbiosis_train_args(
@@ -186,26 +101,11 @@ def parse_symbiosis_train_args(
 
 
 def _resolve_symbiosis_model_kwargs(config: Mapping[str, Any]) -> dict[str, Any]:
-    missing_keys = sorted(key for key in SYMBIOSIS_MODEL_CONFIG_KEYS if key not in config)
-    if missing_keys:
-        joined = ", ".join(missing_keys)
-        raise KeyError(f"Symbiosis train_config is missing required key(s): {joined}")
-    return {
-        "symbiosis_use_user_item_graph": bool(config["symbiosis_use_user_item_graph"]),
-        "symbiosis_use_fourier_time": bool(config["symbiosis_use_fourier_time"]),
-        "symbiosis_use_context_exchange": bool(config["symbiosis_use_context_exchange"]),
-        "symbiosis_use_multi_scale": bool(config["symbiosis_use_multi_scale"]),
-        "symbiosis_use_domain_gate": bool(config["symbiosis_use_domain_gate"]),
-        "symbiosis_use_candidate_decoder": bool(config["symbiosis_use_candidate_decoder"]),
-        "symbiosis_use_action_conditioning": bool(config["symbiosis_use_action_conditioning"]),
-        "symbiosis_use_compressed_memory": bool(config["symbiosis_use_compressed_memory"]),
-        "symbiosis_use_attention_sink": bool(config["symbiosis_use_attention_sink"]),
-        "symbiosis_use_lane_mixing": bool(config["symbiosis_use_lane_mixing"]),
-        "symbiosis_use_semantic_id": bool(config["symbiosis_use_semantic_id"]),
-        "symbiosis_memory_block_size": int(config["symbiosis_memory_block_size"]),
-        "symbiosis_memory_top_k": int(config["symbiosis_memory_top_k"]),
-        "symbiosis_recent_tokens": int(config["symbiosis_recent_tokens"]),
-    }
+    return resolve_flat_config_values(
+        config,
+        SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict(),
+        config_name="Symbiosis train_config",
+    )
 
 
 def _build_symbiosis_model(

@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from taac2026.infrastructure.bundles.manifest import BundleKind, get_bundle_definition
 from taac2026.infrastructure.experiments.loader import load_experiment_package
 from taac2026.infrastructure.io.files import repo_root
 from taac2026.infrastructure.io.json_utils import dump_bytes
@@ -29,22 +30,41 @@ def bundle_payload(result: BundleResult) -> dict[str, object]:
     }
 
 
-def iter_python_tree(root: Path) -> Iterable[Path]:
+def format_bundle_summary(result: BundleResult, *, kind: BundleKind) -> str:
+    definition = get_bundle_definition(kind)
+    manifest = result.manifest
+    runtime_env = manifest.get("runtime_env", {})
+    lines = [
+        f"Built TAAC online {kind} bundle",
+        f"Experiment: {manifest.get('bundled_experiment_path', '<unknown>')}",
+        f"Output dir: {result.output_dir}",
+        f"{definition.entrypoint}: {result.run_script_path}",
+        f"code_package.zip: {result.code_package_path}",
+        f"Bundle format: {manifest.get('bundle_format', '<unknown>')}",
+    ]
+    if isinstance(runtime_env, dict):
+        lines.append("Runtime env:")
+        for label, key in definition.summary_runtime_fields:
+            lines.append(f"  {label}: {runtime_env.get(key, '<unknown>')}")
+    lines.append(f"Upload the two files above: {definition.entrypoint} and code_package.zip")
+    return "\n".join(lines)
+
+
+def _iter_clean_tree(root: Path) -> Iterable[Path]:
     for path in sorted(root.rglob("*")):
         if path.is_dir():
             continue
         if "__pycache__" in path.parts or path.suffix == ".pyc":
             continue
         yield path
+
+
+def iter_python_tree(root: Path) -> Iterable[Path]:
+    return _iter_clean_tree(root)
 
 
 def iter_file_tree(root: Path) -> Iterable[Path]:
-    for path in sorted(root.rglob("*")):
-        if path.is_dir():
-            continue
-        if "__pycache__" in path.parts or path.suffix == ".pyc":
-            continue
-        yield path
+    return _iter_clean_tree(root)
 
 
 def add_file_to_zip(archive: zipfile.ZipFile, source: Path, arcname: str) -> None:
@@ -99,6 +119,7 @@ __all__ = [
     "BundleResult",
     "add_file_to_zip",
     "bundle_payload",
+    "format_bundle_summary",
     "iter_file_tree",
     "iter_python_tree",
     "resolve_experiment_path",

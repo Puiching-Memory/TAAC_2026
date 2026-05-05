@@ -4,11 +4,11 @@ icon: lucide/wrench
 
 # 仓库缓存清理
 
-清理仓库里的 Python 缓存目录和常见构建产物。
+清理仓库里的 Python 缓存目录、测试/工具缓存和常见构建产物。
 
 ## 目标
 
-删除 `__pycache__`、`*.egg-info`、`dist/`、`build/` 等缓存目录，保持仓库干净。
+删除 `__pycache__`、`.ruff_cache/`、`.pytest_cache/`、`.benchmarks/`、`.cache/`、`*.egg-info`、`.coverage`、`.coverage.cpu`、`dist/`、`build/` 等缓存与产物，保持仓库干净。
 
 ## 脚本入口
 
@@ -31,13 +31,19 @@ find . -type f -name "*.pyc" -delete
 
 # 清理 egg-info
 find . -type d -name "*.egg-info" -exec rm -rf {} +
+
+# 清理常见测试和工具缓存
+find . -type d \( -name ".ruff_cache" -o -name ".pytest_cache" -o -name ".benchmarks" -o -name ".cache" \) -exec rm -rf {} +
+
+# 清理覆盖率文件
+find . -type f \( -name ".coverage" -o -name ".coverage.cpu" \) -delete
 ```
 
 ## 脚本参数
 
 - `--root <path>`：指定清理根目录，默认是仓库根目录
-- `--dry-run`：只打印将删除的目录，不真正删除
-- `--include-env-dirs`：连 `.venv`、`venv`、`env`、`node_modules`、`.tox`、`.mypy_cache` 里的 `__pycache__` 一起清理
+- `--dry-run`：只打印将删除的目录和文件，不真正删除
+- `--include-env-dirs`：连 `.venv`、`venv`、`env`、`node_modules`、`.tox`、`.mypy_cache` 里的缓存目录和覆盖率文件也一起清理
 
 ## 输出解释
 

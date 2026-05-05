@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,30 +20,72 @@ TRAINING_BUNDLE_FORMAT_VERSION = 2
 INFERENCE_BUNDLE_FORMAT = "taac2026-inference-v1"
 INFERENCE_BUNDLE_FORMAT_VERSION = 1
 
-_ENTRYPOINTS: dict[BundleKind, str] = {
-    "training": "run.sh",
-    "inference": "infer.py",
+@dataclass(frozen=True, slots=True)
+class BundleDefinition:
+    kind: BundleKind
+    manifest_name: str
+    entrypoint: str
+    bundle_format: str
+    bundle_format_version: int
+    runtime_env: tuple[tuple[str, str], ...]
+    summary_runtime_fields: tuple[tuple[str, str], ...]
+
+    def runtime_env_dict(self) -> dict[str, str]:
+        return dict(self.runtime_env)
+
+    @property
+    def runtime_env_keys(self) -> tuple[str, ...]:
+        return tuple(key for key, _ in self.runtime_env)
+
+
+_BUNDLE_DEFINITIONS: dict[BundleKind, BundleDefinition] = {
+    "training": BundleDefinition(
+        kind="training",
+        manifest_name=".taac_training_manifest.json",
+        entrypoint="run.sh",
+        bundle_format=TRAINING_BUNDLE_FORMAT,
+        bundle_format_version=TRAINING_BUNDLE_FORMAT_VERSION,
+        runtime_env=(
+            ("dataset_path", "TRAIN_DATA_PATH"),
+            ("schema_path", "TAAC_SCHEMA_PATH"),
+            ("checkpoint_path", "TRAIN_CKPT_PATH"),
+            ("cuda_profile", "TAAC_CUDA_PROFILE"),
+            ("pip_extras", "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)"),
+        ),
+        summary_runtime_fields=(
+            ("dataset", "dataset_path"),
+            ("schema", "schema_path"),
+            ("output", "checkpoint_path"),
+            ("cuda profile", "cuda_profile"),
+            ("pip extras", "pip_extras"),
+        ),
+    ),
+    "inference": BundleDefinition(
+        kind="inference",
+        manifest_name=".taac_inference_manifest.json",
+        entrypoint="infer.py",
+        bundle_format=INFERENCE_BUNDLE_FORMAT,
+        bundle_format_version=INFERENCE_BUNDLE_FORMAT_VERSION,
+        runtime_env=(
+            ("model_path", "MODEL_OUTPUT_PATH"),
+            ("dataset_path", "EVAL_DATA_PATH"),
+            ("result_path", "EVAL_RESULT_PATH"),
+            ("schema_path", "TAAC_SCHEMA_PATH"),
+            ("pip_extras", "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)"),
+        ),
+        summary_runtime_fields=(
+            ("model", "model_path"),
+            ("dataset", "dataset_path"),
+            ("result", "result_path"),
+            ("schema", "schema_path"),
+            ("pip extras", "pip_extras"),
+        ),
+    ),
 }
-_BUNDLE_FORMATS: dict[BundleKind, tuple[str, int]] = {
-    "training": (TRAINING_BUNDLE_FORMAT, TRAINING_BUNDLE_FORMAT_VERSION),
-    "inference": (INFERENCE_BUNDLE_FORMAT, INFERENCE_BUNDLE_FORMAT_VERSION),
-}
-_RUNTIME_ENV: dict[BundleKind, dict[str, str]] = {
-    "training": {
-        "dataset_path": "TRAIN_DATA_PATH",
-        "schema_path": "TAAC_SCHEMA_PATH",
-        "checkpoint_path": "TRAIN_CKPT_PATH",
-        "cuda_profile": "TAAC_CUDA_PROFILE",
-        "pip_extras": "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)",
-    },
-    "inference": {
-        "model_path": "MODEL_OUTPUT_PATH",
-        "dataset_path": "EVAL_DATA_PATH",
-        "result_path": "EVAL_RESULT_PATH",
-        "schema_path": "TAAC_SCHEMA_PATH",
-        "pip_extras": "TAAC_BUNDLE_PIP_EXTRAS (optional; defaults to runtime-only install with no dev extra)",
-    },
-}
+
+
+def get_bundle_definition(kind: BundleKind) -> BundleDefinition:
+    return _BUNDLE_DEFINITIONS[kind]
 
 
 class FrameworkMetadata(BaseModel):
@@ -82,16 +125,16 @@ class BundleManifest(BaseModel):
 
 
 def build_bundle_manifest(*, kind: BundleKind, experiment_path: Path, root: Path) -> dict[str, object]:
-    bundle_format, bundle_format_version = _BUNDLE_FORMATS[kind]
+    definition = get_bundle_definition(kind)
     manifest = BundleManifest(
         kind=kind,
-        bundle_format=bundle_format,
-        bundle_format_version=bundle_format_version,
+        bundle_format=definition.bundle_format,
+        bundle_format_version=definition.bundle_format_version,
         framework=FrameworkMetadata(version=__version__),
         bundled_experiment_path=str(experiment_path.relative_to(root)),
-        entrypoint=_ENTRYPOINTS[kind],
+        entrypoint=definition.entrypoint,
         code_package="code_package.zip",
-        runtime_env=dict(_RUNTIME_ENV[kind]),
+        runtime_env=definition.runtime_env_dict(),
         compatibility=BundleCompatibility(),
     )
     return validate_bundle_manifest(manifest.to_dict(), kind=kind)
@@ -107,20 +150,20 @@ def validate_bundle_manifest(manifest: Mapping[str, Any], *, kind: BundleKind | 
     if kind is not None and manifest_kind != kind:
         raise ValueError(f"bundle manifest kind mismatch: expected {kind}, got {manifest_kind}")
 
-    expected_format, expected_format_version = _BUNDLE_FORMATS[manifest_kind]
-    if model.bundle_format != expected_format:
+    definition = get_bundle_definition(manifest_kind)
+    if model.bundle_format != definition.bundle_format:
         raise ValueError(f"unsupported {manifest_kind} bundle format: {model.bundle_format}")
-    if model.bundle_format_version != expected_format_version:
+    if model.bundle_format_version != definition.bundle_format_version:
         raise ValueError(f"unsupported {manifest_kind} bundle format version: {model.bundle_format_version}")
 
     if not model.bundled_experiment_path.startswith("experiments/"):
         raise ValueError("bundle manifest must contain an experiments/... bundled_experiment_path")
-    if model.entrypoint != _ENTRYPOINTS[manifest_kind]:
+    if model.entrypoint != definition.entrypoint:
         raise ValueError(f"invalid {manifest_kind} bundle entrypoint: {model.entrypoint}")
     if model.code_package != "code_package.zip":
         raise ValueError(f"invalid bundle code_package: {model.code_package}")
 
-    missing_env = sorted(set(_RUNTIME_ENV[manifest_kind]) - set(model.runtime_env))
+    missing_env = sorted(set(definition.runtime_env_keys) - set(model.runtime_env))
     if missing_env:
         raise KeyError(f"bundle manifest runtime_env is missing key(s): {', '.join(missing_env)}")
 
@@ -134,9 +177,11 @@ __all__ = [
     "TRAINING_BUNDLE_FORMAT",
     "TRAINING_BUNDLE_FORMAT_VERSION",
     "BundleCompatibility",
+    "BundleDefinition",
     "BundleKind",
     "BundleManifest",
     "FrameworkMetadata",
     "build_bundle_manifest",
+    "get_bundle_definition",
     "validate_bundle_manifest",
 ]

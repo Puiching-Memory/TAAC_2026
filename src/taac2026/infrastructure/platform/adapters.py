@@ -45,10 +45,23 @@ ONLINE_INFERENCE_BUNDLE_PLATFORM = RuntimePlatform(
     bundle_kind="inference",
 )
 
+_RUN_SH_PLATFORMS: dict[str, RuntimePlatform] = {
+    LOCAL_UV_PLATFORM.name: LOCAL_UV_PLATFORM,
+    DOCKER_GPU_PLATFORM.name: DOCKER_GPU_PLATFORM,
+    ONLINE_TRAINING_BUNDLE_PLATFORM.name: ONLINE_TRAINING_BUNDLE_PLATFORM,
+}
+
+
+def resolve_run_sh_platform(platform_name: str | None) -> RuntimePlatform | None:
+    if not platform_name:
+        return None
+    return _RUN_SH_PLATFORMS.get(platform_name)
+
 
 def select_run_sh_platform(*, bundle_mode: bool, platform_name: str | None = None) -> RuntimePlatform:
-    if platform_name == "docker-gpu":
-        return DOCKER_GPU_PLATFORM
+    named_platform = resolve_run_sh_platform(platform_name)
+    if named_platform is not None:
+        return named_platform
     if bundle_mode:
         return ONLINE_TRAINING_BUNDLE_PLATFORM
     return LOCAL_UV_PLATFORM
@@ -61,5 +74,6 @@ __all__ = [
     "ONLINE_TRAINING_BUNDLE_PLATFORM",
     "RunnerMode",
     "RuntimePlatform",
+    "resolve_run_sh_platform",
     "select_run_sh_platform",
 ]

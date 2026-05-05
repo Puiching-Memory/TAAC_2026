@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from taac2026.infrastructure.platform import bundle_runtime
-from taac2026.infrastructure.platform.adapters import ONLINE_TRAINING_BUNDLE_PLATFORM, select_run_sh_platform
+from taac2026.infrastructure.platform.adapters import (
+    DOCKER_GPU_PLATFORM,
+    ONLINE_TRAINING_BUNDLE_PLATFORM,
+    resolve_run_sh_platform,
+    select_run_sh_platform,
+)
 from taac2026.infrastructure.platform.run_sh import extract_cuda_profile, parse_run_command
 
 
@@ -52,3 +57,7 @@ def test_select_run_sh_platform_uses_online_training_adapter_for_bundles() -> No
     assert platform is ONLINE_TRAINING_BUNDLE_PLATFORM
     assert platform.default_runner == "python"
     assert platform.pip_extras_env == "TAAC_BUNDLE_PIP_EXTRAS"
+
+
+def test_resolve_run_sh_platform_uses_registered_names() -> None:
+    assert resolve_run_sh_platform(DOCKER_GPU_PLATFORM.name) is DOCKER_GPU_PLATFORM

@@ -25,8 +25,7 @@ src/taac2026/
 │   │   └── generate_pcvr_synthetic_dataset.py
 │   └── reporting/
 │       ├── cli.py
-│       ├── bench_cli.py
-│       ├── timeline_cli.py
+│       ├── placeholders.py
 │       └── *_benchmark.py
 └── infrastructure/
     ├── bundles/            # 训练/推理 Bundle 组装
