@@ -7,9 +7,9 @@ import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from taac2026.domain.config import TrainRequest, default_run_dir
-from taac2026.infrastructure.experiments.loader import load_experiment_package
-from taac2026.infrastructure.io.json_utils import dumps
+from taac2026.domain.requests import TrainRequest, default_run_dir
+from taac2026.application.experiments.registry import load_experiment_package
+from taac2026.infrastructure.io.json import dumps
 
 
 def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:

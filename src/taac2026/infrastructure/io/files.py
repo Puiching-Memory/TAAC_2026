@@ -6,7 +6,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from taac2026.infrastructure.io.json_utils import read_path, write_path
+from taac2026.infrastructure.io.json import read_path, write_path
 
 
 def repo_root() -> Path:

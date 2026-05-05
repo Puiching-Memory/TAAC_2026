@@ -9,7 +9,7 @@ icon: lucide/git-branch-plus
 ## 最小目录
 
 ```text
-experiments/pcvr/<experiment_name>/
+experiments/<experiment_name>/
 ├── __init__.py
 └── model.py
 ```
@@ -25,8 +25,7 @@ experiments/pcvr/<experiment_name>/
 ```python
 from pathlib import Path
 
-from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
-from taac2026.infrastructure.pcvr.factory import create_pcvr_experiment
+from taac2026.api import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig, create_pcvr_experiment
 
 
 TRAIN_DEFAULTS = PCVRTrainConfig(
@@ -84,7 +83,7 @@ EXPERIMENT = create_pcvr_experiment(
 ```python
 import torch
 import torch.nn as nn
-from taac2026.infrastructure.pcvr.modeling import (
+from taac2026.infrastructure.modeling import (
     EmbeddingParameterMixin,
     ModelInput,
     NonSequentialTokenizer,
@@ -128,7 +127,7 @@ class MyModel(EmbeddingParameterMixin, nn.Module):
         ...
 ```
 
-共享 `modeling.py` 当前提供 `FeatureEmbeddingBank`、`NonSequentialTokenizer`、`DenseTokenProjector`、`SequenceTokenizer`、`RMSNorm`、`configure_rms_norm_runtime` 和 `EmbeddingParameterMixin`。如果模型确实需要论文特有组件，仍然可以把那些私有块拆到同目录下的局部模块。
+共享建模包 `taac2026.infrastructure.modeling` 当前提供 `FeatureEmbeddingBank`、`NonSequentialTokenizer`、`DenseTokenProjector`、`SequenceTokenizer`、`RMSNorm`、`configure_rms_norm_runtime` 和 `EmbeddingParameterMixin`。如果模型确实需要论文特有组件，仍然可以把那些私有块拆到同目录下的局部模块。
 
 ## NS 分组配置
 
@@ -153,30 +152,30 @@ ns=PCVRNSConfig(
 
 特征 ID 是列名的数字后缀（`user_int_feats_1` -> fid 1）。
 
-    当前仓库不再要求每个实验包必须自带独立的 `ns_groups.json` 文件。
+当前仓库不再要求每个实验包必须自带独立的 `ns_groups.json` 文件。
 
 ## 本地验证
 
 ```bash
 # 1. 发现实验包
-    uv run python -c "from pathlib import Path; from taac2026.infrastructure.experiments.discovery import discover_experiment_paths; print(discover_experiment_paths(Path('experiments/pcvr')))"
+uv run python -c "from pathlib import Path; from taac2026.application.experiments.discovery import discover_experiment_paths; print(discover_experiment_paths(Path('experiments')))"
 
 # 2. 加载实验包
-uv run python -c "from taac2026.infrastructure.experiments.loader import load_experiment_package; exp = load_experiment_package('experiments/pcvr/my_experiment'); print(exp.name)"
+uv run python -c "from taac2026.application.experiments.registry import load_experiment_package; exp = load_experiment_package('experiments/my_experiment'); print(exp.name)"
 
 # 3. 训练 Smoke Test
 uv run taac-train \
-      --experiment experiments/pcvr/my_experiment \
+      --experiment experiments/my_experiment \
       --run-dir outputs/my_experiment_smoke \
       --device cpu \
       --num_workers 0 \
       --batch_size 8 \
       --max_steps 1
 
-    # 4. 运行最小相关单测
-    uv run pytest tests/unit/infrastructure/experiments/test_experiment_packages.py -v
-    uv run pytest tests/unit/infrastructure/experiments/test_experiment_discovery.py -v
-    uv run pytest tests/unit/infrastructure/pcvr/test_runtime_contract_matrix.py -v
+# 4. 运行最小相关单测
+uv run pytest tests/unit/experiments/test_packages.py -v
+uv run pytest tests/unit/application/experiments/test_discovery.py -v
+uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -v
 ```
 
 ## 修改现有包的检查清单
@@ -188,4 +187,4 @@ uv run taac-train \
 - [ ] `get_sparse_params()` 和 `get_dense_params()` 正确分类参数
 - [ ] 训练 Smoke Test 通过（建议 `--device cpu --max_steps 1`）
 - [ ] 最小相关单元测试通过
-- [ ] 如涉及打包或 runtime sidecar，补跑 `tests/unit/application/test_package_training.py` 或 `tests/unit/application/test_package_inference.py`
+- [ ] 如涉及打包或 runtime sidecar，补跑 `tests/unit/application/packaging/test_training.py` 或 `tests/unit/application/packaging/test_inference.py`

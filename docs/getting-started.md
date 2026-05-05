@@ -54,7 +54,7 @@ data/sample_1000_raw/
 
 ```bash
 bash run.sh train \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --run-dir outputs/quickstart_baseline
 ```
 
@@ -62,7 +62,7 @@ bash run.sh train \
 
 ```bash
 uv run taac-train \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --run-dir outputs/quickstart_baseline
 ```
 
@@ -74,7 +74,7 @@ uv run taac-train \
 
 ```bash
 bash run.sh val \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --run-dir outputs/quickstart_baseline
 ```
 
@@ -82,7 +82,7 @@ bash run.sh val \
 
 ```bash
 uv run taac-evaluate single \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --checkpoint outputs/quickstart_baseline/best_model/model.safetensors
 ```
 
@@ -92,25 +92,25 @@ uv run taac-evaluate single \
 
 ```bash
 bash run.sh infer \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --checkpoint outputs/quickstart_baseline/best_model/model.safetensors \
   --result-dir outputs/quickstart_infer
 ```
 
 ## 切换到其他实验包
 
-PCVR 模型实验位于 `experiments/pcvr/`，维护 / 分析类实验位于 `experiments/maintenance/`。最常见的切换方式就是替换 `--experiment`：
+所有实验包统一位于 `experiments/<name>/`。PCVR 模型实验和维护 / 分析类实验使用同一个插件目录，最常见的切换方式就是替换 `--experiment`：
 
 ```bash
 bash run.sh train \
-  --experiment experiments/pcvr/symbiosis \
+  --experiment experiments/symbiosis \
   --run-dir outputs/quickstart_symbiosis
 ```
 
 维护类实验同样走训练入口，例如：
 
 ```bash
-bash run.sh train --experiment experiments/maintenance/host_device_info
+bash run.sh train --experiment experiments/host_device_info
 ```
 
 ## 生成线上 Bundle
@@ -120,12 +120,12 @@ bash run.sh train --experiment experiments/maintenance/host_device_info
 ```bash
 # 训练 Bundle
 uv run taac-package-train \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --output-dir outputs/bundles/baseline_training
 
 # 推理 Bundle
 uv run taac-package-infer \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --output-dir outputs/bundles/baseline_inference
 ```
 
@@ -138,7 +138,7 @@ uv run taac-package-infer \
 uv run pytest tests/unit -v
 
 # 只看实验包相关测试
-uv run pytest tests/unit/infrastructure/experiments/test_experiment_packages.py -v
+uv run pytest tests/unit/experiments/test_packages.py -v
 
 # 本地文档站
 uv run zensical serve

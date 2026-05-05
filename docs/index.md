@@ -8,7 +8,7 @@ icon: lucide/house
 
 ## 核心能力
 
-- **插件式实验包** -- PCVR 实验位于 `experiments/pcvr/`，运维/分析实验位于 `experiments/maintenance/`。每个包独立携带模型定义或任务入口、NS 分组与默认配置，新增实验无需修改框架代码。
+- **插件式实验包** -- 所有实验统一位于 `experiments/<name>/`。每个包独立携带模型定义或任务入口、NS 分组与默认配置，新增实验无需修改框架代码。
 - **统一训练/评估/推理入口** -- 通过 `taac-train`、`taac-evaluate` 等 CLI 命令驱动所有实验。
 - **可组合数据管道** -- 序列裁剪、特征掩码、域 Dropout、Shuffle Buffer 等增强组件可自由组合。
 - **线上打包** -- `taac-package-train` / `taac-package-infer` 生成符合比赛平台要求的 Bundle。
@@ -37,10 +37,10 @@ icon: lucide/house
 uv sync --extra dev --extra cuda126
 
 # 训练
-uv run taac-train --experiment experiments/pcvr/baseline
+uv run taac-train --experiment experiments/baseline
 
 # 评估
-uv run taac-evaluate single --experiment experiments/pcvr/baseline
+uv run taac-evaluate single --experiment experiments/baseline
 ```
 
 PCVR quick preview 默认会通过 `datasets` 拉取 Hugging Face 上的 `demo_1000.parquet`，本地不再支持显式 `--dataset-path`；线上 Bundle 仍由平台提供真实数据路径。

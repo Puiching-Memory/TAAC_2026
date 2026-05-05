@@ -9,10 +9,10 @@ from pathlib import Path
 
 import torch
 
-from taac2026.domain.config import EvalRequest, InferRequest, default_run_dir
-from taac2026.infrastructure.experiments.loader import load_experiment_package
-from taac2026.infrastructure.io.json_utils import dumps
-from taac2026.infrastructure.training.runtime import AMP_DTYPE_CHOICES
+from taac2026.domain.requests import EvalRequest, InferRequest, default_run_dir
+from taac2026.application.experiments.registry import load_experiment_package
+from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.runtime.execution import AMP_DTYPE_CHOICES
 
 
 def _default_device() -> str:

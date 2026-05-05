@@ -11,8 +11,8 @@ from typing import Any, Literal
 
 import torch
 
-from taac2026.infrastructure.io.json_utils import dumps
-from taac2026.infrastructure.pcvr.tilelang_ops import (
+from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.accelerators import (
     clear_tilelang_kernel_cache,
     compile_rms_norm_kernel,
     resolved_rms_norm_backend,

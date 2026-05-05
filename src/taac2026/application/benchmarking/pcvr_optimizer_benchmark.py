@@ -17,9 +17,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from taac2026.infrastructure.io.json_utils import dumps
-from taac2026.infrastructure.pcvr.trainer import PCVRPointwiseTrainer
-from taac2026.infrastructure.training.runtime import (
+from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
+from taac2026.infrastructure.runtime.execution import (
     DENSE_OPTIMIZER_TYPE_CHOICES,
     EarlyStopping,
     RuntimeExecutionConfig,

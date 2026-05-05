@@ -14,7 +14,7 @@ icon: lucide/cpu
 
 1. **环境要求**：CUDA 12.x、Triton 2.x、PyTorch 2.7+
 2. **开发流程**：
-   - 在 `src/taac2026/infrastructure/pcvr/kernels/` 下编写 Kernel
+   - 在 `src/taac2026/infrastructure/accelerators/kernels/` 下编写 Kernel
    - 通过 `torch.compile` 或 `triton.jit` 注册
    - 在模型中通过条件导入使用
 3. **测试**：需要 GPU 环境，使用 `@pytest.mark.gpu` 标记

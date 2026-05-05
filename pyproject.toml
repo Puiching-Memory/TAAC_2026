@@ -70,9 +70,9 @@ environments = ["sys_platform == 'linux'"]
 [project.scripts]
 taac-train = "taac2026.application.training.cli:main"
 taac-evaluate = "taac2026.application.evaluation.cli:main"
-taac-package-train = "taac2026.application.maintenance.bundle_packaging:training_main"
-taac-package-infer = "taac2026.application.maintenance.bundle_packaging:inference_main"
-taac-generate-pcvr-synthetic-dataset = "taac2026.application.maintenance.generate_pcvr_synthetic_dataset:main"
+taac-package-train = "taac2026.application.packaging.cli:training_main"
+taac-package-infer = "taac2026.application.packaging.cli:inference_main"
+taac-generate-pcvr-synthetic-dataset = "taac2026.application.benchmarking.generate_pcvr_synthetic_dataset:main"
 taac-benchmark-pcvr-data-pipeline = "taac2026.application.benchmarking.pcvr_data_pipeline_benchmark:main"
 taac-benchmark-pcvr-optimizer = "taac2026.application.benchmarking.pcvr_optimizer_benchmark:main"
 taac-benchmark-pcvr-tilelang-ops = "taac2026.application.benchmarking.pcvr_tilelang_ops_benchmark:main"

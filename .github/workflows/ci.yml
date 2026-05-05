@@ -96,7 +96,7 @@ jobs:
     needs:
       - test
     env:
-      CPU_COVERAGE_INCLUDE: src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/runtime_optimization.py
+      CPU_COVERAGE_INCLUDE: src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/args.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/workflow.py
 
     steps:
       - name: 检出仓库
@@ -127,7 +127,7 @@ jobs:
             echo
             echo "- 兼容性检查在 Python 3.10, 3.11, 3.12, 和 3.13 上运行"
             echo "- 覆盖率门控从规范的 Python ${CI_CANONICAL_PYTHON_VERSION} 单元测试通道执行，仅使用 CPU 安全的模块"
-            echo "- 包含: src/taac2026/domain/*, src/taac2026/application/training/__init__.py, src/taac2026/application/training/cli.py, src/taac2026/application/training/runtime_optimization.py"
+            echo "- 包含: src/taac2026/domain/*, src/taac2026/application/training/__init__.py, src/taac2026/application/training/args.py, src/taac2026/application/training/cli.py, src/taac2026/application/training/workflow.py"
             echo "- 集成和 GPU 覆盖率在需要时从本地 CUDA CLI 运行中收集"
             echo "- 仅 GPU 的基准测试位于 tests/benchmarks/gpu 下，通过本地 CUDA CLI 运行"
           } >> "$GITHUB_STEP_SUMMARY"

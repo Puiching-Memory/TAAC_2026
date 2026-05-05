@@ -9,7 +9,7 @@ icon: lucide/zap
 ## 包结构
 
 ```
-experiments/pcvr/symbiosis/
+experiments/symbiosis/
 ├── __init__.py   # 包含显式 NS 分组配置
 └── model.py
 ```
@@ -42,7 +42,7 @@ Symbiosis 在 HyFormer 基础上引入共生学习机制，通过 11 个独立�
 
 ```bash
 uv run taac-train \
-  --experiment experiments/pcvr/symbiosis
+  --experiment experiments/symbiosis
 ```
 
 ## 消融开关
@@ -81,15 +81,15 @@ Checkpoint 保存在 `outputs/pcvr_symbiosis-<slug>/`，格式与 Baseline 一�
 
 ```bash
 uv run taac-evaluate single \
-  --experiment experiments/pcvr/symbiosis
+  --experiment experiments/symbiosis
 ```
 
 ## 线上打包
 
 ```bash
 # 训练 Bundle
-uv run taac-package-train --experiment experiments/pcvr/symbiosis --output-dir outputs/bundle
+uv run taac-package-train --experiment experiments/symbiosis --output-dir outputs/bundle
 
 # 推理 Bundle
-uv run taac-package-infer --experiment experiments/pcvr/symbiosis --output-dir outputs/bundle
+uv run taac-package-infer --experiment experiments/symbiosis --output-dir outputs/bundle
 ```

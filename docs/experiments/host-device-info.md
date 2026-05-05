@@ -29,7 +29,7 @@ icon: lucide/server
 
 ## 配置
 
-配置项在 `experiments/maintenance/host_device_info/__init__.py` 的 `HostDeviceInfoConfig` 中定义。主要可调参数：
+配置项在 `experiments/host_device_info/__init__.py` 的 `HostDeviceInfoConfig` 中定义。主要可调参数：
 
 | 参数                       | 默认值                              | 说明                         |
 | -------------------------- | ----------------------------------- | ---------------------------- |
@@ -43,7 +43,7 @@ icon: lucide/server
 ## 运行
 
 ```bash
-uv run taac-train --experiment experiments/maintenance/host_device_info
+uv run taac-train --experiment experiments/host_device_info
 ```
 
 不需要 `--dataset-path` 或 `--schema-path`。
@@ -51,7 +51,7 @@ uv run taac-train --experiment experiments/maintenance/host_device_info
 ## 线上打包
 
 ```bash
-uv run taac-package-train --experiment experiments/maintenance/host_device_info --output-dir outputs/bundle
+uv run taac-package-train --experiment experiments/host_device_info --output-dir outputs/bundle
 ```
 
 该维护类实验支持训练 bundle 打包，生成 `run.sh` 与 `code_package.zip`，可在线上环境直接执行诊断任务。
@@ -80,5 +80,5 @@ uv run taac-package-train --experiment experiments/maintenance/host_device_info 
 
 ## 来源
 
-- 运行器源码：`experiments/maintenance/host_device_info/runner.py`
-- 包入口：`experiments/maintenance/host_device_info/__init__.py`
+- 运行器源码：`experiments/host_device_info/runner.py`
+- 包入口：`experiments/host_device_info/__init__.py`

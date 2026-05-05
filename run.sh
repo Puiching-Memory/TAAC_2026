@@ -7,7 +7,7 @@ PROJECT_DIR="${SCRIPT_DIR}"
 CODE_PACKAGE="${TAAC_CODE_PACKAGE:-${SCRIPT_DIR}/code_package.zip}"
 BUNDLE_MODE=0
 
-# Delegated to taac2026.infrastructure.platform.run_sh: TAAC_INSTALL_PROJECT_DEPS,
+# Delegated to taac2026.application.bootstrap.run_sh: TAAC_INSTALL_PROJECT_DEPS,
 # TAAC_BUNDLE_PIP_EXTRAS, TAAC_PIP_EXTRAS, and the taac-train entrypoint.
 
 case "${1:-}" in
@@ -86,7 +86,7 @@ if [[ "${BUNDLE_MODE}" == "1" || "${TAAC_RUNNER:-}" == "python" ]]; then
 		echo "python3 or python is required to run the TAAC runtime" >&2
 		exit 127
 	}
-	exec "${PYTHON_BIN}" -m taac2026.infrastructure.platform.run_sh "$@"
+	exec "${PYTHON_BIN}" -m taac2026.application.bootstrap.run_sh "$@"
 fi
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -94,4 +94,4 @@ if ! command -v uv >/dev/null 2>&1; then
 	exit 127
 fi
 
-exec uv run python -m taac2026.infrastructure.platform.run_sh "$@"
+exec uv run python -m taac2026.application.bootstrap.run_sh "$@"

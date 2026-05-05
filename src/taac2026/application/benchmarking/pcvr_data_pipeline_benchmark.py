@@ -10,16 +10,16 @@ from typing import Any
 
 import torch
 
-from taac2026.infrastructure.io.json_utils import dumps
-from taac2026.infrastructure.pcvr.config import (
+from taac2026.infrastructure.io.json import dumps
+from taac2026.domain.config import (
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
     PCVRSequenceCropConfig,
 )
-from taac2026.infrastructure.pcvr.data import get_pcvr_data
-from taac2026.infrastructure.pcvr.protocol import parse_seq_max_lens
+from taac2026.infrastructure.data.dataset import get_pcvr_data
+from taac2026.domain.model_contract import parse_seq_max_lens
 
 
 def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:

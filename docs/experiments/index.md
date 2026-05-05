@@ -8,8 +8,8 @@ icon: lucide/folder-open
 
 当前有两类实验包：
 
-- `experiments/pcvr/`：PCVR 模型实验
-- `experiments/maintenance/`：维护 / 分析类实验
+- `experiments/`：PCVR 模型实验
+- `experiments/`：维护 / 分析类实验
 
 ## 当前实验包
 
@@ -17,10 +17,10 @@ icon: lucide/folder-open
 
 | 实验包         | 路径                              | 说明                                 |
 | -------------- | --------------------------------- | ------------------------------------ |
-| Baseline       | `experiments/pcvr/baseline`       | 共享 PCVR 运行时上的基准 HyFormer 包 |
-| InterFormer    | `experiments/pcvr/interformer`    | InterFormer 结构实验                 |
-| OneTrans       | `experiments/pcvr/onetrans`       | OneTrans 结构实验                    |
-| Symbiosis      | `experiments/pcvr/symbiosis`      | 带包内辅助层和额外训练参数的融合实验 |
+| Baseline       | `experiments/baseline`       | 共享 PCVR 运行时上的基准 HyFormer 包 |
+| InterFormer    | `experiments/interformer`    | InterFormer 结构实验                 |
+| OneTrans       | `experiments/onetrans`       | OneTrans 结构实验                    |
+| Symbiosis      | `experiments/symbiosis`      | 带包内辅助层和额外训练参数的融合实验 |
 
 ### 维护工具包
 
@@ -36,7 +36,7 @@ icon: lucide/folder-open
 PCVR 实验包的最小契约是两个文件：
 
 ```text
-experiments/pcvr/<experiment_name>/
+experiments/<experiment_name>/
 ├── __init__.py
 └── model.py
 ```
@@ -44,7 +44,7 @@ experiments/pcvr/<experiment_name>/
 在此基础上，实验包可以按需要增加自己的辅助模块，例如：
 
 ```text
-experiments/pcvr/symbiosis/
+experiments/symbiosis/
 ├── __init__.py
 ├── layers.py
 └── model.py
@@ -85,7 +85,7 @@ experiments/pcvr/symbiosis/
 维护工具包使用 `ExperimentSpec` 而非 `PCVRExperiment`，不需要模型定义和 NS 分组：
 
 ```text
-experiments/maintenance/<tool_name>/
+experiments/<tool_name>/
 ├── __init__.py
 └── runner.py
 ```
@@ -96,21 +96,21 @@ experiments/maintenance/<tool_name>/
 ## 运行任意实验包
 
 ```bash
-bash run.sh train --experiment experiments/pcvr/<name> \
+bash run.sh train --experiment experiments/<name> \
   --run-dir outputs/<name>
 ```
 
 维护类实验也走同一入口，例如：
 
 ```bash
-bash run.sh train --experiment experiments/maintenance/host_device_info
+bash run.sh train --experiment experiments/host_device_info
 ```
 
 ## 打包任意实验包
 
 ```bash
-uv run taac-package-train --experiment experiments/pcvr/<name> --output-dir outputs/bundles/<name>_training
-uv run taac-package-infer --experiment experiments/pcvr/<name> --output-dir outputs/bundles/<name>_inference
+uv run taac-package-train --experiment experiments/<name> --output-dir outputs/bundles/<name>_training
+uv run taac-package-infer --experiment experiments/<name> --output-dir outputs/bundles/<name>_inference
 ```
 
 维护类实验只支持训练 Bundle，不支持推理 Bundle。

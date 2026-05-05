@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from taac2026.domain.config import EvalRequest, InferRequest, TrainRequest
+from taac2026.domain.requests import EvalRequest, InferRequest, TrainRequest
 
 
 TrainFn = Callable[[TrainRequest], Mapping[str, Any] | None]

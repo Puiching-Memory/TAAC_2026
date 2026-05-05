@@ -27,7 +27,7 @@ The same top-level `run.sh` supports both modes:
 - If `code_package.zip` exists beside `run.sh`, bundle mode is enabled and the default runner is `python`.
 - If running from the repository root without `code_package.zip`, local mode is enabled and the default runner is `uv`.
 - `TAAC_RUNNER=python|uv` can override the default when debugging.
-- `run.sh` is a thin bootstrapper; command parsing, manifest defaults, pip install behavior, and runner dispatch live in `taac2026.infrastructure.platform.run_sh`.
+- `run.sh` is a thin bootstrapper; command parsing, manifest defaults, pip install behavior, and runner dispatch live in `taac2026.application.bootstrap.run_sh`.
 
 Important current behavior:
 
@@ -59,13 +59,13 @@ uv sync --locked --extra cuda126
 Use the top-level entrypoint instead of calling console scripts directly:
 
 ```bash
-bash run.sh train --experiment experiments/pcvr/baseline \
+bash run.sh train --experiment experiments/baseline \
     --dataset-path /path/to/parquet_or_dir \
     --schema-path /path/to/schema.json
 
 uv run pytest tests/unit -q
-uv run taac-package-train --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-training
-uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-inference
+uv run taac-package-train --experiment experiments/interformer --output-dir /tmp/interformer-training
+uv run taac-package-infer --experiment experiments/interformer --output-dir /tmp/interformer-inference
 ```
 
 Local defaults:
@@ -100,9 +100,9 @@ The training upload directory contains exactly:
 Build it locally with:
 
 ```bash
-uv run taac-package-train --experiment experiments/pcvr/baseline --output-dir outputs/training_bundles/baseline_training_bundle
-uv run taac-package-train --experiment experiments/pcvr/interformer --output-dir outputs/training_bundles/interformer_training_bundle
-uv run taac-package-train --experiment experiments/pcvr/onetrans --output-dir outputs/training_bundles/onetrans_training_bundle
+uv run taac-package-train --experiment experiments/baseline --output-dir outputs/training_bundles/baseline_training_bundle
+uv run taac-package-train --experiment experiments/interformer --output-dir outputs/training_bundles/interformer_training_bundle
+uv run taac-package-train --experiment experiments/onetrans --output-dir outputs/training_bundles/onetrans_training_bundle
 ```
 
 `taac-package-train` writes:
@@ -110,7 +110,7 @@ uv run taac-package-train --experiment experiments/pcvr/onetrans --output-dir ou
 - `run.sh`: copied from the repository root and marked executable.
 - `code_package.zip`: minimal runtime source tree.
 
-The zip contains `project/.taac_training_manifest.json`, `project/pyproject.toml`, `project/src/taac2026`, and only the selected experiment package under `project/experiments/<group>/<experiment>`. It must not include tests, docs, unrelated experiment packages, or local provenance files such as `uv.lock` and `README.md`.
+The zip contains `project/.taac_training_manifest.json`, `project/pyproject.toml`, `project/src/taac2026`, and only the selected experiment package under `project/experiments/<experiment>`. It must not include tests, docs, unrelated experiment packages, or local provenance files such as `uv.lock` and `README.md`.
 
 ### Inference Bundle
 
@@ -125,8 +125,8 @@ The inference upload directory contains exactly:
 Build it locally with:
 
 ```bash
-uv run taac-package-infer --experiment experiments/pcvr/baseline --output-dir outputs/inference_bundles/baseline_inference_bundle
-uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir outputs/inference_bundles/interformer_inference_bundle
+uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/inference_bundles/baseline_inference_bundle
+uv run taac-package-infer --experiment experiments/interformer --output-dir outputs/inference_bundles/interformer_inference_bundle
 ```
 
 `taac-package-infer` writes:
@@ -134,7 +134,7 @@ uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir
 - `infer.py`: self-extracting inference entrypoint.
 - `code_package.zip`: minimal runtime source tree with `project/.taac_inference_manifest.json`.
 
-The generated `infer.py` imports `taac2026.infrastructure.platform.inference_bundle` from the extracted code package, so keep platform runtime modules included in every code package.
+The generated `infer.py` imports `taac2026.application.bootstrap.inference_bundle` from the extracted code package, so keep bootstrap and platform runtime modules included in every code package.
 
 ## Official Baseline Snapshots
 
@@ -143,7 +143,7 @@ The competition reference snapshots may appear as top-level source drops:
 - self-contained training baseline with `run.sh`, a training entrypoint, a trainer, utilities, dataset code, model code, and `ns_groups.json`.
 - self-contained final scoring baseline with `infer.py`, dataset code, and model code.
 
-Treat these sources as disposable references. Extract the contracts, update repository docs/skills without naming source-drop paths, and delete the source drops when finished. Do not include source drops in generated bundles; build from `experiments/<group>/<experiment>` with the packaging CLIs instead.
+Treat these sources as disposable references. Extract the contracts, update repository docs/skills without naming source-drop paths, and delete the source drops when finished. Do not include source drops in generated bundles; build from `experiments/<experiment>` with the packaging CLIs instead.
 
 The official training snapshot reads `TRAIN_DATA_PATH`, `TRAIN_CKPT_PATH`, `TRAIN_LOG_PATH`, and `TRAIN_TF_EVENTS_PATH`. The official scoring snapshot reads `MODEL_OUTPUT_PATH`, `EVAL_DATA_PATH`, and `EVAL_RESULT_PATH`, then writes `predictions.json` under `EVAL_RESULT_PATH` with the shape `{"predictions": {user_id: probability}}`.
 
@@ -232,7 +232,7 @@ Then it invokes:
 python -m taac2026.application.training.cli --experiment <manifest experiment> ...
 ```
 
-The Python module used by `run.sh` is `taac2026.infrastructure.platform.run_sh`; it owns manifest reading, `TAAC_BUNDLE_PIP_EXTRAS`, `TAAC_SKIP_PIP_INSTALL`, and the `train` / `val` / `eval` / `infer` argument mapping.
+The Python module used by `run.sh` is `taac2026.application.bootstrap.run_sh`; it owns manifest reading, `TAAC_BUNDLE_PIP_EXTRAS`, `TAAC_SKIP_PIP_INSTALL`, and the `train` / `val` / `eval` / `infer` argument mapping.
 
 In inference bundle mode, `infer.py` performs the same `project/` extraction and then invokes:
 
@@ -240,7 +240,7 @@ In inference bundle mode, `infer.py` performs the same `project/` extraction and
 python -m taac2026.application.evaluation.infer
 ```
 
-The generated script delegates manifest reading, pip installation, default experiment selection, and final import setup to `taac2026.infrastructure.platform.inference_bundle`.
+The generated script delegates manifest reading, pip installation, default experiment selection, and final import setup to `taac2026.application.bootstrap.inference_bundle`.
 
 ## Competition Workflow
 
@@ -248,9 +248,9 @@ Use this lifecycle for competition work:
 
 1. Develop locally with `uv sync --locked --extra cuda126`.
 2. Install local dev tooling with `uv sync --locked --extra dev --extra cuda126` when you need pytest, Ruff, or docs preview.
-3. Add or modify an experiment package under `experiments/<group>/<name>`.
+3. Add or modify an experiment package under `experiments/<name>`.
 4. Run focused unit tests locally with `uv run pytest tests/unit -q`.
-5. For training experiments, keep the same `cuda126` environment and train through `bash run.sh train --experiment experiments/pcvr/<name>`.
+5. For training experiments, keep the same `cuda126` environment and train through `bash run.sh train --experiment experiments/<name>`.
 6. Build the online bundle with `uv run taac-package-train` or `uv run taac-package-infer`.
 7. Inspect `code_package.zip` when changing packaging logic; confirm it contains the selected experiment package under `project/experiments/...` and the expected manifest under `project/`.
 8. Upload only the two generated top-level files for the bundle type you need.
@@ -269,8 +269,8 @@ uv run --with ruff ruff check .
 Bundle validation:
 
 ```bash
-uv run taac-package-train --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-training --json
-uv run taac-package-infer --experiment experiments/pcvr/interformer --output-dir /tmp/interformer-inference --json
+uv run taac-package-train --experiment experiments/interformer --output-dir /tmp/interformer-training --json
+uv run taac-package-infer --experiment experiments/interformer --output-dir /tmp/interformer-inference --json
 
 python -m zipfile -l /tmp/interformer-training/code_package.zip | head
 python -m zipfile -l /tmp/interformer-inference/code_package.zip | head

@@ -10,7 +10,7 @@ from typing import Any
 from safetensors.torch import load_file as load_safetensors_file, save_file as save_safetensors_file
 import torch
 
-from taac2026.infrastructure.io.json_utils import write_path
+from taac2026.infrastructure.io.json import write_path
 
 _GLOBAL_STEP_PATTERN = re.compile(r"^global_step(?P<step>\d+)(?:[A-Za-z0-9_.=\-]*)$")
 PRIMARY_CHECKPOINT_FILENAME = "model.safetensors"

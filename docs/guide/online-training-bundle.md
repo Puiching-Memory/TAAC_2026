@@ -17,7 +17,7 @@ icon: lucide/package
 
 ```bash
 uv run taac-package-train \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --output-dir outputs/bundles/baseline_training
 ```
 
@@ -40,7 +40,7 @@ code_package.zip
     ├── pyproject.toml
     ├── src/taac2026/
     └── experiments/
-        └── <group>/<experiment>/
+      └── <experiment>/
 ```
 
 代码包的几个重要特征：
@@ -54,7 +54,7 @@ manifest 是版本化对象。除了旧脚本仍会读取的 `bundle_format`、`
 
 ### 运行时行为
 
-上传后的平台入口仍是顶层 `run.sh`。Shell 层只负责定位和解压代码包，然后委托给 `taac2026.infrastructure.platform.run_sh`。在 Bundle 模式下，它会：
+上传后的平台入口仍是顶层 `run.sh`。Shell 层只负责定位和解压代码包，然后委托给 `taac2026.application.bootstrap.run_sh`。在 Bundle 模式下，它会：
 
 1. 检测同目录下是否存在 `code_package.zip`
 2. 解压到 `TAAC_BUNDLE_WORKDIR` 指定目录，默认是 `run.sh` 同目录下的 `.taac_bundle/project`
@@ -96,7 +96,7 @@ bash outputs/bundles/baseline_training/run.sh --device cpu --num_workers 0
 
 ```bash
 uv run taac-package-infer \
-  --experiment experiments/pcvr/baseline \
+  --experiment experiments/baseline \
   --output-dir outputs/bundles/baseline_inference
 ```
 
@@ -119,14 +119,14 @@ code_package.zip
     ├── pyproject.toml
     ├── src/taac2026/
     └── experiments/
-        └── <group>/<experiment>/
+      └── <experiment>/
 ```
 
 它同样不会包含 `uv.lock`、`README.md`、顶层 `infer.py`、顶层 `run.sh` 或测试文件。
 
 ### 运行时行为
 
-`infer.py` 是一个自解压入口脚本。脚本只负责缓存目录选择、解压和导入共享平台运行时；manifest 读取、依赖安装和默认实验包注入由 `taac2026.infrastructure.platform.inference_bundle` 处理。它会：
+`infer.py` 是一个自解压入口脚本。脚本只负责缓存目录选择、解压和导入共享 bootstrap 运行时；manifest 读取、依赖安装和默认实验包注入由 `taac2026.application.bootstrap.inference_bundle` 处理。它会：
 
 1. 找到同目录下的 `code_package.zip`
 2. 解压到 `TAAC_BUNDLE_WORKDIR` 指定目录；如果没设置，则默认使用 `USER_CACHE_PATH` 下的缓存目录
@@ -166,14 +166,14 @@ python outputs/bundles/baseline_inference/infer.py
 
 维护 / 分析类实验只支持训练 Bundle，不支持推理 Bundle。当前仓库内置的两个例子是：
 
-- `experiments/maintenance/host_device_info`
-- `experiments/maintenance/online_dataset_eda`
+- `experiments/host_device_info`
+- `experiments/online_dataset_eda`
 
 示例：
 
 ```bash
 uv run taac-package-train \
-  --experiment experiments/maintenance/host_device_info \
+  --experiment experiments/host_device_info \
   --output-dir outputs/bundles/host_device_info
 ```
 
@@ -219,7 +219,7 @@ unzip -p outputs/bundles/baseline_inference/code_package.zip project/.taac_infer
 重新执行对应的打包命令，覆盖旧目录：
 
 ```bash
-uv run taac-package-train --experiment experiments/pcvr/<name> --output-dir outputs/bundles/<name>_training
+uv run taac-package-train --experiment experiments/<name> --output-dir outputs/bundles/<name>_training
 ```
 
 必要时加上 `TAAC_FORCE_EXTRACT=1` 重新解压。

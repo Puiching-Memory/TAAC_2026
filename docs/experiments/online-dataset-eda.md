@@ -36,7 +36,7 @@ icon: lucide/bar-chart
 
 ## 配置
 
-配置项在 `experiments/maintenance/online_dataset_eda/__init__.py` 的 `OnlineDatasetEDAConfig` 中定义，也支持环境变量覆盖：
+配置项在 `experiments/online_dataset_eda/__init__.py` 的 `OnlineDatasetEDAConfig` 中定义，也支持环境变量覆盖：
 
 | 参数                       | 默认值   | 环境变量                    | 说明                           |
 | -------------------------- | -------- | --------------------------- | ------------------------------ |
@@ -53,7 +53,7 @@ icon: lucide/bar-chart
 ## 运行
 
 ```bash
-uv run taac-train --experiment experiments/maintenance/online_dataset_eda \
+uv run taac-train --experiment experiments/online_dataset_eda \
   --dataset-path data/sample_1000_raw/demo_1000.parquet
 ```
 
@@ -62,7 +62,7 @@ uv run taac-train --experiment experiments/maintenance/online_dataset_eda \
 ## 线上打包
 
 ```bash
-uv run taac-package-train --experiment experiments/maintenance/online_dataset_eda --output-dir outputs/bundle
+uv run taac-package-train --experiment experiments/online_dataset_eda --output-dir outputs/bundle
 ```
 
 该维护类实验支持训练 bundle 打包，生成 `run.sh` 与 `code_package.zip`，可在线上环境直接执行 EDA 任务。
@@ -96,5 +96,5 @@ uv run taac-package-train --experiment experiments/maintenance/online_dataset_ed
 
 ## 来源
 
-- 运行器源码：`experiments/maintenance/online_dataset_eda/runner.py`
-- 包入口：`experiments/maintenance/online_dataset_eda/__init__.py`
+- 运行器源码：`experiments/online_dataset_eda/runner.py`
+- 包入口：`experiments/online_dataset_eda/__init__.py`

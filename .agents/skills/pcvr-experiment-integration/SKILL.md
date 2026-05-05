@@ -1,6 +1,6 @@
 ---
 name: pcvr-experiment-integration
-description: 'Use when creating, reviewing, refactoring, or packaging TAAC PCVR experiment packages under experiments/pcvr/*, including baseline, InterFormer, OneTrans, Symbiosis, and new paper implementations. Covers the current PCVRExperiment constructor, model_class_name, ModelInput, explicit PCVRNSConfig groups in __init__.py, shared training/runtime hooks, Bundle packaging, and focused tests under tests/unit/infrastructure and tests/unit/application.'
+description: 'Use when creating, reviewing, refactoring, or packaging TAAC PCVR experiment packages under experiments/<name>, including baseline, InterFormer, OneTrans, Symbiosis, and new paper implementations. Covers the current PCVRExperiment constructor, model_class_name, ModelInput, explicit PCVRNSConfig groups in __init__.py, shared application/domain/infrastructure runtime hooks, Bundle packaging, and focused tests under tests/unit/experiments, tests/unit/application, tests/unit/domain, and tests/unit/infrastructure.'
 argument-hint: 'experiment path or paper model name'
 user-invocable: true
 ---
@@ -9,9 +9,9 @@ user-invocable: true
 
 ## When to Use
 
-- Add a new PCVR experiment package under `experiments/pcvr/<name>`.
-- Review or refactor an existing PCVR package such as `experiments/pcvr/baseline`, `experiments/pcvr/interformer`, or `experiments/pcvr/onetrans`.
-- Change shared PCVR runtime code in `src/taac2026/infrastructure/pcvr`.
+- Add a new PCVR experiment package under `experiments/<name>`.
+- Review or refactor an existing PCVR package such as `experiments/baseline`, `experiments/interformer`, or `experiments/onetrans`.
+- Change shared PCVR runtime code across `src/taac2026/domain`, `src/taac2026/application`, or `src/taac2026/infrastructure`.
 - Build or validate training or inference bundles for PCVR experiments.
 
 ## Package Contract
@@ -21,7 +21,7 @@ Each PCVR experiment package should keep only experiment-specific assets and mod
 - `__init__.py` should define `EXPERIMENT = create_pcvr_experiment(...)`.
 - `package_dir` should be `Path(__file__).resolve().parent`.
 - `model_class_name` must explicitly name the model class exported by `model.py`.
-- Full experiment-specific model classes must live in package-local `model.py`; do not centralize paper or experiment architecture classes in `src/taac2026/infrastructure/pcvr`.
+- Full experiment-specific model classes must live in package-local `model.py`; do not centralize paper or experiment architecture classes in shared domain/application/infrastructure modules.
 - Non-HyFormer papers must use paper-specific names such as `PCVRInterFormer` or `PCVROneTrans`; do not expose `PCVRHyFormer` outside the official HyFormer baseline.
 - The official baseline may keep `PCVRHyFormer` because it is the HyFormer implementation.
 - Do not add package-local `run.sh`, `train.py`, or `trainer.py`; shared PCVR runtime owns training, evaluation, inference, and packaging.
@@ -29,7 +29,7 @@ Each PCVR experiment package should keep only experiment-specific assets and mod
 Current minimum package shape:
 
 ```text
-experiments/pcvr/<name>/
+experiments/<name>/
 ├── __init__.py
 └── model.py
 ```
@@ -41,8 +41,7 @@ Example:
 ```python
 from pathlib import Path
 
-from taac2026.infrastructure.pcvr.config import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig
-from taac2026.infrastructure.pcvr.factory import create_pcvr_experiment
+from taac2026.api import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig, create_pcvr_experiment
 
 
 EXPERIMENT = create_pcvr_experiment(
@@ -73,7 +72,7 @@ For new model-only experiments, use `create_pcvr_experiment(...)` and replace th
 
 `model.py` must expose the `ModelInput` type and the model class named by `model_class_name`.
 
-Prefer importing currently shared building blocks from `taac2026.infrastructure.pcvr.modeling`:
+Prefer importing currently shared building blocks from `taac2026.infrastructure.modeling`:
 
 - `ModelInput`
 - mask and pooling helpers such as `make_padding_mask`, `masked_mean`, `masked_last`, and `safe_key_padding_mask`
@@ -81,9 +80,9 @@ Prefer importing currently shared building blocks from `taac2026.infrastructure.
 - `RMSNorm` plus `configure_rms_norm_runtime` for runtime-selectable Torch / TileLang RMSNorm
 - `EmbeddingParameterMixin` for sparse/dense parameter grouping and high-cardinality reinitialization
 
-Package-local `layers.py` files in the built-in non-baseline experiments are compatibility re-exports. New experiments should import these shared primitives directly from `taac2026.infrastructure.pcvr.modeling` unless they are implementing truly paper-specific layers.
+Package-local `layers.py` files in the built-in non-baseline experiments are compatibility re-exports. New experiments should import these shared primitives directly from `taac2026.infrastructure.modeling` unless they are implementing truly paper-specific layers.
 
-`src/taac2026/infrastructure/pcvr/modeling.py` is for reusable primitives only. Keep model bodies, paper-specific blocks, and experiment naming inside the owning `experiments/pcvr/<experiment>/model.py` package.
+Reusable modeling primitives live under `src/taac2026/infrastructure/modeling/`. Keep model bodies, paper-specific blocks, and experiment naming inside the owning `experiments/<experiment>/model.py` package.
 
 The model constructor must accept the arguments currently passed by `build_pcvr_model`:
 
@@ -155,13 +154,13 @@ PCVRNSConfig(
 
 ## Shared Runtime
 
-The shared runtime lives under `src/taac2026/infrastructure/pcvr`:
+The shared PCVR runtime is split by ownership:
 
-- `PCVRExperiment` loads package modules and delegates train/evaluate/infer.
-- `build_pcvr_model` converts dataset schema and config into model constructor arguments.
-- `train_pcvr_model` owns CLI parsing, data loader setup, model construction, logging, and trainer wiring.
-- `train_stack.py`, `prediction_stack.py`, and `runtime_stack.py` own most shared hooks and runtime decisions.
-- `trainer.py` and `trainer_support.py` own optimization, evaluation steps, checkpoints, and sidecars.
+- `src/taac2026/application/experiments/` owns `PCVRExperiment`, package discovery/registry, and experiment factory wiring.
+- `src/taac2026/domain/model_contract.py` owns `ModelInput`, schema-to-model conversion, and batch-to-input conversion.
+- `src/taac2026/domain/config.py` and `src/taac2026/domain/sidecar.py` own PCVR config and checkpoint-side contract data.
+- `src/taac2026/application/training/` and `src/taac2026/application/evaluation/` own CLI workflows and use cases.
+- `src/taac2026/infrastructure/data/`, `runtime/`, `optimization/`, and `accelerators/` own dataset loading, trainer mechanics, optimizers, and operator implementations.
 
 Online bundles currently use two top-level files, but there are two different shapes:
 
@@ -169,7 +168,7 @@ Online bundles currently use two top-level files, but there are two different sh
 - inference: `infer.py` + `code_package.zip`
 
 The code package should include `project/.taac_*_manifest.json`, `project/pyproject.toml`, `project/src/taac2026`, and the selected experiment package under `project/experiments/...`. It should not include `tests/`, `uv.lock`, `README.md`, or unrelated experiment packages.
-Runtime platform behavior for `run.sh` and generated `infer.py` lives in `src/taac2026/infrastructure/platform`; keep shell/bootstrap code thin and put manifest, pip, and env parsing there.
+Runtime platform behavior for `run.sh` and generated `infer.py` lives in `src/taac2026/application/bootstrap` and `src/taac2026/infrastructure/platform`; keep shell/bootstrap code thin and put manifest, pip, and env parsing in those owners.
 
 ## Official Baseline Snapshot Notes
 
@@ -179,7 +178,7 @@ The official self-contained training baseline contains `run.sh`, a training entr
 
 The official scoring baseline shares the same dataset and model definitions as the training snapshot. Its `infer.py` rebuilds `PCVRHyFormer` from checkpoint-side `schema.json`, optional `ns_groups.json`, and `train_config.json`, then strictly loads `model.safetensors` and writes `predictions.json` as `{"predictions": {user_id: probability}}`.
 
-When adapting this snapshot into `experiments/pcvr/baseline`, keep the model body local but adapt the public constructor to the shared contract. In particular, the official `num_hyformer_blocks` argument maps to the shared `num_blocks` argument.
+When adapting this snapshot into `experiments/baseline`, keep the model body local but adapt the public constructor to the shared contract. In particular, the official `num_hyformer_blocks` argument maps to the shared `num_blocks` argument.
 
 Checkpoint sidecars are part of the model contract, not optional convenience files. Training must persist `model.safetensors`, `schema.json`, and `train_config.json`, because evaluation/inference use those files as the source of truth for model reconstruction.
 
@@ -187,29 +186,30 @@ Checkpoint sidecars are part of the model contract, not optional convenience fil
 
 When adding or changing a PCVR experiment package, update focused tests instead of relying only on a smoke run:
 
-- `tests/unit/infrastructure/experiments/test_experiment_packages.py`: experiment loading, `model_class_name`, no leaked `PCVRHyFormer` for non-baseline packages, forward, backward, and predict.
-- `tests/unit/infrastructure/experiments/test_experiment_discovery.py`: package discovery under `experiments/pcvr/*`.
-- `tests/unit/infrastructure/pcvr/test_runtime_contract_matrix.py`: schema-to-feature-spec conversion and runtime config contract.
-- `tests/unit/infrastructure/pcvr/test_pcvr_protocol.py`: batch conversion and schema protocol behavior.
-- `tests/unit/application/test_package_training.py`: training bundle contains the expected runtime sources and manifests.
-- `tests/unit/application/test_package_inference.py`: inference bundle contains the expected runtime sources and manifests.
-- `tests/unit/infrastructure/experiments/test_checkpoint_and_loader.py`: baseline package loading and checkpoint sidecar behavior.
+- `tests/unit/experiments/test_packages.py`: experiment loading, `model_class_name`, no leaked `PCVRHyFormer` for non-baseline packages, forward, backward, and predict.
+- `tests/unit/application/experiments/test_discovery.py`: package discovery under `experiments/<name>`.
+- `tests/unit/experiments/test_runtime_contract_matrix.py`: schema-to-feature-spec conversion and runtime config contract.
+- `tests/unit/domain/test_model_contract.py`: batch conversion and schema protocol behavior.
+- `tests/unit/application/packaging/test_training.py`: training bundle contains the expected runtime sources and manifests.
+- `tests/unit/application/packaging/test_inference.py`: inference bundle contains the expected runtime sources and manifests.
+- `tests/unit/application/experiments/test_registry.py`: baseline package loading behavior.
+- `tests/unit/infrastructure/test_checkpoints.py`: checkpoint sidecar behavior.
 
 ## Verification Commands
 
 Run narrow checks first:
 
 ```bash
-uv run --with ruff ruff check src/taac2026/infrastructure/pcvr experiments/pcvr/<experiment> tests/unit/infrastructure/experiments/test_experiment_packages.py
-uv run pytest tests/unit/infrastructure/experiments/test_experiment_packages.py -q
-uv run pytest tests/unit/infrastructure/experiments/test_experiment_discovery.py -q
-uv run pytest tests/unit/infrastructure/pcvr/test_runtime_contract_matrix.py -q
+uv run --with ruff ruff check src/taac2026/domain src/taac2026/application src/taac2026/infrastructure experiments/<experiment> tests/unit/experiments/test_packages.py
+uv run pytest tests/unit/experiments/test_packages.py -q
+uv run pytest tests/unit/application/experiments/test_discovery.py -q
+uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
 ```
 
 For a smoke run, prefer a tiny CPU command over a long GPU training job:
 
 ```bash
-uv run taac-train --experiment experiments/pcvr/<experiment> \
+uv run taac-train --experiment experiments/<experiment> \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/<experiment>_smoke \
@@ -225,8 +225,8 @@ uv run pytest tests/unit -q
 For bundle changes, verify the package output:
 
 ```bash
-uv run taac-package-train --experiment experiments/pcvr/<experiment> --output-dir outputs/training_bundles/<experiment>_training_bundle --json
-uv run taac-package-infer --experiment experiments/pcvr/<experiment> --output-dir outputs/inference_bundles/<experiment>_inference_bundle --json
+uv run taac-package-train --experiment experiments/<experiment> --output-dir outputs/training_bundles/<experiment>_training_bundle --json
+uv run taac-package-infer --experiment experiments/<experiment> --output-dir outputs/inference_bundles/<experiment>_inference_bundle --json
 ```
 
 ## Review Checklist
