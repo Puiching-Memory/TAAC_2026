@@ -74,15 +74,15 @@ uv sync --locked --extra dev --extra cuda126
 
 ```bash
 # 训练 baseline
-bash run.sh train --experiment experiments/pcvr/baseline \
+bash run.sh train --experiment experiments/baseline \
   --run-dir outputs/readme_baseline
 
 # 评估训练输出目录中的 checkpoint
-bash run.sh val --experiment experiments/pcvr/baseline \
+bash run.sh val --experiment experiments/baseline \
   --run-dir outputs/readme_baseline
 
 # 生成 predictions.json
-bash run.sh infer --experiment experiments/pcvr/baseline \
+bash run.sh infer --experiment experiments/baseline \
   --checkpoint outputs/readme_baseline/best_model/model.safetensors \
   --result-dir outputs/readme_infer
 ```
@@ -93,11 +93,11 @@ PCVR 本地 smoke 会通过 `datasets` 从 Hugging Face 缓存 `TAAC2026/data_sa
 
 ```bash
 # 生成线上训练上传文件
-uv run taac-package-train --experiment experiments/pcvr/baseline \
+uv run taac-package-train --experiment experiments/baseline \
   --output-dir outputs/bundles/baseline_training
 
 # 生成线上推理上传文件
-uv run taac-package-infer --experiment experiments/pcvr/baseline \
+uv run taac-package-infer --experiment experiments/baseline \
   --output-dir outputs/bundles/baseline_inference
 
 # 训练 Bundle 顶层输出: run.sh + code_package.zip
@@ -133,10 +133,10 @@ uv run zensical serve
 
 | 实验包         | 目录                                                               | 公开来源                                                                                                                                      |
 | -------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline       | [experiments/pcvr/baseline](experiments/pcvr/baseline)             | 官方 DHyFormer baseline                                                                                                                       |
-| Symbiosis      | [experiments/pcvr/symbiosis](experiments/pcvr/symbiosis)           | 本仓库维护的比赛用融合实验模型                                                                                                                |
-| InterFormer    | [experiments/pcvr/interformer](experiments/pcvr/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
-| OneTrans       | [experiments/pcvr/onetrans](experiments/pcvr/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
+| Baseline       | [experiments/baseline](experiments/baseline)                       | 官方 DHyFormer baseline                                                                                                                       |
+| Symbiosis      | [experiments/symbiosis](experiments/symbiosis)                     | 本仓库维护的比赛用融合实验模型                                                                                                                |
+| InterFormer    | [experiments/interformer](experiments/interformer)                 | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
+| OneTrans       | [experiments/onetrans](experiments/onetrans)                       | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
 
 更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/testing.md](docs/guide/testing.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。官方平台规则和赛题说明可再参考 [docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)。
 
