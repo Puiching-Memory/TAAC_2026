@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -27,9 +28,9 @@ def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:
     cache = PCVRDataCacheConfig()
     if args.pipeline_preset in {"cache", "augment"}:
         cache = PCVRDataCacheConfig(mode="memory", max_batches=args.cache_batches)
-    elif args.pipeline_preset == "opt":
+    elif args.pipeline_preset in {"opt", "opt-augment"}:
         cache = PCVRDataCacheConfig(mode="opt", max_batches=args.cache_batches)
-    if args.pipeline_preset == "augment":
+    if args.pipeline_preset in {"augment", "opt-augment"}:
         transforms.extend(
             [
                 PCVRSequenceCropConfig(
@@ -57,6 +58,19 @@ def _consume_batches(iterator: Any, batch_count: int) -> int:
     return rows
 
 
+def _estimated_batches_per_pass(
+    *,
+    train_rows: int,
+    batch_size: int,
+    pipeline_config: PCVRDataPipelineConfig,
+) -> int:
+    row_multiplier = 1
+    for transform in pipeline_config.transforms:
+        if isinstance(transform, PCVRSequenceCropConfig) and transform.enabled:
+            row_multiplier *= max(1, int(transform.views_per_row))
+    return max(1, math.ceil((train_rows * row_multiplier) / max(1, batch_size)))
+
+
 def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
     if args.torch_threads > 0:
         torch.set_num_threads(args.torch_threads)
@@ -76,10 +90,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         data_pipeline_config=pipeline_config,
     )
 
-    iterator = iter(train_loader)
     warmup_rows = 0
     try:
-        warmup_rows = _consume_batches(iterator, args.warmup_batches)
+        warmup_rows = _consume_batches(iter(train_loader), args.warmup_batches)
     except StopIteration:
         return {
             "dataset_path": str(args.dataset_path),
@@ -89,6 +102,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
             "measured_rows": 0,
             "measured_batches": 0,
             "warmup_rows": warmup_rows,
+            "passes": args.passes,
+            "measured_passes": 0,
             "elapsed_sec": 0.0,
             "rows_per_sec": 0.0,
             "batches_per_sec": 0.0,
@@ -96,14 +111,31 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
 
     measured_rows = 0
     measured_batches = 0
+    measured_passes = 0
+    batches_per_pass = _estimated_batches_per_pass(
+        train_rows=train_dataset.num_rows,
+        batch_size=args.batch_size,
+        pipeline_config=pipeline_config,
+    )
     started = time.perf_counter()
-    while args.max_batches <= 0 or measured_batches < args.max_batches:
-        try:
-            batch = next(iterator)
-        except StopIteration:
+    for _ in range(max(1, args.passes)):
+        iterator = iter(train_loader)
+        pass_batches = 0
+        while pass_batches < batches_per_pass and (
+            args.max_batches <= 0 or measured_batches < args.max_batches
+        ):
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            measured_rows += int(batch["label"].shape[0])
+            measured_batches += 1
+            pass_batches += 1
+        if pass_batches == 0:
             break
-        measured_rows += int(batch["label"].shape[0])
-        measured_batches += 1
+        measured_passes += 1
+        if args.max_batches > 0 and measured_batches >= args.max_batches:
+            break
     elapsed = time.perf_counter() - started
 
     return {
@@ -121,6 +153,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "shuffle": not args.no_shuffle,
         "warmup_batches": args.warmup_batches,
         "warmup_rows": warmup_rows,
+        "passes": args.passes,
+        "batches_per_pass": batches_per_pass,
+        "measured_passes": measured_passes,
         "measured_rows": measured_rows,
         "measured_batches": measured_batches,
         "elapsed_sec": elapsed,
@@ -144,18 +179,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--max-batches", type=int, default=0)
     parser.add_argument("--warmup-batches", type=int, default=5)
+    parser.add_argument("--passes", type=int, default=1)
     parser.add_argument("--torch-threads", type=int, default=0)
     parser.add_argument("--no-shuffle", action="store_true")
     parser.add_argument(
         "--preset",
         dest="pipeline_preset",
-        choices=("none", "cache", "opt", "augment"),
+        choices=("none", "cache", "opt", "augment", "opt-augment"),
         default="none",
         help="alias of --pipeline-preset",
     )
     parser.add_argument(
         "--pipeline-preset",
-        choices=("none", "cache", "opt", "augment"),
+        choices=("none", "cache", "opt", "augment", "opt-augment"),
         default=None,
     )
     parser.add_argument("--cache-batches", type=int, default=512)

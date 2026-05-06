@@ -74,7 +74,13 @@ def _resolve_rms_norm_backend(x: torch.Tensor, backend: RMSNormBackend) -> Liter
         raise RuntimeError("tilelang backend requested but tilelang is not installed")
     if x.device.type != "cuda":
         raise RuntimeError("tilelang rms_norm currently requires CUDA tensors")
+    if not _is_power_of_two(int(x.shape[-1])):
+        raise RuntimeError("tilelang rms_norm currently requires the last dimension to be a power of two")
     return "tilelang"
+
+
+def _is_power_of_two(value: int) -> bool:
+    return value > 0 and (value & (value - 1)) == 0
 
 
 def _rms_norm_registered_kernel(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:

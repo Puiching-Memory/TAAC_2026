@@ -18,7 +18,7 @@ icon: lucide/folder-open
 | 实验包         | 路径                              | 说明                                 |
 | -------------- | --------------------------------- | ------------------------------------ |
 | Baseline       | `experiments/baseline`       | 共享 PCVR 运行时上的基准 HyFormer 包 |
-| HyFormer+      | `experiments/hyformer_plus`  | 带 OPT cache、数据增强和可选 TileLang RMSNorm 的 baseline 改进包 |
+| Baseline+      | `experiments/baseline_plus`  | 带 OPT cache、数据增强和默认 TileLang RMSNorm 的 baseline 改进包 |
 | InterFormer    | `experiments/interformer`    | InterFormer 结构实验                 |
 | OneTrans       | `experiments/onetrans`       | OneTrans 结构实验                    |
 | Symbiosis      | `experiments/symbiosis`      | 带包内辅助层和额外训练参数的融合实验 |

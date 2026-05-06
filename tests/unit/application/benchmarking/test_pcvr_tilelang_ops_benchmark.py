@@ -36,7 +36,7 @@ def test_parse_pcvr_tilelang_ops_benchmark_args_accepts_backend_subset() -> None
     assert args.backends == ("torch", "tilelang")
 
 
-def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_fallback_statuses() -> None:
+def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -> None:
     args = parse_args(
         [
             "--device",

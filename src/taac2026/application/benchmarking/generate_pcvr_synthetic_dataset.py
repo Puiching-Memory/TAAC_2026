@@ -13,7 +13,6 @@ import pyarrow.parquet as pq
 
 from taac2026.infrastructure.io.json import dumps
 
-
 def _replace_column(table: pa.Table, name: str, values: pa.ChunkedArray) -> pa.Table:
     index = table.schema.get_field_index(name)
     if index < 0:
@@ -110,10 +109,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("outputs/perf/pcvr_synthetic_100x"),
+        default=Path("outputs/perf/pcvr_synthetic_300x"),
         help="Directory to create for the amplified dataset.",
     )
-    parser.add_argument("--multiplier", type=int, default=100)
+    parser.add_argument("--multiplier", type=int, default=300)
     parser.add_argument("--row-group-size", type=int, default=0)
     parser.add_argument("--compression", default="snappy")
     parser.add_argument("--no-jitter-ids", action="store_true")

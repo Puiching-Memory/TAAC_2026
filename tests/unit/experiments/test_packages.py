@@ -127,6 +127,36 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
     assert experiment.metadata["runtime_write_observed_schema_report"] == "default_write_observed_schema_report"
     assert experiment.metadata["runtime_write_train_split_observed_schema_reports"] == "default_write_train_split_observed_schema_reports"
     assert train_defaults["ns_grouping_strategy"] == "explicit"
+    if experiment_case.path == "experiments/baseline_plus":
+        assert train_defaults["data_pipeline"]["cache"] == {"mode": "opt", "max_batches": 512}
+        assert train_defaults["data_pipeline"]["seed"] == 42
+        assert train_defaults["data_pipeline"]["strict_time_filter"] is True
+        transform_names = [transform["name"] for transform in train_defaults["data_pipeline"]["transforms"]]
+        assert transform_names == ["sequence_crop", "feature_mask", "domain_dropout"]
+        assert train_defaults["data_pipeline"]["transforms"][0] == {
+            "name": "sequence_crop",
+            "enabled": True,
+            "views_per_row": 2,
+            "seq_window_mode": "random_tail",
+            "seq_window_min_len": 8,
+        }
+        assert train_defaults["data_pipeline"]["transforms"][1] == {
+            "name": "feature_mask",
+            "enabled": True,
+            "probability": 0.03,
+        }
+        assert train_defaults["data_pipeline"]["transforms"][2] == {
+            "name": "domain_dropout",
+            "enabled": True,
+            "probability": 0.03,
+        }
+        assert train_defaults["rms_norm_backend"] == "tilelang"
+        assert train_defaults["rms_norm_block_rows"] == 8
+    elif experiment_case.path == "experiments/symbiosis":
+        assert train_defaults["data_pipeline"]["cache"] == {"mode": "none", "max_batches": 0}
+        assert train_defaults["data_pipeline"]["seed"] is None
+        assert train_defaults["data_pipeline"]["strict_time_filter"] is True
+        assert train_defaults["data_pipeline"]["transforms"] == []
     assert isinstance(train_defaults["user_ns_groups"], dict)
     assert isinstance(train_defaults["item_ns_groups"], dict)
     assert train_defaults["user_ns_groups"]
@@ -144,6 +174,8 @@ def test_discovered_experiment_models_forward_and_predict(experiment_case) -> No
     if experiment_case.path != "experiments/baseline":
         assert not hasattr(model_module, "PCVRHyFormer")
     assert hasattr(model_module, experiment_case.model_class)
+    if experiment_case.path in {"experiments/baseline_plus", "experiments/symbiosis"}:
+        assert callable(getattr(model_module, "configure_rms_norm_runtime", None))
     model = _make_model(experiment_case, model_module)
     model_input = _sample_model_input(model_module)
 
