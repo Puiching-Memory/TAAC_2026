@@ -50,6 +50,20 @@ def tilelang_available() -> bool:
     return tl is not None and T is not None
 
 
+def cuda_multiprocessor_count(device: torch.device | None = None) -> int | None:
+    if not torch.cuda.is_available():
+        return None
+    resolved_device = device
+    if resolved_device is None:
+        resolved_device = torch.device("cuda", torch.cuda.current_device())
+    if resolved_device.type != "cuda":
+        return None
+    try:
+        return int(torch.cuda.get_device_properties(resolved_device).multi_processor_count)
+    except Exception:
+        return None
+
+
 def _tilelang_e8m0_guard_bounds(content: str) -> tuple[int, int] | None:
     start = content.find(_TILELANG_E8M0_GUARD_START)
     if start < 0:
@@ -145,6 +159,7 @@ def tilelang_dtype(dtype: torch.dtype):
 
 __all__ = [
     "T",
+    "cuda_multiprocessor_count",
     "tilelang_available",
     "tilelang_dtype",
     "tl",

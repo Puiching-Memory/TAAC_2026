@@ -6,6 +6,7 @@ import torch
 
 from taac2026.application.benchmarking.pcvr_tilelang_ops_benchmark import (
     OperatorBenchmarkResult,
+    _benchmark_embedding_bag_mean_backend,
     _benchmark_flash_attention_backend,
     _benchmark_rms_norm_backend,
     _summarize_runs,
@@ -73,6 +74,39 @@ def test_parse_pcvr_tilelang_ops_benchmark_accepts_flash_attention_operator() ->
     assert args.query_len == 32
     assert args.kv_len == 64
     assert args.head_dim == 16
+    assert args.atol == 1e-2
+    assert args.rtol == 1e-2
+
+
+def test_parse_pcvr_tilelang_ops_benchmark_accepts_embedding_bag_mean_operator() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "embedding_bag_mean",
+            "--batch",
+            "16",
+            "--embedding-vocab-size",
+            "1024",
+            "--embedding-dim",
+            "32",
+            "--embedding-bag-size",
+            "3",
+            "--embedding-padding-prob",
+            "0.5",
+            "--block-cols",
+            "32",
+            "--dtype",
+            "float16",
+        ]
+    )
+
+    assert args.operator == "embedding_bag_mean"
+    assert args.batch == 16
+    assert args.embedding_vocab_size == 1024
+    assert args.embedding_dim == 32
+    assert args.embedding_bag_size == 3
+    assert args.embedding_padding_prob == 0.5
+    assert args.block_cols == 32
     assert args.atol == 1e-2
     assert args.rtol == 1e-2
 
@@ -154,6 +188,52 @@ def test_run_flash_attention_benchmark_reports_cpu_tilelang_as_unsupported() -> 
     assert summary["operator"] == "flash_attention"
     assert summary["device"] == "cpu"
     assert summary["backends"] == ["torch", "tilelang"]
+    rows = {row["backend"]: row for row in summary["results"]}
+    assert rows["torch"]["status"] == "ok"
+    assert rows["torch"]["resolved_backend"] == "torch"
+    assert rows["torch"]["max_abs_error"] == 0.0
+    assert rows["torch"]["max_rel_error"] == 0.0
+    assert rows["tilelang"]["status"] == "unsupported"
+    assert rows["tilelang"]["successful_repeats"] == 0
+    assert rows["tilelang"]["error"]
+
+
+def test_run_embedding_bag_mean_benchmark_reports_cpu_tilelang_as_unsupported() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "embedding_bag_mean",
+            "--device",
+            "cpu",
+            "--batch",
+            "4",
+            "--embedding-vocab-size",
+            "32",
+            "--embedding-dim",
+            "8",
+            "--embedding-bag-size",
+            "3",
+            "--steps",
+            "2",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "2",
+            "--backends",
+            "torch,tilelang",
+            "--dtype",
+            "float32",
+        ]
+    )
+
+    summary = run_benchmark(args)
+
+    assert summary["operator"] == "embedding_bag_mean"
+    assert summary["device"] == "cpu"
+    assert summary["backends"] == ["torch", "tilelang"]
+    assert summary["embedding_vocab_size"] == 32
+    assert summary["embedding_dim"] == 8
+    assert summary["embedding_bag_size"] == 3
     rows = {row["backend"]: row for row in summary["results"]}
     assert rows["torch"]["status"] == "ok"
     assert rows["torch"]["resolved_backend"] == "torch"
@@ -265,6 +345,62 @@ def test_flash_attention_benchmark_marks_tilelang_accuracy_failure_as_error(monk
         q=q,
         k=k,
         v=v,
+    )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert "close" in result.error.lower()
+    assert result.max_abs_error is None
+    assert result.max_rel_error is None
+
+
+def test_embedding_bag_mean_benchmark_marks_tilelang_accuracy_failure_as_error(monkeypatch) -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "embedding_bag_mean",
+            "--device",
+            "cpu",
+            "--batch",
+            "2",
+            "--embedding-vocab-size",
+            "8",
+            "--embedding-dim",
+            "4",
+            "--embedding-bag-size",
+            "3",
+            "--steps",
+            "1",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "1",
+            "--backends",
+            "tilelang",
+            "--dtype",
+            "float32",
+            "--atol",
+            "1e-6",
+            "--rtol",
+            "1e-6",
+        ]
+    )
+    embedding_weight = torch.ones((args.embedding_vocab_size + 1, args.embedding_dim), dtype=args.dtype)
+    values = torch.ones((args.batch, args.embedding_bag_size), dtype=torch.long)
+
+    monkeypatch.setattr(tilelang_benchmark, "_benchmark_callable", lambda *args, **kwargs: (0.1, 100.0))
+    monkeypatch.setattr(
+        tilelang_benchmark,
+        "_prepare_embedding_bag_mean_callable",
+        lambda **kwargs: (lambda: torch.full((args.batch, args.embedding_dim), 2.0), "tilelang", 0.25),
+    )
+
+    result = _benchmark_embedding_bag_mean_backend(
+        backend="tilelang",
+        args=args,
+        device=torch.device("cpu"),
+        embedding_weight=embedding_weight,
+        values=values,
     )
 
     assert result.status == "error"

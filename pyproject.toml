@@ -15,6 +15,7 @@ dependencies = [
 	"datasets==2.14.7",
 	"loguru==0.7.3",
 	"matplotlib==3.10.8",
+	"ninja==1.13.0",
 	"numpy==2.2.5",
 	"orjson==3.11.8",
 	"pyarrow==23.0.1",
@@ -84,6 +85,9 @@ version = {attr = "taac2026.__version__"}
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.package-data]
+"taac2026.infrastructure.data.native" = ["*.cpp"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

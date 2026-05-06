@@ -2,11 +2,11 @@ import torch
 import tilelang
 import tilelang.language as T
 
-from .....utils import prepare_chunk_offsets
+from taac2026.infrastructure.accelerators.chunking import prepare_chunk_offsets
+from taac2026.infrastructure.accelerators.tilelang_runtime import cuda_multiprocessor_count
 
 
-MULTI_PROCESSOR_COUNT = torch.cuda.get_device_properties().multi_processor_count
-TARGET_NUM_CTAS = int(MULTI_PROCESSOR_COUNT * 0.7)
+DEFAULT_MULTIPROCESSOR_COUNT = 132
 
 
 @tilelang.jit(
@@ -598,9 +598,10 @@ def fused_gdr_fwd(
     o = torch.empty_like(v)
 
     grid_size = real_batch_size * H
-    if grid_size >= TARGET_NUM_CTAS:
+    target_num_ctas = int((cuda_multiprocessor_count(k.device) or DEFAULT_MULTIPROCESSOR_COUNT) * 0.7)
+    if grid_size >= target_num_ctas:
         block_DV = 128
-    elif grid_size * 2 >= TARGET_NUM_CTAS:
+    elif grid_size * 2 >= target_num_ctas:
         block_DV = 64
     else:
         block_DV = 32

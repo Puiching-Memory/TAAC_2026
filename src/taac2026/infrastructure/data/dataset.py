@@ -329,6 +329,36 @@ class PCVRParquetDataset(IterableDataset):
         self._scheduled_num_workers = max(1, int(num_workers))
         self._scheduled_cyclic = bool(cyclic)
 
+    def _scheduled_worker_batch_range(
+        self,
+        *,
+        worker_id: int,
+        num_workers: int,
+    ) -> tuple[int, int]:
+        batch_count = len(self._resolved_global_batch_keys())
+        worker_count = max(1, int(num_workers))
+        chunk_size = (batch_count + worker_count - 1) // worker_count
+        start = min(batch_count, int(worker_id) * chunk_size)
+        end = min(batch_count, start + chunk_size)
+        return start, end
+
+    def _iter_scheduled_global_access_trace(
+        self,
+        *,
+        num_workers: int,
+    ) -> Iterator[tuple[str, int, int]]:
+        global_batch_keys = self._resolved_global_batch_keys()
+        ranges = [
+            self._scheduled_worker_batch_range(worker_id=worker_id, num_workers=num_workers)
+            for worker_id in range(max(1, int(num_workers)))
+        ]
+        max_chunk = max((end - start for start, end in ranges), default=0)
+        for offset in range(max_chunk):
+            for start, end in ranges:
+                batch_position = start + offset
+                if batch_position < end:
+                    yield global_batch_keys[batch_position]
+
     def _iter_worker_scheduled_batch_keys(
         self,
         *,
@@ -337,10 +367,13 @@ class PCVRParquetDataset(IterableDataset):
         cyclic: bool,
     ) -> Iterator[tuple[int, tuple[str, int, int]]]:
         global_batch_keys = self._resolved_global_batch_keys()
+        start, end = self._scheduled_worker_batch_range(
+            worker_id=worker_id,
+            num_workers=num_workers,
+        )
         worker_keys = [
-            (batch_position, batch_key)
-            for batch_position, batch_key in enumerate(global_batch_keys)
-            if batch_position % num_workers == worker_id
+            (batch_position, global_batch_keys[batch_position])
+            for batch_position in range(start, end)
         ]
         if not worker_keys:
             return
@@ -445,7 +478,7 @@ class PCVRParquetDataset(IterableDataset):
             static_values={"_seq_domains": list(self.seq_domains)},
         )
         cache.configure_access_trace(
-            self._resolved_global_batch_keys(),
+            self._iter_scheduled_global_access_trace(num_workers=num_workers),
             cyclic=True,
         )
         return cache

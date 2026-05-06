@@ -59,6 +59,8 @@ def test_build_training_bundle_contains_runtime_sources(tmp_path: Path) -> None:
     assert "project/src/taac2026/application/training/cli.py" in names
     assert "project/src/taac2026/application/training/args.py" in names
     assert "project/src/taac2026/application/training/workflow.py" in names
+    assert "project/src/taac2026/infrastructure/data/native/opt_cache.cpp" in names
+    assert "project/src/taac2026/infrastructure/data/native/opt_cache.py" in names
     assert "project/src/taac2026/infrastructure/runtime/trainer.py" in names
     assert "project/experiments/baseline/__init__.py" in names
     assert "project/experiments/baseline/model.py" in names

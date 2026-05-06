@@ -35,6 +35,12 @@ nav = [
         { "官方训练 Baseline 快照" = "archive/official-train-baseline.md" },
         { "官方推理 Baseline 快照" = "archive/official-infer-baseline.md" },
     ] },
+    { "Benchmark" = [
+        { "总览" = "benchmark/index.md" },
+        { "RMSNorm" = "benchmark/rms-norm.md" },
+        { "Flash Attention" = "benchmark/flash-attention.md" },
+        { "Embedding Bag Mean" = "benchmark/embedding-bag-mean.md" },
+    ] },
     { "指南" = [
         { "总览" = "guide/index.md" },
         { "官方平台用户指南" = "guide/official-competition-docs.md" },

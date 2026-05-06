@@ -81,10 +81,17 @@ src/taac2026/
 │       └── workflow.py
 └── infrastructure/
     ├── accelerators/
+    │   ├── chunking.py
+    │   ├── group_reduce.py
+    │   ├── prefix_scan.py
+    │   ├── tensor_validation.py
+    │   ├── tensor_ops.py
     │   ├── attention/
     │   │   ├── flash_attention.py
+    │   │   ├── gated_delta_rule_capabilities.py
+    │   │   ├── gated_delta_rule.py
     │   │   ├── kernels/
-    │   │   │   ├── flash_qla/
+    │   │   │   ├── gated_delta_rule/
     │   │   │   └── tilelang.py
     │   │   └── mla.py
     │   ├── embedding/

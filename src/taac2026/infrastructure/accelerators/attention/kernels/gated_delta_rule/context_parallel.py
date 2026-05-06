@@ -3,15 +3,14 @@ import math
 import torch
 import tilelang
 
-from ....utils import tensor_cache
+from taac2026.infrastructure.accelerators.chunking import tensor_cache
+from taac2026.infrastructure.accelerators.tilelang_runtime import cuda_multiprocessor_count
 
-if tilelang.contrib.nvcc.get_target_compute_version() == "9.0":
-    from .hopper import get_warmup_chunks, fused_gdr_h, correct_initial_states
-else:
-    raise ValueError("FlashQLA now support sm90 only.")
+from .cp_fwd import correct_initial_states, get_warmup_chunks
+from .prepare_h import fused_gdr_h
 
 
-MULTI_PROCESSOR_COUNT = torch.cuda.get_device_properties().multi_processor_count
+DEFAULT_MULTIPROCESSOR_COUNT = 132
 
 
 @tensor_cache
@@ -42,12 +41,13 @@ def _calc_cp_seqs(
 
     # autocp
     H = num_v_heads
-    # Latency model: T = a·L_cp + b·(B·H·Lc/P) / L_cp + c
-    # Minimizing T yields the theoretical optimum: L_cp* ∝ √(B·H·Lc / P), where P = MULTI_PROCESSOR_COUNT, L_cp = max_local_chunks
-    # Scaled by empirical factor (3) and aligned to the nearest power of 2 for optimal SM scheduling & memory alignment.
+    # Latency model: T = a*L_cp + b*(B*H*Lc/P) / L_cp + c.
+    # The optimum scales with sqrt(B*H*Lc/P), using SM count as P.
 
     max_local_chunks = 2 ** round(
-        math.log2(math.sqrt(H * sum(num_chunks) / MULTI_PROCESSOR_COUNT) * 3)
+        math.log2(
+            math.sqrt(H * sum(num_chunks) / (cuda_multiprocessor_count(device) or DEFAULT_MULTIPROCESSOR_COUNT)) * 3
+        )
     )
 
     # Set min to 4 to ensure multi-stage pipelining in fused_gdr;

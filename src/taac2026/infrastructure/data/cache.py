@@ -16,6 +16,7 @@ from taac2026.infrastructure.data.batches import (
     clone_pcvr_batch,
     pcvr_batch_row_count,
 )
+from taac2026.infrastructure.data.native.opt_cache import load_native_opt_cache
 
 
 class PCVRMemoryBatchCache:
@@ -151,6 +152,7 @@ class PCVRSharedBatchCache:
     """Shared-memory CPU batch cache for multi-worker single-card training."""
 
     uses_global_access_trace = True
+    uses_native_opt_index = True
 
     def __init__(
         self,
@@ -166,16 +168,17 @@ class PCVRSharedBatchCache:
         self.policy = policy if policy == "opt" else "lru"
         self.static_values = dict(static_values or {})
         self.tensor_specs = dict(tensor_specs or {})
-        self._manager = mp.Manager()
         self._lock = mp.RLock()
-        self._key_to_slot = self._manager.dict()
-        self._slot_to_key = self._manager.list([None] * self.max_batches)
+        self._manager = mp.Manager() if self.policy != "opt" else None
+        self._lru_key_to_slot = self._manager.dict() if self._manager is not None else None
+        self._lru_slot_to_key = self._manager.list([None] * self.max_batches) if self._manager is not None else None
+        self._key_ids: dict[Hashable, int] = {}
+        self._key_to_slot = torch.empty(0, dtype=torch.int64).share_memory_()
+        self._slot_to_key = torch.full((self.max_batches,), -1, dtype=torch.int64).share_memory_()
         self._row_counts = torch.zeros(self.max_batches, dtype=torch.int64).share_memory_()
         self._last_access = torch.zeros(self.max_batches, dtype=torch.int64).share_memory_()
-        self._touch_counter = mp.Value("q", 0)
-        self._access_count = mp.Value("q", 0)
-        self._opt_fallback = mp.Value("b", False)
-        self._trace_positions: dict[Hashable, int] = {}
+        self._touch_counter = torch.zeros(1, dtype=torch.int64).share_memory_()
+        self._access_count = torch.zeros(1, dtype=torch.int64).share_memory_()
         self._trace_length = 0
         self._trace_cyclic = True
         self._storage = {
@@ -184,7 +187,12 @@ class PCVRSharedBatchCache:
         }
 
     def __len__(self) -> int:
-        return len(self._key_to_slot)
+        if self._opt_active:
+            with self._lock:
+                return int(load_native_opt_cache().size(self._slot_to_key))
+        if self._lru_key_to_slot is not None:
+            return len(self._lru_key_to_slot)
+        return int((self._slot_to_key >= 0).sum().item())
 
     @property
     def _opt_enabled(self) -> bool:
@@ -192,51 +200,53 @@ class PCVRSharedBatchCache:
 
     @property
     def _opt_active(self) -> bool:
-        return self._opt_enabled and self._trace_length > 0 and not bool(self._opt_fallback.value)
+        return self._opt_enabled and self._trace_length > 0
 
     def configure_access_trace(self, trace: Iterable[Hashable], *, cyclic: bool = True) -> None:
         if not self._opt_enabled or self.max_batches <= 0:
             return
-        trace_positions: dict[Hashable, int] = {}
+        key_ids: dict[Hashable, int] = {}
         trace_length = 0
         for key in trace:
-            if key in trace_positions:
-                with self._opt_fallback.get_lock():
-                    self._opt_fallback.value = True
-                return
-            trace_positions[key] = trace_length
+            if key in key_ids:
+                raise ValueError(f"OPT cache access trace contains duplicate key: {key!r}")
+            key_ids[key] = trace_length
             trace_length += 1
 
-        if not trace_positions:
-            self._trace_positions = {}
-            self._trace_length = 0
-            with self._access_count.get_lock():
-                self._access_count.value = 0
-            with self._opt_fallback.get_lock():
-                self._opt_fallback.value = False
-            return
+        with self._lock:
+            if not key_ids:
+                self._key_ids = {}
+                self._key_to_slot = torch.empty(0, dtype=torch.int64).share_memory_()
+                self._slot_to_key.fill_(-1)
+                self._row_counts.zero_()
+                self._last_access.zero_()
+                self._touch_counter.zero_()
+                self._access_count.zero_()
+                self._trace_length = 0
+                self._trace_cyclic = bool(cyclic)
+                return
 
-        if trace_length == self._trace_length and cyclic == self._trace_cyclic and trace_positions == self._trace_positions:
-            return
+            if trace_length == self._trace_length and cyclic == self._trace_cyclic and key_ids == self._key_ids:
+                return
 
-        self._trace_positions = trace_positions
-        self._trace_length = trace_length
-        self._trace_cyclic = cyclic
-        with self._access_count.get_lock():
-            self._access_count.value = 0
-        with self._opt_fallback.get_lock():
-            self._opt_fallback.value = False
+            load_native_opt_cache()
+            self._key_ids = key_ids
+            self._key_to_slot = torch.full((trace_length,), -1, dtype=torch.int64).share_memory_()
+            self._slot_to_key.fill_(-1)
+            self._row_counts.zero_()
+            self._last_access.zero_()
+            self._touch_counter.zero_()
+            self._access_count.zero_()
+            self._trace_length = trace_length
+            self._trace_cyclic = bool(cyclic)
 
     def get(self, key: Hashable) -> PCVRBatch | None:
         if not self.enabled or self.max_batches <= 0:
             return None
         with self._lock:
-            self._record_access(key)
-            slot = self._key_to_slot.get(key)
-            if slot is None:
+            slot_index = self._get_slot_index(key)
+            if slot_index < 0:
                 return None
-            slot_index = int(slot)
-            self._touch_slot(slot_index)
             row_count = int(self._row_counts[slot_index].item())
             return self._materialize_slot(slot_index, row_count)
 
@@ -244,34 +254,41 @@ class PCVRSharedBatchCache:
         if not self.enabled or self.max_batches <= 0:
             return
         with self._lock:
-            slot = self._key_to_slot.get(key)
-            if slot is None:
-                slot_index = self._allocate_slot_for_key(key)
-                if slot_index is None:
-                    return
-            else:
-                slot_index = int(slot)
+            slot_index = self._allocate_slot_for_key(key)
+            if slot_index is None:
+                return
             self._write_slot(slot_index, key, batch)
 
     def _allocate_slot_for_key(self, key: Hashable) -> int | None:
-        for index, slot_key in enumerate(list(self._slot_to_key)):
-            if slot_key is None:
-                return index
-
         if self._opt_active:
-            victim_key = self._select_opt_victim()
-            victim_next_use = self._next_use(victim_key)
-            candidate_next_use = self._next_use(key)
-            if candidate_next_use >= victim_next_use:
+            key_id = self._key_id_for(key)
+            slot_index = int(
+                load_native_opt_cache().allocate_slot(
+                    key_id,
+                    self._trace_length,
+                    self._trace_cyclic,
+                    self._key_to_slot,
+                    self._slot_to_key,
+                    self._last_access,
+                    self._touch_counter,
+                    self._access_count,
+                )
+            )
+            if slot_index < 0:
                 return None
-            victim_slot = int(self._key_to_slot[victim_key])
-        else:
-            victim_slot = self._select_lru_victim_slot()
-            victim_key = self._slot_to_key[victim_slot]
+            return slot_index
 
-        if victim_key is not None:
-            self._key_to_slot.pop(victim_key, None)
-            self._slot_to_key[victim_slot] = None
+        if self._lru_key_to_slot is not None:
+            slot = self._lru_key_to_slot.get(key)
+            if slot is not None:
+                return int(slot)
+
+        victim_slot = self._select_lru_victim_slot()
+        if self._lru_key_to_slot is not None and self._lru_slot_to_key is not None:
+            victim_key = self._lru_slot_to_key[victim_slot]
+            if victim_key is not None:
+                self._lru_key_to_slot.pop(victim_key, None)
+            self._lru_slot_to_key[victim_slot] = None
         return victim_slot
 
     def _write_slot(self, slot_index: int, key: Hashable, batch: PCVRBatch) -> None:
@@ -285,9 +302,11 @@ class PCVRSharedBatchCache:
             if row_count > 0:
                 target[:row_count].copy_(value)
         self._row_counts[slot_index] = row_count
-        self._slot_to_key[slot_index] = key
-        self._key_to_slot[key] = slot_index
-        self._touch_slot(slot_index)
+        if not self._opt_active:
+            if self._lru_key_to_slot is not None and self._lru_slot_to_key is not None:
+                self._lru_slot_to_key[slot_index] = key
+                self._lru_key_to_slot[key] = slot_index
+            self._touch_slot(slot_index)
 
     def _materialize_slot(self, slot_index: int, row_count: int) -> PCVRBatch:
         batch: PCVRBatch = dict(self.static_values)
@@ -296,49 +315,44 @@ class PCVRSharedBatchCache:
         return batch
 
     def _touch_slot(self, slot_index: int) -> None:
-        with self._touch_counter.get_lock():
-            self._touch_counter.value += 1
-            self._last_access[slot_index] = self._touch_counter.value
+        self._touch_counter[0] += 1
+        self._last_access[slot_index] = self._touch_counter[0]
 
-    def _record_access(self, key: Hashable) -> None:
-        if not self._opt_active:
-            return
-        expected_position = self._access_count.value % self._trace_length
-        if self._trace_positions.get(key) != expected_position:
-            with self._opt_fallback.get_lock():
-                self._opt_fallback.value = True
-            return
-        with self._access_count.get_lock():
-            self._access_count.value += 1
+    def _key_id_for(self, key: Hashable) -> int:
+        try:
+            return self._key_ids[key]
+        except KeyError as exc:
+            raise KeyError(f"OPT cache key missing from configured access trace: {key!r}") from exc
 
-    def _next_use(self, key: Hashable) -> float:
-        position = self._trace_positions.get(key)
-        if position is None or self._trace_length <= 0:
-            return float("inf")
-        access_count = self._access_count.value
-        cycle_index, cycle_position = divmod(access_count, self._trace_length)
-        if position >= cycle_position:
-            return float(cycle_index * self._trace_length + position)
-        if self._trace_cyclic:
-            return float((cycle_index + 1) * self._trace_length + position)
-        return float("inf")
+    def _get_slot_index(self, key: Hashable) -> int:
+        if self._opt_active:
+            key_id = self._key_id_for(key)
+            return int(
+                load_native_opt_cache().get_slot(
+                    key_id,
+                    self._trace_length,
+                    self._trace_cyclic,
+                    self._key_to_slot,
+                    self._last_access,
+                    self._touch_counter,
+                    self._access_count,
+                )
+            )
 
-    def _select_opt_victim(self) -> Hashable:
-        victim: Hashable | None = None
-        farthest = float("-inf")
-        for key in list(self._key_to_slot.keys()):
-            next_use = self._next_use(key)
-            if next_use > farthest:
-                farthest = next_use
-                victim = key
-        if victim is None:
-            raise RuntimeError("shared OPT cache eviction requested for empty cache")
-        return victim
+        if self._lru_key_to_slot is not None:
+            slot = self._lru_key_to_slot.get(key)
+            if slot is not None:
+                slot_index = int(slot)
+                self._touch_slot(slot_index)
+                return slot_index
+        return -1
 
     def _select_lru_victim_slot(self) -> int:
         victim_slot = -1
         oldest = None
-        for slot_index, key in enumerate(list(self._slot_to_key)):
+        if self._lru_slot_to_key is None:
+            raise RuntimeError("shared cache LRU eviction requested without LRU slot state")
+        for slot_index, key in enumerate(list(self._lru_slot_to_key)):
             if key is None:
                 return slot_index
             slot_access = int(self._last_access[slot_index].item())

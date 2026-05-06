@@ -1,63 +1,24 @@
 import torch
-import tilelang
 
-from ....utils import l2norm
-from ...utils import chunk_local_cumsum, group_reduce_vector
-
-
-def flash_qla_target_compute_version() -> str | None:
-    try:
-        return str(tilelang.contrib.nvcc.get_target_compute_version())
-    except Exception:
-        return None
+from taac2026.infrastructure.accelerators.attention.gated_delta_rule_capabilities import (
+    require_chunk_gated_delta_rule_runtime_support,
+)
+from taac2026.infrastructure.accelerators.group_reduce import group_reduce_vector
+from taac2026.infrastructure.accelerators.prefix_scan import chunk_local_cumsum
+from taac2026.infrastructure.accelerators.tensor_ops import l2norm
 
 
-def flash_qla_device_compute_version(device: torch.device | None = None) -> str | None:
-    if not torch.cuda.is_available():
-        return None
-    resolved_device = device
-    if resolved_device is None:
-        resolved_device = torch.device("cuda", torch.cuda.current_device())
-    if resolved_device.type != "cuda":
-        return None
-    try:
-        major, minor = torch.cuda.get_device_capability(resolved_device)
-    except Exception:
-        return None
-    return f"{major}.{minor}"
-
-
-def flash_qla_available(device: torch.device | None = None) -> bool:
-    return flash_qla_target_compute_version() == "9.0" and flash_qla_device_compute_version(device) == "9.0"
-
-
-def _require_runtime_support(*tensors: torch.Tensor | None) -> None:
-    concrete_tensors = tuple(tensor for tensor in tensors if tensor is not None)
-    if not concrete_tensors:
-        return
-    devices = {tensor.device for tensor in concrete_tensors}
-    if len(devices) != 1:
-        raise RuntimeError("flash_qla chunk_gated_delta_rule requires all tensors to live on the same device")
-    device = concrete_tensors[0].device
-    if device.type != "cuda":
-        raise RuntimeError("flash_qla chunk_gated_delta_rule requires CUDA tensors")
-    target_version = flash_qla_target_compute_version()
-    device_version = flash_qla_device_compute_version(device)
-    if target_version != "9.0" or device_version != "9.0":
-        raise RuntimeError(
-            "flash_qla chunk_gated_delta_rule currently requires Hopper SM90 "
-            f"(device={device_version or 'unknown'}, target={target_version or 'unknown'})"
-        )
-
-
-def _load_hopper_kernels():
-    from .hopper import fused_gdr_bwd, fused_gdr_fwd, fused_gdr_h, kkt_solve
+def _load_kernels():
+    from .fused_bwd import fused_gdr_bwd
+    from .fused_fwd import fused_gdr_fwd
+    from .kkt_solve import kkt_solve
+    from .prepare_h import fused_gdr_h
 
     return fused_gdr_bwd, fused_gdr_fwd, fused_gdr_h, kkt_solve
 
 
 def _load_cp_preprocess():
-    from .cp_context import intra_card_cp_preprocess
+    from .context_parallel import intra_card_cp_preprocess
 
     return intra_card_cp_preprocess
 
@@ -75,8 +36,8 @@ def chunk_gated_delta_rule_fwd(
     output_h: bool = False,
     auto_cp: bool = True,
 ):
-    _require_runtime_support(q, k, v, g, beta, initial_state, cu_seqlens)
-    _fused_gdr_bwd, fused_gdr_fwd, _fused_gdr_h, kkt_solve = _load_hopper_kernels()
+    require_chunk_gated_delta_rule_runtime_support(q, k, v, g, beta, initial_state, cu_seqlens)
+    _fused_gdr_bwd, fused_gdr_fwd, _fused_gdr_h, kkt_solve = _load_kernels()
     g = chunk_local_cumsum(g, chunk_size=64, cu_seqlens=cu_seqlens)
     A = kkt_solve(
         k=k,
@@ -130,8 +91,8 @@ def chunk_gated_delta_rule_bwd(
     initial_state: torch.Tensor | None = None,
     cu_seqlens: torch.LongTensor | None = None,
 ):
-    _require_runtime_support(q, k, v, g, beta, A, do, dht, initial_state, cu_seqlens)
-    fused_gdr_bwd, _fused_gdr_fwd, fused_gdr_h, _kkt_solve = _load_hopper_kernels()
+    require_chunk_gated_delta_rule_runtime_support(q, k, v, g, beta, A, do, dht, initial_state, cu_seqlens)
+    fused_gdr_bwd, _fused_gdr_fwd, fused_gdr_h, _kkt_solve = _load_kernels()
     h, _, _ = fused_gdr_h(
         k=k,
         v=v,
@@ -241,13 +202,13 @@ def chunk_gated_delta_rule(
     g: torch.Tensor,
     beta: torch.Tensor,
     scale: float | None = None,
-    initial_state: torch.Tensor = None,
+    initial_state: torch.Tensor | None = None,
     output_final_state: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
     cu_seqlens: torch.LongTensor | None = None,
     head_first: bool = False,
 ):
-    _require_runtime_support(q, k, v, g, beta, initial_state, cu_seqlens)
+    require_chunk_gated_delta_rule_runtime_support(q, k, v, g, beta, initial_state, cu_seqlens)
     assert q.dtype == k.dtype == v.dtype
     assert q.dtype != torch.float32, (
         "ChunkGatedDeltaRuleFunction does not support float32. Please use bfloat16 or float16."

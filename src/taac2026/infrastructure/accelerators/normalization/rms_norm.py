@@ -14,6 +14,7 @@ from taac2026.infrastructure.accelerators.tilelang_runtime import (
     tilelang_available,
     tilelang_dtype,
 )
+from taac2026.infrastructure.accelerators.tensor_validation import require_cuda_tensors
 from taac2026.infrastructure.accelerators.normalization.kernels.tilelang import (
     build_rms_norm_backward_kernel,
     build_rms_norm_forward_kernel,
@@ -74,8 +75,7 @@ def _resolve_rms_norm_backend(x: torch.Tensor, backend: RMSNormBackend) -> Liter
         return "torch"
     if not tilelang_available():
         raise RuntimeError("tilelang backend requested but tilelang is not installed")
-    if x.device.type != "cuda":
-        raise RuntimeError("tilelang rms_norm currently requires CUDA tensors")
+    require_cuda_tensors("tilelang rms_norm", x)
     if not _is_power_of_two(int(x.shape[-1])):
         raise RuntimeError("tilelang rms_norm currently requires the last dimension to be a power of two")
     return "tilelang"

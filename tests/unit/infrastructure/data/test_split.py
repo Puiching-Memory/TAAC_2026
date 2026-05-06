@@ -230,7 +230,7 @@ def test_get_pcvr_data_uses_shared_opt_cache_for_multi_worker_training(
     assert getattr(train_dataset.pipeline.cache, "uses_global_access_trace", False) is True
 
 
-def test_global_batch_schedule_splits_single_row_group_by_batch(tmp_path: Path) -> None:
+def test_global_batch_schedule_keeps_worker_batches_contiguous(tmp_path: Path) -> None:
     schema_path = tmp_path / "schema.json"
     parquet_path = tmp_path / "demo.parquet"
     _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
@@ -263,13 +263,20 @@ def test_global_batch_schedule_splits_single_row_group_by_batch(tmp_path: Path) 
         )
     )
 
-    assert [batch_position for batch_position, _batch_key in worker0_keys] == [0, 2]
-    assert [batch_position for batch_position, _batch_key in worker1_keys] == [1, 3]
+    assert [batch_position for batch_position, _batch_key in worker0_keys] == [0, 1]
+    assert [batch_position for batch_position, _batch_key in worker1_keys] == [2, 3]
     assert [batch_key for _batch_position, batch_key in worker0_keys] == [
         (str(parquet_path), 0, 0),
-        (str(parquet_path), 0, 2),
+        (str(parquet_path), 0, 1),
     ]
     assert [batch_key for _batch_position, batch_key in worker1_keys] == [
+        (str(parquet_path), 0, 2),
+        (str(parquet_path), 0, 3),
+    ]
+
+    assert list(dataset._iter_scheduled_global_access_trace(num_workers=2)) == [
+        (str(parquet_path), 0, 0),
+        (str(parquet_path), 0, 2),
         (str(parquet_path), 0, 1),
         (str(parquet_path), 0, 3),
     ]

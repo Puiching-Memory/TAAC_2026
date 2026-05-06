@@ -15,6 +15,7 @@ from taac2026.infrastructure.accelerators.tilelang_runtime import (
     tilelang_available,
     tilelang_dtype,
 )
+from taac2026.infrastructure.accelerators.tensor_validation import require_cuda_tensors, require_same_dtype
 from taac2026.infrastructure.accelerators.attention.kernels.tilelang import (
     build_flash_attention_backward_kernel,
     build_flash_attention_backward_preprocess_kernel,
@@ -67,7 +68,6 @@ class FlashAttentionMaskPlan:
 @dataclass(frozen=True, slots=True)
 class FlashAttentionLaunchRule:
     config: tuple[int, int, int, int]
-    requires_hopper: bool = False
     training: bool | None = None
     use_dropout: bool | None = None
     min_seq_len: int = 1
@@ -85,7 +85,6 @@ _DEFAULT_TILELANG_FLASH_ATTENTION_LAUNCH = (64, 64, 1, 128)
 _TILELANG_FLASH_ATTENTION_LAUNCH_RULES: tuple[FlashAttentionLaunchRule, ...] = (
     FlashAttentionLaunchRule(
         config=(64, 128, 2, 128),
-        requires_hopper=True,
         training=True,
         use_dropout=None,
         min_seq_len=128,
@@ -121,8 +120,7 @@ def _normalize_flash_attention_inputs(
         raise ValueError("flash_attention requires matching key and value sequence lengths")
     if q.shape[3] != k.shape[3] or q.shape[3] != v.shape[3]:
         raise ValueError("flash_attention requires matching head dimensions")
-    if q.dtype != k.dtype or q.dtype != v.dtype:
-        raise ValueError("flash_attention requires q, k, and v to share the same dtype")
+    require_same_dtype("flash_attention", q, k, v)
     return q.contiguous(), k.contiguous(), v.contiguous()
 
 
@@ -255,13 +253,6 @@ def _tilelang_flash_attention_runtime_dtype(dtype: torch.dtype) -> torch.dtype:
     return dtype
 
 
-def _is_hopper_or_newer(device: torch.device) -> bool:
-    if device.type != "cuda" or not torch.cuda.is_available():
-        return False
-    major, _minor = torch.cuda.get_device_capability(device)
-    return major >= 9
-
-
 def _tilelang_flash_attention_launch_rule_matches(
     rule: FlashAttentionLaunchRule,
     q: torch.Tensor,
@@ -270,8 +261,6 @@ def _tilelang_flash_attention_launch_rule_matches(
     training: bool,
     use_dropout: bool,
 ) -> bool:
-    if rule.requires_hopper and not _is_hopper_or_newer(q.device):
-        return False
     if rule.training is not None and rule.training != training:
         return False
     if rule.use_dropout is not None and rule.use_dropout != use_dropout:
@@ -560,8 +549,7 @@ def _resolve_flash_attention_backend(
         raise RuntimeError("tilelang flash_attention only supports dropout during training")
     if not tilelang_available():
         raise RuntimeError("tilelang backend requested but tilelang is not installed")
-    if q.device.type != "cuda":
-        raise RuntimeError("tilelang flash_attention currently requires CUDA tensors")
+    require_cuda_tensors("tilelang flash_attention", q)
     return "tilelang"
 
 

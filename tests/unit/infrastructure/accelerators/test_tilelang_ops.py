@@ -8,8 +8,10 @@ import taac2026.infrastructure.accelerators as tilelang_ops
 import torch.nn.functional as F
 
 from taac2026.infrastructure.accelerators import (
+    embedding_bag_mean,
     flash_attention,
     multi_latent_attention,
+    resolved_embedding_bag_mean_backend,
     resolved_flash_attention_backend,
     resolved_rms_norm_backend,
     rms_norm,
@@ -17,6 +19,8 @@ from taac2026.infrastructure.accelerators import (
 
 flash_attention_ops = importlib.import_module("taac2026.infrastructure.accelerators.attention.flash_attention")
 attention_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.attention.kernels.tilelang")
+embedding_bag_ops = importlib.import_module("taac2026.infrastructure.accelerators.embedding.embedding_bag")
+embedding_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.embedding.kernels.tilelang")
 rms_norm_ops = importlib.import_module("taac2026.infrastructure.accelerators.normalization.rms_norm")
 normalization_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.normalization.kernels.tilelang")
 tilelang_runtime = importlib.import_module("taac2026.infrastructure.accelerators.tilelang_runtime")
@@ -59,19 +63,84 @@ def _manual_flash_attention_reference(
 
 def test_tilelang_runtime_does_not_export_domain_kernel_builders() -> None:
     assert "build_flash_attention_forward_kernel" not in tilelang_runtime.__all__
+    assert "build_embedding_bag_mean_forward_kernel" not in tilelang_runtime.__all__
     assert "build_rms_norm_forward_kernel" not in tilelang_runtime.__all__
     assert not hasattr(tilelang_runtime, "build_flash_attention_forward_kernel")
+    assert not hasattr(tilelang_runtime, "build_embedding_bag_mean_forward_kernel")
     assert not hasattr(tilelang_runtime, "build_rms_norm_forward_kernel")
+
+
+def test_tilelang_runtime_exports_shared_capability_helpers() -> None:
+    assert tilelang_runtime.cuda_multiprocessor_count() is None or isinstance(
+        tilelang_runtime.cuda_multiprocessor_count(),
+        int,
+    )
+
+
+def test_shared_tensor_validation_helpers_reject_cpu_for_cuda_ops() -> None:
+    with pytest.raises(RuntimeError, match="sample_op requires CUDA tensors"):
+        tilelang_ops.require_cuda_tensors("sample_op", torch.empty(1))
+
+
+def test_shared_tensor_validation_helpers_reject_dtype_mismatch() -> None:
+    with pytest.raises(ValueError, match="sample_op requires tensors to share the same dtype"):
+        tilelang_ops.require_same_dtype("sample_op", torch.empty(1, dtype=torch.float32), torch.empty(1, dtype=torch.float16))
 
 
 def test_tilelang_kernel_builders_are_domain_scoped() -> None:
     assert hasattr(attention_tilelang_kernels, "build_flash_attention_forward_kernel")
     assert hasattr(attention_tilelang_kernels, "build_flash_attention_training_forward_kernel")
     assert hasattr(attention_tilelang_kernels, "build_flash_attention_backward_kernel")
+    assert hasattr(embedding_tilelang_kernels, "build_embedding_bag_mean_forward_kernel")
+    assert hasattr(embedding_tilelang_kernels, "build_embedding_bag_mean_backward_kernel")
     assert hasattr(normalization_tilelang_kernels, "build_rms_norm_forward_kernel")
     assert hasattr(normalization_tilelang_kernels, "build_rms_norm_backward_kernel")
     assert attention_tilelang_kernels.build_flash_attention_forward_kernel.__module__ == attention_tilelang_kernels.__name__
+    assert (
+        embedding_tilelang_kernels.build_embedding_bag_mean_forward_kernel.__module__
+        == embedding_tilelang_kernels.__name__
+    )
     assert normalization_tilelang_kernels.build_rms_norm_forward_kernel.__module__ == normalization_tilelang_kernels.__name__
+
+
+def test_embedding_bag_mean_matches_reference_on_cpu_auto_backend() -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.tensor(
+        [
+            [1, 2, 0, 4],
+            [0, 0, 0, 0],
+            [3, 3, 7, 0],
+        ],
+        dtype=torch.long,
+    )
+
+    output = embedding_bag_mean(weight, values)
+    embedded = F.embedding(values, weight, padding_idx=0)
+    valid = values.ne(0).to(embedded.dtype).unsqueeze(-1)
+    reference = (embedded * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+
+    assert resolved_embedding_bag_mean_backend(weight, values) == "torch"
+    torch.testing.assert_close(output, reference)
+
+
+def test_embedding_bag_mean_auto_preserves_registered_kernel(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+    expected = torch.full((3, 5), 7.0)
+
+    monkeypatch.setattr(embedding_bag_ops, "_embedding_bag_mean_kernel", lambda _weight, _values: expected)
+
+    output = embedding_bag_mean(weight, values)
+
+    torch.testing.assert_close(output, expected)
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_tilelang_on_cpu() -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+        resolved_embedding_bag_mean_backend(weight, values, "tilelang")
 
 
 def test_flash_attention_matches_reference_on_cpu_torch_backend() -> None:
@@ -192,11 +261,9 @@ def test_resolved_flash_attention_backend_rejects_dropout_outside_training() -> 
         resolved_flash_attention_backend(q, k, v, "tilelang", dropout_p=0.1, training=False)
 
 
-def test_tilelang_flash_attention_launch_config_specializes_hopper_training_defaults(monkeypatch) -> None:
+def test_tilelang_flash_attention_launch_config_specializes_h_series_training_defaults() -> None:
     q = torch.randn(2, 4, 256, 16, dtype=torch.float16)
     k = torch.randn(2, 4, 256, 16, dtype=torch.float16)
-
-    monkeypatch.setattr(flash_attention_ops, "_is_hopper_or_newer", lambda _device: True)
 
     assert flash_attention_ops._resolve_tilelang_flash_attention_launch_config(
         q,
@@ -210,11 +277,9 @@ def test_tilelang_flash_attention_launch_config_specializes_hopper_training_defa
     ) == (64, 128, 2, 128)
 
 
-def test_tilelang_flash_attention_launch_config_specializes_hopper_training_dropout_defaults(monkeypatch) -> None:
+def test_tilelang_flash_attention_launch_config_specializes_h_series_training_dropout_defaults() -> None:
     q = torch.randn(2, 4, 256, 16, dtype=torch.float16)
     k = torch.randn(2, 4, 256, 16, dtype=torch.float16)
-
-    monkeypatch.setattr(flash_attention_ops, "_is_hopper_or_newer", lambda _device: True)
 
     assert flash_attention_ops._resolve_tilelang_flash_attention_launch_config(
         q,
@@ -228,11 +293,9 @@ def test_tilelang_flash_attention_launch_config_specializes_hopper_training_drop
     ) == (64, 128, 2, 128)
 
 
-def test_tilelang_flash_attention_launch_config_respects_explicit_override(monkeypatch) -> None:
+def test_tilelang_flash_attention_launch_config_respects_explicit_override() -> None:
     q = torch.randn(2, 4, 256, 16, dtype=torch.float16)
     k = torch.randn(2, 4, 256, 16, dtype=torch.float16)
-
-    monkeypatch.setattr(flash_attention_ops, "_is_hopper_or_newer", lambda _device: True)
 
     assert flash_attention_ops._resolve_tilelang_flash_attention_launch_config(
         q,
@@ -535,6 +598,53 @@ def test_rms_norm_tilelang_matches_torch_forward_and_backward_on_cuda() -> None:
     torch.testing.assert_close(output.float(), reference.float(), atol=5e-3, rtol=5e-3)
     torch.testing.assert_close(x.grad.float(), x_ref.grad.float(), atol=1e-2, rtol=1e-2)
     torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-2, rtol=1e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
+def test_embedding_bag_mean_tilelang_matches_torch_forward_and_backward_on_cuda() -> None:
+    if not tilelang_ops.tilelang_available():
+        pytest.skip("tilelang is not installed")
+
+    tilelang_ops.clear_tilelang_kernel_cache()
+    weight = torch.randn(17, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    values = torch.tensor(
+        [
+            [1, 2, 0, 4],
+            [0, 0, 0, 0],
+            [3, 3, 7, 0],
+            [16, 5, 1, 0],
+        ],
+        dtype=torch.long,
+        device="cuda",
+    )
+    weight_ref = weight.detach().clone().requires_grad_(True)
+
+    output = embedding_bag_mean(weight, values, backend="tilelang", block_rows=1, block_cols=16)
+    reference = embedding_bag_mean(weight_ref, values, backend="torch")
+
+    loss = output.float().square().mean()
+    reference_loss = reference.float().square().mean()
+    loss.backward()
+    reference_loss.backward()
+
+    assert resolved_embedding_bag_mean_backend(weight.detach(), values) == "tilelang"
+    torch.testing.assert_close(output.float(), reference.float(), atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-3, rtol=1e-3)
+
+
+def test_embedding_bag_mean_tilelang_raises_when_tilelang_compile_fails(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setattr(embedding_bag_ops, "_resolve_embedding_bag_mean_backend", lambda *_args, **_kwargs: "tilelang")
+    monkeypatch.setattr(
+        embedding_bag_ops,
+        "compile_embedding_bag_mean_kernel",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("compile failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="compile failed"):
+        embedding_bag_mean(weight, values, backend="tilelang")
 
 
 def test_rms_norm_tilelang_raises_when_tilelang_compile_fails(monkeypatch) -> None:

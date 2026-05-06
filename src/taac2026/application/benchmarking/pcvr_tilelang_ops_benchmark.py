@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import os
 import statistics
 import time
 from collections.abc import Callable, Sequence
@@ -15,10 +16,13 @@ import torch.nn.functional as F
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.infrastructure.accelerators import (
+    clear_embedding_bag_mean_kernel_cache,
     clear_flash_attention_kernel_cache,
     clear_tilelang_kernel_cache,
+    compile_embedding_bag_mean_kernel,
     compile_flash_attention_kernel,
     compile_rms_norm_kernel,
+    resolved_embedding_bag_mean_backend,
     resolved_flash_attention_backend,
     resolved_rms_norm_backend,
     tilelang_available,
@@ -115,6 +119,12 @@ def _reference_flash_attention(
     is_causal: bool,
 ) -> torch.Tensor:
     return F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=is_causal)
+
+
+def _reference_embedding_bag_mean(embedding_weight: torch.Tensor, values: torch.Tensor) -> torch.Tensor:
+    embedded = F.embedding(values, embedding_weight, padding_idx=0)
+    valid = values.ne(0).to(embedded.dtype).unsqueeze(-1)
+    return (embedded * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
 
 
 def _default_error_tolerances(dtype: torch.dtype) -> tuple[float, float]:
@@ -258,6 +268,38 @@ def _prepare_flash_attention_callable(
     return lambda: kernel(q, k, v, key_lengths), resolved_backend, compile_sec
 
 
+def _prepare_embedding_bag_mean_callable(
+    *,
+    backend: BenchmarkBackend,
+    args: argparse.Namespace,
+    device: torch.device,
+    embedding_weight: torch.Tensor,
+    values: torch.Tensor,
+) -> tuple[Callable[[], torch.Tensor], str, float | None]:
+    if backend == "torch":
+        return lambda: _reference_embedding_bag_mean(embedding_weight, values), "torch", None
+
+    resolved_backend = resolved_embedding_bag_mean_backend(
+        embedding_weight,
+        values,
+        backend,
+        block_rows=args.block_rows,
+        block_cols=args.block_cols,
+    )
+
+    clear_embedding_bag_mean_kernel_cache()
+    started = time.perf_counter()
+    kernel = compile_embedding_bag_mean_kernel(
+        embedding_weight,
+        values,
+        block_rows=args.block_rows,
+        block_cols=args.block_cols,
+    )
+    _synchronize(device)
+    compile_sec = time.perf_counter() - started
+    return lambda: kernel(embedding_weight, values), resolved_backend, compile_sec
+
+
 def _build_inputs(args: argparse.Namespace, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(args.seed)
@@ -276,6 +318,30 @@ def _build_flash_attention_inputs(
     k = torch.randn((args.batch, args.heads, args.kv_len, args.head_dim), generator=generator, dtype=args.dtype).to(device)
     v = torch.randn((args.batch, args.heads, args.kv_len, args.head_dim), generator=generator, dtype=args.dtype).to(device)
     return q, k, v
+
+
+def _build_embedding_bag_mean_inputs(
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(args.seed)
+    embedding_weight = torch.randn(
+        (args.embedding_vocab_size + 1, args.embedding_dim),
+        generator=generator,
+        dtype=args.dtype,
+    ).to(device)
+    values = torch.randint(
+        1,
+        args.embedding_vocab_size + 1,
+        (args.batch, args.embedding_bag_size),
+        generator=generator,
+        dtype=torch.long,
+    )
+    if args.embedding_padding_prob > 0.0:
+        padding_mask = torch.rand(values.shape, generator=generator) < args.embedding_padding_prob
+        values = values.masked_fill(padding_mask, 0)
+    return embedding_weight, values.to(device)
 
 
 def _benchmark_rms_norm_backend(
@@ -404,6 +470,68 @@ def _benchmark_flash_attention_backend(
         )
 
 
+def _benchmark_embedding_bag_mean_backend(
+    *,
+    backend: BenchmarkBackend,
+    args: argparse.Namespace,
+    device: torch.device,
+    embedding_weight: torch.Tensor,
+    values: torch.Tensor,
+) -> OperatorBenchmarkResult:
+    compile_sec: float | None = None
+    try:
+        reference = _reference_embedding_bag_mean(embedding_weight, values)
+        run, resolved_backend, compile_sec = _prepare_embedding_bag_mean_callable(
+            backend=backend,
+            args=args,
+            device=device,
+            embedding_weight=embedding_weight,
+            values=values,
+        )
+        elapsed, step_time_ms = _benchmark_callable(
+            run,
+            device=device,
+            warmup_steps=args.warmup_steps,
+            steps=args.steps,
+        )
+        output = run()
+        _synchronize(device)
+        max_abs_error, max_rel_error = _validate_output_accuracy(
+            output,
+            reference,
+            atol=args.atol,
+            rtol=args.rtol,
+        )
+        return OperatorBenchmarkResult(
+            backend=backend,
+            status="ok",
+            resolved_backend=resolved_backend,
+            elapsed_sec=elapsed,
+            step_time_ms=step_time_ms,
+            ops_per_sec=args.steps / elapsed if elapsed > 0 else 0.0,
+            measured_steps=args.steps,
+            warmup_steps=args.warmup_steps,
+            compile_sec=compile_sec,
+            max_abs_error=max_abs_error,
+            max_rel_error=max_rel_error,
+        )
+    except Exception as error:
+        return OperatorBenchmarkResult(
+            backend=backend,
+            status=_benchmark_failure_status(backend, error),
+            resolved_backend=None,
+            elapsed_sec=0.0,
+            step_time_ms=0.0,
+            ops_per_sec=0.0,
+            measured_steps=args.steps,
+            warmup_steps=args.warmup_steps,
+            compile_sec=compile_sec,
+            max_abs_error=None,
+            max_rel_error=None,
+            error=f"{type(error).__name__}: {error}",
+        )
+
+
 def _summarize_runs(
     *,
     backend: BenchmarkBackend,
@@ -475,6 +603,7 @@ def _summarize_runs(
 
 
 def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
+    os.environ.setdefault("TILELANG_PRINT_ON_COMPILATION", "0")
     if args.steps < 1:
         raise ValueError("steps must be >= 1")
     if args.warmup_steps < 0:
@@ -536,6 +665,29 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
             "head_dim": args.head_dim,
             "is_causal": args.is_causal,
         }
+    elif args.operator == "embedding_bag_mean":
+        embedding_weight, values = _build_embedding_bag_mean_inputs(args, device)
+        for backend in args.backends:
+            runs = [
+                _benchmark_embedding_bag_mean_backend(
+                    backend=backend,
+                    args=args,
+                    device=device,
+                    embedding_weight=embedding_weight,
+                    values=values,
+                )
+                for _ in range(args.repeats)
+            ]
+            results.append(asdict(_summarize_runs(backend=backend, repeats=args.repeats, runs=runs)))
+        summary = {
+            "operator": "embedding_bag_mean",
+            "batch": args.batch,
+            "embedding_vocab_size": args.embedding_vocab_size,
+            "embedding_dim": args.embedding_dim,
+            "embedding_bag_size": args.embedding_bag_size,
+            "embedding_padding_prob": args.embedding_padding_prob,
+            "block_cols": args.block_cols,
+        }
     else:
         raise ValueError(f"unsupported operator benchmark: {args.operator}")
 
@@ -559,7 +711,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--operator", choices=("rms_norm", "flash_attention"), default="rms_norm")
+    parser.add_argument("--operator", choices=("rms_norm", "flash_attention", "embedding_bag_mean"), default="rms_norm")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--rows", type=int, default=8192)
     parser.add_argument("--cols", type=int, default=128)
@@ -568,6 +720,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--query-len", type=int, default=128)
     parser.add_argument("--kv-len", type=int, default=128)
     parser.add_argument("--head-dim", type=int, default=64)
+    parser.add_argument("--embedding-vocab-size", type=int, default=1_000_000)
+    parser.add_argument("--embedding-dim", type=int, default=64)
+    parser.add_argument("--embedding-bag-size", type=int, default=4)
+    parser.add_argument("--embedding-padding-prob", type=float, default=0.25)
     parser.add_argument("--is-causal", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("--warmup-steps", type=int, default=20)
@@ -575,6 +731,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--eps", type=float, default=1e-6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--block-rows", type=int, default=1)
+    parser.add_argument("--block-cols", type=int, default=None)
     parser.add_argument("--torch-threads", type=int, default=0)
     parser.add_argument(
         "--dtype",

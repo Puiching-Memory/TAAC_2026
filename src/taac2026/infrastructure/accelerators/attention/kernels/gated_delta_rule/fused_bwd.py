@@ -2,7 +2,7 @@ import torch
 import tilelang
 import tilelang.language as T
 
-from .....utils import prepare_chunk_offsets
+from taac2026.infrastructure.accelerators.chunking import prepare_chunk_offsets
 
 
 @tilelang.jit(

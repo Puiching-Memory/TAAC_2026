@@ -259,6 +259,48 @@ def test_shared_opt_batch_cache_evicts_farthest_future_key() -> None:
     assert cached_2 is None
 
 
+def test_shared_opt_batch_cache_requires_trace_keys() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=2,
+        policy="opt",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_access_trace([("file", 0, 0)])
+
+    assert cache.get(("file", 0, 0)) is None
+    try:
+        cache.get(("file", 0, 1))
+    except KeyError as exc:
+        assert "missing from configured access trace" in str(exc)
+    else:
+        raise AssertionError("expected KeyError for an untraced OPT cache key")
+
+
+def test_shared_lru_batch_cache_reuses_slot_for_existing_key() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=1,
+        policy="lru",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    cache.put(("file", 0, 0), {"label": torch.tensor([2, 12], dtype=torch.long)})
+
+    cached = cache.get(("file", 0, 0))
+
+    assert len(cache) == 1
+    assert cached is not None
+    assert cached["label"].tolist() == [2, 12]
+
+
 def test_strict_time_filter_removes_future_sequence_events(tmp_path: Path) -> None:
     schema_path = tmp_path / "schema.json"
     parquet_path = tmp_path / "demo.parquet"
