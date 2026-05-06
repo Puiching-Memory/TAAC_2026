@@ -83,13 +83,16 @@ src/taac2026/
     ├── accelerators/
     │   ├── attention/
     │   │   ├── flash_attention.py
-    │   │   ├── mla.py
-    │   │   └── qla.py
+    │   │   ├── kernels/
+    │   │   │   ├── flash_qla/
+    │   │   │   └── tilelang.py
+    │   │   └── mla.py
     │   ├── embedding/
     │   │   └── embedding_bag.py
     │   ├── normalization/
+    │   │   ├── kernels/
+    │   │   │   └── tilelang.py
     │   │   └── rms_norm.py
-    │   ├── kernels.py
     │   └── tilelang_runtime.py
     ├── bundles/
     │   ├── manifest_store.py

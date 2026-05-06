@@ -16,7 +16,10 @@ from taac2026.infrastructure.accelerators import (
 )
 
 flash_attention_ops = importlib.import_module("taac2026.infrastructure.accelerators.attention.flash_attention")
+attention_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.attention.kernels.tilelang")
 rms_norm_ops = importlib.import_module("taac2026.infrastructure.accelerators.normalization.rms_norm")
+normalization_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.normalization.kernels.tilelang")
+tilelang_runtime = importlib.import_module("taac2026.infrastructure.accelerators.tilelang_runtime")
 
 
 def _causal_valid_mask(lengths: torch.Tensor, num_heads: int) -> torch.Tensor:
@@ -29,6 +32,46 @@ def _causal_valid_mask(lengths: torch.Tensor, num_heads: int) -> torch.Tensor:
     fallback = torch.eye(token_count, dtype=torch.bool, device=padding_mask.device).unsqueeze(0)
     mask = torch.where(query_invalid, fallback, mask)
     return mask.unsqueeze(1).expand(padding_mask.shape[0], num_heads, token_count, token_count)
+
+
+def _manual_flash_attention_reference(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    attn_mask: torch.Tensor | None = None,
+    dropout_mask: torch.Tensor | None = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+) -> torch.Tensor:
+    scale = q.shape[-1] ** -0.5
+    scores = torch.matmul(q.float(), k.float().transpose(-1, -2)) * scale
+    if attn_mask is not None:
+        scores = scores.masked_fill(~attn_mask, float("-inf"))
+    elif is_causal:
+        causal_mask = torch.ones(q.shape[2], k.shape[2], dtype=torch.bool, device=q.device).tril()
+        scores = scores.masked_fill(~causal_mask.unsqueeze(0).unsqueeze(0), float("-inf"))
+    probs = torch.softmax(scores, dim=-1)
+    if dropout_mask is not None and dropout_p > 0.0:
+        probs = probs * dropout_mask.to(probs.dtype) / (1.0 - dropout_p)
+    return torch.matmul(probs, v.float()).to(q.dtype)
+
+
+def test_tilelang_runtime_does_not_export_domain_kernel_builders() -> None:
+    assert "build_flash_attention_forward_kernel" not in tilelang_runtime.__all__
+    assert "build_rms_norm_forward_kernel" not in tilelang_runtime.__all__
+    assert not hasattr(tilelang_runtime, "build_flash_attention_forward_kernel")
+    assert not hasattr(tilelang_runtime, "build_rms_norm_forward_kernel")
+
+
+def test_tilelang_kernel_builders_are_domain_scoped() -> None:
+    assert hasattr(attention_tilelang_kernels, "build_flash_attention_forward_kernel")
+    assert hasattr(attention_tilelang_kernels, "build_flash_attention_training_forward_kernel")
+    assert hasattr(attention_tilelang_kernels, "build_flash_attention_backward_kernel")
+    assert hasattr(normalization_tilelang_kernels, "build_rms_norm_forward_kernel")
+    assert hasattr(normalization_tilelang_kernels, "build_rms_norm_backward_kernel")
+    assert attention_tilelang_kernels.build_flash_attention_forward_kernel.__module__ == attention_tilelang_kernels.__name__
+    assert normalization_tilelang_kernels.build_rms_norm_forward_kernel.__module__ == normalization_tilelang_kernels.__name__
 
 
 def test_flash_attention_matches_reference_on_cpu_torch_backend() -> None:
@@ -140,13 +183,67 @@ def test_plan_tilelang_flash_attention_mask_extracts_causal_valid_mask() -> None
     assert plan.is_causal is True
 
 
-def test_resolved_flash_attention_backend_rejects_training_dropout() -> None:
+def test_resolved_flash_attention_backend_rejects_dropout_outside_training() -> None:
     q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
     k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
     v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
 
-    with pytest.raises(RuntimeError, match="without dropout"):
-        resolved_flash_attention_backend(q, k, v, "tilelang", dropout_p=0.1, training=True)
+    with pytest.raises(RuntimeError, match="dropout during training"):
+        resolved_flash_attention_backend(q, k, v, "tilelang", dropout_p=0.1, training=False)
+
+
+def test_tilelang_flash_attention_launch_config_specializes_hopper_training_defaults(monkeypatch) -> None:
+    q = torch.randn(2, 4, 256, 16, dtype=torch.float16)
+    k = torch.randn(2, 4, 256, 16, dtype=torch.float16)
+
+    monkeypatch.setattr(flash_attention_ops, "_is_hopper_or_newer", lambda _device: True)
+
+    assert flash_attention_ops._resolve_tilelang_flash_attention_launch_config(
+        q,
+        k,
+        training=True,
+        use_dropout=False,
+        block_m=64,
+        block_n=64,
+        num_stages=1,
+        threads=128,
+    ) == (64, 128, 2, 128)
+
+
+def test_tilelang_flash_attention_launch_config_specializes_hopper_training_dropout_defaults(monkeypatch) -> None:
+    q = torch.randn(2, 4, 256, 16, dtype=torch.float16)
+    k = torch.randn(2, 4, 256, 16, dtype=torch.float16)
+
+    monkeypatch.setattr(flash_attention_ops, "_is_hopper_or_newer", lambda _device: True)
+
+    assert flash_attention_ops._resolve_tilelang_flash_attention_launch_config(
+        q,
+        k,
+        training=True,
+        use_dropout=True,
+        block_m=64,
+        block_n=64,
+        num_stages=1,
+        threads=128,
+    ) == (64, 128, 2, 128)
+
+
+def test_tilelang_flash_attention_launch_config_respects_explicit_override(monkeypatch) -> None:
+    q = torch.randn(2, 4, 256, 16, dtype=torch.float16)
+    k = torch.randn(2, 4, 256, 16, dtype=torch.float16)
+
+    monkeypatch.setattr(flash_attention_ops, "_is_hopper_or_newer", lambda _device: True)
+
+    assert flash_attention_ops._resolve_tilelang_flash_attention_launch_config(
+        q,
+        k,
+        training=True,
+        use_dropout=False,
+        block_m=128,
+        block_n=64,
+        num_stages=2,
+        threads=128,
+    ) == (128, 64, 2, 128)
 
 
 def test_flash_attention_tilelang_raises_when_compile_fails(monkeypatch) -> None:
@@ -163,6 +260,35 @@ def test_flash_attention_tilelang_raises_when_compile_fails(monkeypatch) -> None
 
     with pytest.raises(RuntimeError, match="compile failed"):
         flash_attention(q, k, v, backend="tilelang")
+
+
+def test_flash_attention_tilelang_casts_float32_inputs_to_bfloat16(monkeypatch) -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+
+    monkeypatch.setattr(flash_attention_ops, "_resolve_flash_attention_backend", lambda *_args, **_kwargs: "tilelang")
+
+    def fake_compile(q_kernel: torch.Tensor, k_kernel: torch.Tensor, v_kernel: torch.Tensor, **_kwargs):
+        assert q_kernel.dtype == torch.bfloat16
+        assert k_kernel.dtype == torch.bfloat16
+        assert v_kernel.dtype == torch.bfloat16
+
+        def runner(q_runtime: torch.Tensor, k_runtime: torch.Tensor, v_runtime: torch.Tensor, _key_lengths: torch.Tensor) -> torch.Tensor:
+            assert q_runtime.dtype == torch.bfloat16
+            assert k_runtime.dtype == torch.bfloat16
+            assert v_runtime.dtype == torch.bfloat16
+            return q_runtime + k_runtime + v_runtime
+
+        return runner
+
+    monkeypatch.setattr(flash_attention_ops, "compile_flash_attention_kernel", fake_compile)
+
+    output = flash_attention(q, k, v, backend="tilelang")
+
+    assert output.dtype == torch.float32
+    expected = (q.to(torch.bfloat16) + k.to(torch.bfloat16) + v.to(torch.bfloat16)).to(torch.float32)
+    torch.testing.assert_close(output, expected)
 
 
 def test_rms_norm_matches_reference_on_cpu_torch_backend() -> None:
@@ -275,6 +401,91 @@ def test_flash_attention_tilelang_matches_torch_forward_on_cuda() -> None:
     reference = flash_attention(q, k, v, backend="torch", is_causal=False)
 
     torch.testing.assert_close(output.float(), reference.float(), atol=1e-2, rtol=1e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
+def test_flash_attention_tilelang_matches_torch_forward_and_backward_on_cuda() -> None:
+    if not tilelang_ops.tilelang_available():
+        pytest.skip("tilelang is not installed")
+
+    tilelang_ops.clear_tilelang_kernel_cache()
+    q = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    k = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    v = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+
+    output = flash_attention(q, k, v, backend="tilelang", training=True, is_causal=False)
+    reference = flash_attention(q_ref, k_ref, v_ref, backend="torch", training=True, is_causal=False)
+
+    loss = output.float().square().mean()
+    reference_loss = reference.float().square().mean()
+    loss.backward()
+    reference_loss.backward()
+
+    torch.testing.assert_close(output.float(), reference.float(), atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(q.grad.float(), q_ref.grad.float(), atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(k.grad.float(), k_ref.grad.float(), atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(v.grad.float(), v_ref.grad.float(), atol=2e-2, rtol=2e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
+def test_flash_attention_tilelang_matches_reference_with_training_dropout_on_cuda(monkeypatch) -> None:
+    if not tilelang_ops.tilelang_available():
+        pytest.skip("tilelang is not installed")
+
+    tilelang_ops.clear_tilelang_kernel_cache()
+    dropout_p = 0.125
+    q = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    k = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    v = torch.randn(2, 4, 32, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+    fixed_dropout_mask = (torch.rand((2, 4, 32, 32), device="cuda") >= dropout_p).to(torch.uint8)
+
+    monkeypatch.setattr(
+        flash_attention_ops,
+        "_build_tilelang_dropout_mask",
+        lambda _q, _k, _dropout_p: fixed_dropout_mask,
+    )
+
+    output = flash_attention(q, k, v, backend="tilelang", dropout_p=dropout_p, training=True, is_causal=False)
+    reference = _manual_flash_attention_reference(
+        q_ref,
+        k_ref,
+        v_ref,
+        dropout_mask=fixed_dropout_mask,
+        dropout_p=dropout_p,
+        is_causal=False,
+    )
+
+    grad_out = torch.randn_like(output)
+    output.backward(grad_out)
+    reference.backward(grad_out)
+
+    torch.testing.assert_close(output.float(), reference.float(), atol=2e-2, rtol=2e-2)
+    torch.testing.assert_close(q.grad.float(), q_ref.grad.float(), atol=3e-2, rtol=3e-2)
+    torch.testing.assert_close(k.grad.float(), k_ref.grad.float(), atol=3e-2, rtol=3e-2)
+    torch.testing.assert_close(v.grad.float(), v_ref.grad.float(), atol=3e-2, rtol=3e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
+def test_flash_attention_tilelang_supports_float32_callers_on_cuda() -> None:
+    if not tilelang_ops.tilelang_available():
+        pytest.skip("tilelang is not installed")
+
+    tilelang_ops.clear_tilelang_kernel_cache()
+    q = torch.randn(2, 4, 32, 16, dtype=torch.float32, device="cuda")
+    k = torch.randn(2, 4, 32, 16, dtype=torch.float32, device="cuda")
+    v = torch.randn(2, 4, 32, 16, dtype=torch.float32, device="cuda")
+
+    output = flash_attention(q, k, v, backend="tilelang", is_causal=False)
+    reference = flash_attention(q, k, v, backend="torch", is_causal=False)
+
+    assert output.dtype == torch.float32
+    torch.testing.assert_close(output, reference, atol=1.5e-2, rtol=0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")

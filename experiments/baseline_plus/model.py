@@ -6,8 +6,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import NamedTuple
 
-from taac2026.api import RMSNorm, configure_rms_norm_runtime as _configure_rms_norm_runtime, maybe_gradient_checkpoint
+from taac2026.api import (
+    RMSNorm,
+    configure_flash_attention_runtime as _configure_flash_attention_runtime,
+    configure_rms_norm_runtime as _configure_rms_norm_runtime,
+    maybe_gradient_checkpoint,
+    scaled_dot_product_attention,
+)
 from taac2026.infrastructure.logging import logger
+
+
+def configure_flash_attention_runtime(*, flash_attention_backend: str) -> None:
+    _configure_flash_attention_runtime(backend=flash_attention_backend)
 
 
 def configure_rms_norm_runtime(*, rms_norm_backend: str, rms_norm_block_rows: int) -> None:
@@ -232,17 +242,23 @@ class RoPEMultiheadAttention(nn.Module):
 
         # 5. Scaled Dot-Product Attention
         dropout_p = self.dropout if self.training else 0.0
-        out = F.scaled_dot_product_attention(
-            Q, K, V,
+        Q = Q.transpose(1, 2).contiguous().view(B, Lq, self.d_model)
+        K = K.transpose(1, 2).contiguous().view(B, Lk, self.d_model)
+        V = V.transpose(1, 2).contiguous().view(B, Lk, self.d_model)
+        out = scaled_dot_product_attention(
+            Q,
+            K,
+            V,
+            num_heads=self.num_heads,
             attn_mask=sdpa_attn_mask,
             dropout_p=dropout_p,
+            training=self.training,
         )  # (B, num_heads, Lq, head_dim)
 
         # Replace NaN from all-padding softmax with 0 (zero vectors preserve original input via residual)
         out = torch.nan_to_num(out, nan=0.0)
 
-        # 6. Reshape back and output projection
-        out = out.transpose(1, 2).contiguous().view(B, Lq, self.d_model)
+        # 6. Output projection
         G = self.W_g(query)
         out = out * torch.sigmoid(G)
         out = self.W_o(out)

@@ -115,6 +115,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         emb_skip_threshold=1_000_000,
         seq_id_threshold=10000,
         gradient_checkpointing=False,
+        flash_attention_backend="tilelang",
         rms_norm_backend="tilelang",
         rms_norm_block_rows=8,
     ),

@@ -11,17 +11,9 @@ import torch
 try:
     import tilelang as tl  # type: ignore[import-not-found]
     import tilelang.language as T  # type: ignore[import-not-found]
-    from taac2026.infrastructure.accelerators.kernels import (
-        build_flash_attention_forward_kernel,
-        build_rms_norm_backward_kernel,
-        build_rms_norm_forward_kernel,
-    )
 except ImportError:
     tl = None
     T = None
-    build_flash_attention_forward_kernel = None
-    build_rms_norm_backward_kernel = None
-    build_rms_norm_forward_kernel = None
 
 _TILELANG_E8M0_ORIGINAL_GUARD = """// __nv_fp8_e8m0 is only available in CUDA 12.6+
 #if __CUDACC_VER_MAJOR__ > 12 ||                                               \
@@ -153,9 +145,7 @@ def tilelang_dtype(dtype: torch.dtype):
 
 __all__ = [
     "T",
-    "build_flash_attention_forward_kernel",
-    "build_rms_norm_backward_kernel",
-    "build_rms_norm_forward_kernel",
     "tilelang_available",
     "tilelang_dtype",
+    "tl",
 ]

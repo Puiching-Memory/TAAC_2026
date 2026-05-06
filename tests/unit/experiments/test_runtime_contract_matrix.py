@@ -34,6 +34,7 @@ from taac2026.domain.model_contract import (
 )
 from taac2026.application.evaluation.runtime import default_load_train_config
 from taac2026.infrastructure.io.json import dumps, loads
+from taac2026.infrastructure.modeling import configure_flash_attention_runtime, flash_attention_runtime_state
 from tests.unit.experiments._experiment_matrix import ExperimentCase, REPO_ROOT, discover_pcvr_experiment_cases, load_model_module
 
 
@@ -372,6 +373,9 @@ def test_build_pcvr_model_forwards_constructor_contract(
 ) -> None:
     runtime_config: dict[str, object] = {}
 
+    def configure_flash_attention_runtime(*, flash_attention_backend: str) -> None:
+        runtime_config["flash_backend"] = flash_attention_backend
+
     def configure_rms_norm_runtime(*, rms_norm_backend: str, rms_norm_block_rows: int) -> None:
         runtime_config["backend"] = rms_norm_backend
         runtime_config["block_rows"] = rms_norm_block_rows
@@ -407,6 +411,7 @@ def test_build_pcvr_model_forwards_constructor_contract(
         "emb_skip_threshold": "1000000",
         "seq_id_threshold": "10000",
         "gradient_checkpointing": False,
+        "flash_attention_backend": "tilelang",
         "rms_norm_backend": "tilelang",
         "rms_norm_block_rows": "8",
         "ns_tokenizer_type": "rankmixer",
@@ -425,6 +430,7 @@ def test_build_pcvr_model_forwards_constructor_contract(
     model = build_pcvr_model(
         model_module=SimpleNamespace(
             RecordedModel=_RecordingModel,
+            configure_flash_attention_runtime=configure_flash_attention_runtime,
             configure_rms_norm_runtime=configure_rms_norm_runtime,
         ),
         model_class_name="RecordedModel",
@@ -448,7 +454,59 @@ def test_build_pcvr_model_forwards_constructor_contract(
     assert model.kwargs["emb_dim"] == 8
     assert model.kwargs["num_blocks"] == 3
     assert model.kwargs["num_heads"] == 4
-    assert runtime_config == {"backend": "tilelang", "block_rows": 8}
+    assert runtime_config == {"flash_backend": "tilelang", "backend": "tilelang", "block_rows": 8}
+
+
+def test_build_pcvr_model_configures_shared_flash_attention_runtime(tmp_path: Path) -> None:
+    configure_flash_attention_runtime(backend="tilelang")
+    dataset = _dataset(user_count=2, item_count=1)
+    package_dir = tmp_path / "package"
+    checkpoint_dir = tmp_path / "checkpoint"
+    package_dir.mkdir()
+    checkpoint_dir.mkdir()
+
+    config = {
+        "d_model": "16",
+        "emb_dim": "8",
+        "num_queries": "2",
+        "num_blocks": "3",
+        "num_heads": "4",
+        "seq_encoder_type": "transformer",
+        "hidden_mult": "2",
+        "dropout_rate": "0.0",
+        "seq_top_k": "50",
+        "seq_causal": False,
+        "action_num": "1",
+        "rank_mixer_mode": "full",
+        "use_rope": False,
+        "rope_base": "10000.0",
+        "emb_skip_threshold": "1000000",
+        "seq_id_threshold": "10000",
+        "gradient_checkpointing": False,
+        "rms_norm_backend": "torch",
+        "rms_norm_block_rows": "1",
+        "ns_tokenizer_type": "rankmixer",
+        "user_ns_tokens": "2",
+        "item_ns_tokens": "1",
+        "ns_grouping_strategy": "singleton",
+        "user_ns_groups": {},
+        "item_ns_groups": {},
+        "use_time_buckets": False,
+    }
+    try:
+        build_pcvr_model(
+            model_module=SimpleNamespace(RecordedModel=_RecordingModel),
+            model_class_name="RecordedModel",
+            data_module=SimpleNamespace(NUM_TIME_BUCKETS=13),
+            dataset=dataset,
+            config=config,
+            package_dir=package_dir,
+            checkpoint_dir=checkpoint_dir,
+        )
+
+        assert flash_attention_runtime_state() == "torch"
+    finally:
+        configure_flash_attention_runtime(backend="torch")
 
 
 @pytest.mark.parametrize(

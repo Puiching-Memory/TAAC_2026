@@ -150,6 +150,7 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
             "enabled": True,
             "probability": 0.03,
         }
+        assert train_defaults["flash_attention_backend"] == "tilelang"
         assert train_defaults["rms_norm_backend"] == "tilelang"
         assert train_defaults["rms_norm_block_rows"] == 8
     elif experiment_case.path == "experiments/symbiosis":
@@ -176,6 +177,8 @@ def test_discovered_experiment_models_forward_and_predict(experiment_case) -> No
     assert hasattr(model_module, experiment_case.model_class)
     if experiment_case.path in {"experiments/baseline_plus", "experiments/symbiosis"}:
         assert callable(getattr(model_module, "configure_rms_norm_runtime", None))
+    if experiment_case.path == "experiments/baseline_plus":
+        assert callable(getattr(model_module, "configure_flash_attention_runtime", None))
     model = _make_model(experiment_case, model_module)
     model_input = _sample_model_input(model_module)
 

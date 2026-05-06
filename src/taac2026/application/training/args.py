@@ -216,6 +216,13 @@ def build_pcvr_train_arg_parser(
         default=default_values["gradient_checkpointing"],
     )
     parser.add_argument(
+        "--flash_attention_backend",
+        "--flash-attention-backend",
+        dest="flash_attention_backend",
+        default=default_values["flash_attention_backend"],
+        choices=["torch", "tilelang"],
+    )
+    parser.add_argument(
         "--rms_norm_backend",
         "--rms-norm-backend",
         dest="rms_norm_backend",

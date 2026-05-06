@@ -3,23 +3,22 @@ from __future__ import annotations
 import pytest
 import torch
 
-from experiments.onetrans.layers import RMSNorm as ExportedRMSNorm
 from taac2026.infrastructure.modeling import (
     DenseTokenProjector,
     FeatureEmbeddingBank,
     NonSequentialTokenizer,
     RMSNorm,
     SequenceTokenizer,
+    configure_flash_attention_runtime,
     configure_rms_norm_runtime,
+    flash_attention_runtime_state,
+    scaled_dot_product_attention,
 )
 from taac2026.infrastructure.modeling.embeddings import FeatureEmbeddingBank as FeatureEmbeddingBankOwner
 from taac2026.infrastructure.modeling.normalization import RMSNorm as RMSNormOwner
+from taac2026.infrastructure.modeling import sequence as sequence_ops
 from taac2026.infrastructure.modeling.sequence import make_padding_mask
 from taac2026.infrastructure.modeling.tokenizers import SequenceTokenizer as SequenceTokenizerOwner
-
-
-def test_layers_modules_reexport_shared_primitives() -> None:
-    assert ExportedRMSNorm is RMSNorm
 
 
 def test_modeling_submodules_own_shared_primitives() -> None:
@@ -39,8 +38,45 @@ def test_configure_rms_norm_runtime_validates_backend_and_block_rows() -> None:
         configure_rms_norm_runtime(backend="torch", block_rows=0)
 
 
+def test_configure_flash_attention_runtime_validates_backend() -> None:
+    with pytest.raises(ValueError, match="unsupported flash attention backend: nope"):
+        configure_flash_attention_runtime(backend="nope")
+
+    configure_flash_attention_runtime(backend="tilelang")
+    assert flash_attention_runtime_state() == "tilelang"
+    configure_flash_attention_runtime(backend="torch")
+
+
+def test_scaled_dot_product_attention_uses_configured_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_flash_attention(q, k, v, **kwargs):
+        del k, v
+        captured.update(kwargs)
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(sequence_ops, "flash_attention", fake_flash_attention)
+    configure_flash_attention_runtime(backend="tilelang")
+    try:
+        output = scaled_dot_product_attention(
+            torch.ones(2, 3, 4),
+            torch.ones(2, 3, 4),
+            torch.ones(2, 3, 4),
+            num_heads=2,
+            attn_mask=None,
+            dropout_p=0.0,
+            training=False,
+        )
+    finally:
+        configure_flash_attention_runtime(backend="torch")
+
+    assert captured["backend"] == "tilelang"
+    assert output.shape == (2, 3, 4)
+
+
 def test_shared_tokenizers_return_stable_shapes() -> None:
     configure_rms_norm_runtime(backend="torch", block_rows=1)
+    configure_flash_attention_runtime(backend="torch")
     int_feats = torch.tensor([[1, 2, 3], [0, 4, 5]])
     bank = FeatureEmbeddingBank([(10, 0, 1), (8, 1, 2)], emb_dim=4)
     non_seq = NonSequentialTokenizer([(10, 0, 1), (8, 1, 2)], [[0], [1]], emb_dim=4, d_model=6)

@@ -73,6 +73,7 @@ def write_platform_runtime(code_archive: zipfile.ZipFile) -> None:
     runtime_files = [
         *sorted(Path("src/taac2026/application/bootstrap").glob("*.py")),
         Path("src/taac2026/infrastructure/__init__.py"),
+        *sorted(Path("src/taac2026/infrastructure/io").glob("*.py")),
         *sorted(Path("src/taac2026/infrastructure/platform").glob("*.py")),
     ]
     for relative_path in runtime_files:

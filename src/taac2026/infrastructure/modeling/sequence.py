@@ -11,6 +11,21 @@ from torch.utils.checkpoint import checkpoint
 from taac2026.infrastructure.accelerators.attention.flash_attention import flash_attention
 
 
+FlashAttentionBackend = Literal["torch", "tilelang"]
+FLASH_ATTENTION_BACKEND: FlashAttentionBackend = "torch"
+
+
+def configure_flash_attention_runtime(*, backend: str) -> None:
+    global FLASH_ATTENTION_BACKEND
+    if backend not in {"torch", "tilelang"}:
+        raise ValueError(f"unsupported flash attention backend: {backend}")
+    FLASH_ATTENTION_BACKEND = backend
+
+
+def flash_attention_runtime_state() -> FlashAttentionBackend:
+    return FLASH_ATTENTION_BACKEND
+
+
 def make_padding_mask(lengths: torch.Tensor, max_len: int) -> torch.Tensor:
     positions = torch.arange(max_len, device=lengths.device).unsqueeze(0)
     return positions >= lengths.unsqueeze(1)
@@ -69,7 +84,7 @@ def scaled_dot_product_attention(
     attn_mask: torch.Tensor | None,
     dropout_p: float,
     training: bool,
-    backend: Literal["torch", "tilelang"] = "torch",
+    backend: FlashAttentionBackend | None = None,
     is_causal: bool = False,
     block_m: int = 64,
     block_n: int = 64,
@@ -85,7 +100,7 @@ def scaled_dot_product_attention(
         q,
         k,
         v,
-        backend=backend,
+        backend=FLASH_ATTENTION_BACKEND if backend is None else backend,
         attn_mask=attn_mask,
         dropout_p=dropout_p,
         training=training,
@@ -121,8 +136,12 @@ def sinusoidal_positions(length: int, dim: int, device: torch.device) -> torch.T
 
 
 __all__ = [
+    "FLASH_ATTENTION_BACKEND",
+    "FlashAttentionBackend",
     "causal_valid_attention_mask",
     "choose_num_heads",
+    "configure_flash_attention_runtime",
+    "flash_attention_runtime_state",
     "make_padding_mask",
     "masked_last",
     "masked_mean",

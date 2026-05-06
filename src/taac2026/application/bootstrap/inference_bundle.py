@@ -8,10 +8,10 @@ from pathlib import Path
 from taac2026.infrastructure.platform.env import ONLINE_INFERENCE_BUNDLE_PLATFORM
 from taac2026.infrastructure.platform.deps import (
     install_project_pip_dependencies,
+    prepare_project_imports,
     read_manifest,
     set_default_experiment_from_manifest,
 )
-from taac2026.infrastructure.platform.imports import prepare_project_imports
 
 
 def run_inference_bundle(project_dir: Path) -> None:

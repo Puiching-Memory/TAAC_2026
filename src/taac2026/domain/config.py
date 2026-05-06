@@ -22,6 +22,7 @@ PCVRDataCacheMode = Literal["none", "memory", "opt"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
 RMSNormBackend = Literal["torch", "tilelang"]
+FlashAttentionBackend = Literal["torch", "tilelang"]
 
 
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
@@ -191,10 +192,13 @@ class PCVRModelConfig:
     emb_skip_threshold: int = 0
     seq_id_threshold: int = 10000
     gradient_checkpointing: bool = False
+    flash_attention_backend: FlashAttentionBackend = "torch"
     rms_norm_backend: RMSNormBackend = "torch"
     rms_norm_block_rows: int = 1
 
     def __post_init__(self) -> None:
+        if self.flash_attention_backend not in {"torch", "tilelang"}:
+            raise ValueError(f"unsupported flash attention backend: {self.flash_attention_backend}")
         if self.rms_norm_backend not in {"torch", "tilelang"}:
             raise ValueError(f"unsupported rms_norm backend: {self.rms_norm_backend}")
         if self.rms_norm_block_rows < 1:
@@ -288,6 +292,7 @@ class PCVRTrainConfig:
             "emb_skip_threshold": self.model.emb_skip_threshold,
             "seq_id_threshold": self.model.seq_id_threshold,
             "gradient_checkpointing": self.model.gradient_checkpointing,
+            "flash_attention_backend": self.model.flash_attention_backend,
             "rms_norm_backend": self.model.rms_norm_backend,
             "rms_norm_block_rows": self.model.rms_norm_block_rows,
             **self.ns.to_flat_dict(),

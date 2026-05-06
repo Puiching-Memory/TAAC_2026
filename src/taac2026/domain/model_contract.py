@@ -105,6 +105,15 @@ def build_pcvr_model(
     user_ns_groups, item_ns_groups = load_ns_groups(dataset, config, package_dir, checkpoint_dir)
     user_int_feature_specs = build_feature_specs(dataset.user_int_schema, dataset.user_int_vocab_sizes)
     item_int_feature_specs = build_feature_specs(dataset.item_int_schema, dataset.item_int_vocab_sizes)
+    flash_attention_backend = str(config.get("flash_attention_backend", "torch"))
+    from taac2026.infrastructure.modeling.sequence import configure_flash_attention_runtime as configure_shared_flash_attention_runtime
+
+    configure_shared_flash_attention_runtime(backend=flash_attention_backend)
+    configure_flash_attention_runtime = getattr(model_module, "configure_flash_attention_runtime", None)
+    if callable(configure_flash_attention_runtime):
+        configure_flash_attention_runtime(
+            flash_attention_backend=flash_attention_backend,
+        )
     configure_rms_norm_runtime = getattr(model_module, "configure_rms_norm_runtime", None)
     if callable(configure_rms_norm_runtime):
         rms_norm_block_rows = int(config.get("rms_norm_block_rows", 1))

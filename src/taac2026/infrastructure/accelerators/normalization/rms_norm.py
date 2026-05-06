@@ -11,10 +11,12 @@ import torch
 from taac2026.infrastructure.accelerators.tilelang_runtime import (
     T,
     _ensure_tilelang_cuda_fp8_compatibility,
-    build_rms_norm_backward_kernel,
-    build_rms_norm_forward_kernel,
     tilelang_available,
     tilelang_dtype,
+)
+from taac2026.infrastructure.accelerators.normalization.kernels.tilelang import (
+    build_rms_norm_backward_kernel,
+    build_rms_norm_forward_kernel,
 )
 
 
@@ -120,8 +122,6 @@ def _compile_tilelang_rms_norm_forward_kernel(
 ) -> Callable[[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
     if not tilelang_available():
         raise RuntimeError("tilelang is not installed")
-    if build_rms_norm_forward_kernel is None:
-        raise RuntimeError("tilelang kernel builders are unavailable")
     if key in _rms_norm_forward_kernel_cache:
         return _rms_norm_forward_kernel_cache[key]
 
@@ -142,8 +142,6 @@ def _compile_tilelang_rms_norm_backward_kernel(
 ) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
     if not tilelang_available():
         raise RuntimeError("tilelang is not installed")
-    if build_rms_norm_backward_kernel is None:
-        raise RuntimeError("tilelang backward kernel builders are unavailable")
     if key in _rms_norm_backward_kernel_cache:
         return _rms_norm_backward_kernel_cache[key]
 

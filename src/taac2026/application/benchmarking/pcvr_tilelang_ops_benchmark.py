@@ -10,12 +10,16 @@ from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
 import torch
+import torch.nn.functional as F
 
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.infrastructure.accelerators import (
+    clear_flash_attention_kernel_cache,
     clear_tilelang_kernel_cache,
+    compile_flash_attention_kernel,
     compile_rms_norm_kernel,
+    resolved_flash_attention_backend,
     resolved_rms_norm_backend,
     tilelang_available,
 )
@@ -37,6 +41,7 @@ class OperatorBenchmarkResult:
     warmup_steps: int
     compile_sec: float | None
     max_abs_error: float | None
+    max_rel_error: float | None = None
     error: str | None = None
 
 
@@ -64,6 +69,7 @@ class OperatorBenchmarkSummary:
     max_abs_error: float | None
     successful_repeats: int
     runs: list[dict[str, Any]]
+    max_rel_error: float | None = None
     error: str | None = None
 
 
@@ -99,6 +105,56 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 def _reference_rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
     return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps) * weight
+
+
+def _reference_flash_attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    *,
+    is_causal: bool,
+) -> torch.Tensor:
+    return F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=is_causal)
+
+
+def _default_error_tolerances(dtype: torch.dtype) -> tuple[float, float]:
+    if dtype == torch.float32:
+        return 1e-5, 1e-5
+    if dtype == torch.float16:
+        return 1e-2, 1e-2
+    if dtype == torch.bfloat16:
+        return 2e-2, 2e-2
+    raise ValueError(f"unsupported benchmark dtype for error tolerances: {dtype}")
+
+
+def _comparison_tensors(output: torch.Tensor, reference: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    compare_dtype = torch.float32 if output.dtype in {torch.float16, torch.bfloat16} else output.dtype
+    return output.to(compare_dtype), reference.to(compare_dtype)
+
+
+def _compute_error_metrics(output: torch.Tensor, reference: torch.Tensor) -> tuple[float, float]:
+    compare_output, compare_reference = _comparison_tensors(output, reference)
+    abs_diff = (compare_output - compare_reference).abs()
+    max_abs_error = float(abs_diff.max().item())
+    denom = compare_reference.abs().clamp_min(torch.finfo(compare_reference.dtype).eps)
+    max_rel_error = float((abs_diff / denom).max().item())
+    return max_abs_error, max_rel_error
+
+
+def _validate_output_accuracy(
+    output: torch.Tensor,
+    reference: torch.Tensor,
+    *,
+    atol: float,
+    rtol: float,
+) -> tuple[float, float]:
+    compare_output, compare_reference = _comparison_tensors(output, reference)
+    torch.testing.assert_close(compare_output, compare_reference, atol=atol, rtol=rtol)
+    return _compute_error_metrics(compare_output, compare_reference)
+
+
+def _benchmark_failure_status(backend: BenchmarkBackend, error: Exception) -> str:
+    return "unsupported" if backend == "tilelang" and not isinstance(error, AssertionError) else "error"
 
 
 def _benchmark_callable(
@@ -168,12 +224,58 @@ def _prepare_rms_norm_callable(
     return lambda: kernel(x, weight), resolved_backend, compile_sec
 
 
+def _prepare_flash_attention_callable(
+    *,
+    backend: BenchmarkBackend,
+    args: argparse.Namespace,
+    device: torch.device,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+) -> tuple[Callable[[], torch.Tensor], str, float | None]:
+    if backend == "torch":
+        return lambda: _reference_flash_attention(q, k, v, is_causal=args.is_causal), "torch", None
+
+    resolved_backend = resolved_flash_attention_backend(
+        q,
+        k,
+        v,
+        backend,
+        is_causal=args.is_causal,
+    )
+
+    clear_flash_attention_kernel_cache()
+    started = time.perf_counter()
+    kernel = compile_flash_attention_kernel(
+        q,
+        k,
+        v,
+        is_causal=args.is_causal,
+    )
+    _synchronize(device)
+    compile_sec = time.perf_counter() - started
+    key_lengths = torch.full((q.shape[0],), k.shape[2], dtype=torch.int32, device=q.device)
+    return lambda: kernel(q, k, v, key_lengths), resolved_backend, compile_sec
+
+
 def _build_inputs(args: argparse.Namespace, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(args.seed)
     x = torch.randn((args.rows, args.cols), generator=generator, dtype=args.dtype).to(device)
     weight = torch.randn((args.cols,), generator=generator, dtype=args.dtype).to(device)
     return x, weight
+
+
+def _build_flash_attention_inputs(
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(args.seed)
+    q = torch.randn((args.batch, args.heads, args.query_len, args.head_dim), generator=generator, dtype=args.dtype).to(device)
+    k = torch.randn((args.batch, args.heads, args.kv_len, args.head_dim), generator=generator, dtype=args.dtype).to(device)
+    v = torch.randn((args.batch, args.heads, args.kv_len, args.head_dim), generator=generator, dtype=args.dtype).to(device)
+    return q, k, v
 
 
 def _benchmark_rms_norm_backend(
@@ -202,7 +304,12 @@ def _benchmark_rms_norm_backend(
         )
         output = run()
         _synchronize(device)
-        max_abs_error = float((output - reference).abs().max().item())
+        max_abs_error, max_rel_error = _validate_output_accuracy(
+            output,
+            reference,
+            atol=args.atol,
+            rtol=args.rtol,
+        )
         return OperatorBenchmarkResult(
             backend=backend,
             status="ok",
@@ -214,12 +321,12 @@ def _benchmark_rms_norm_backend(
             warmup_steps=args.warmup_steps,
             compile_sec=compile_sec,
             max_abs_error=max_abs_error,
+            max_rel_error=max_rel_error,
         )
     except Exception as error:
-        status = "unsupported" if backend == "tilelang" else "error"
         return OperatorBenchmarkResult(
             backend=backend,
-            status=status,
+            status=_benchmark_failure_status(backend, error),
             resolved_backend=None,
             elapsed_sec=0.0,
             step_time_ms=0.0,
@@ -228,6 +335,71 @@ def _benchmark_rms_norm_backend(
             warmup_steps=args.warmup_steps,
             compile_sec=compile_sec,
             max_abs_error=None,
+            max_rel_error=None,
+            error=f"{type(error).__name__}: {error}",
+        )
+
+
+def _benchmark_flash_attention_backend(
+    *,
+    backend: BenchmarkBackend,
+    args: argparse.Namespace,
+    device: torch.device,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+) -> OperatorBenchmarkResult:
+    compile_sec: float | None = None
+    try:
+        reference = _reference_flash_attention(q, k, v, is_causal=args.is_causal)
+        run, resolved_backend, compile_sec = _prepare_flash_attention_callable(
+            backend=backend,
+            args=args,
+            device=device,
+            q=q,
+            k=k,
+            v=v,
+        )
+        elapsed, step_time_ms = _benchmark_callable(
+            run,
+            device=device,
+            warmup_steps=args.warmup_steps,
+            steps=args.steps,
+        )
+        output = run()
+        _synchronize(device)
+        max_abs_error, max_rel_error = _validate_output_accuracy(
+            output,
+            reference,
+            atol=args.atol,
+            rtol=args.rtol,
+        )
+        return OperatorBenchmarkResult(
+            backend=backend,
+            status="ok",
+            resolved_backend=resolved_backend,
+            elapsed_sec=elapsed,
+            step_time_ms=step_time_ms,
+            ops_per_sec=args.steps / elapsed if elapsed > 0 else 0.0,
+            measured_steps=args.steps,
+            warmup_steps=args.warmup_steps,
+            compile_sec=compile_sec,
+            max_abs_error=max_abs_error,
+            max_rel_error=max_rel_error,
+        )
+    except Exception as error:
+        return OperatorBenchmarkResult(
+            backend=backend,
+            status=_benchmark_failure_status(backend, error),
+            resolved_backend=None,
+            elapsed_sec=0.0,
+            step_time_ms=0.0,
+            ops_per_sec=0.0,
+            measured_steps=args.steps,
+            warmup_steps=args.warmup_steps,
+            compile_sec=compile_sec,
+            max_abs_error=None,
+            max_rel_error=None,
             error=f"{type(error).__name__}: {error}",
         )
 
@@ -262,6 +434,7 @@ def _summarize_runs(
             repeats=repeats,
             compile_sec=first.compile_sec if first else None,
             max_abs_error=None,
+            max_rel_error=None,
             successful_repeats=0,
             runs=[asdict(run) for run in runs],
             error=first.error if first else "benchmark produced no successful runs",
@@ -271,6 +444,7 @@ def _summarize_runs(
     step_values = [run.step_time_ms for run in successful_runs]
     throughput_values = [run.ops_per_sec for run in successful_runs]
     max_abs_errors = [run.max_abs_error for run in successful_runs if run.max_abs_error is not None]
+    max_rel_errors = [run.max_rel_error for run in successful_runs if run.max_rel_error is not None]
     representative = successful_runs[0]
     return OperatorBenchmarkSummary(
         backend=backend,
@@ -293,6 +467,7 @@ def _summarize_runs(
         repeats=repeats,
         compile_sec=representative.compile_sec,
         max_abs_error=max(max_abs_errors) if max_abs_errors else None,
+        max_rel_error=max(max_rel_errors) if max_rel_errors else None,
         successful_repeats=len(successful_runs),
         runs=[asdict(run) for run in runs],
         error=None,
@@ -317,44 +492,83 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
     if device.type == "cuda" and torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
-    x, weight = _build_inputs(args, device)
     results = []
-    for backend in args.backends:
-        runs = [
-            _benchmark_rms_norm_backend(
-                backend=backend,
-                args=args,
-                device=device,
-                x=x,
-                weight=weight,
-            )
-            for _ in range(args.repeats)
-        ]
-        results.append(asdict(_summarize_runs(backend=backend, repeats=args.repeats, runs=runs)))
+    if args.operator == "rms_norm":
+        x, weight = _build_inputs(args, device)
+        for backend in args.backends:
+            runs = [
+                _benchmark_rms_norm_backend(
+                    backend=backend,
+                    args=args,
+                    device=device,
+                    x=x,
+                    weight=weight,
+                )
+                for _ in range(args.repeats)
+            ]
+            results.append(asdict(_summarize_runs(backend=backend, repeats=args.repeats, runs=runs)))
+        summary: dict[str, object] = {
+            "operator": "rms_norm",
+            "rows": args.rows,
+            "cols": args.cols,
+        }
+    elif args.operator == "flash_attention":
+        q, k, v = _build_flash_attention_inputs(args, device)
+        for backend in args.backends:
+            runs = [
+                _benchmark_flash_attention_backend(
+                    backend=backend,
+                    args=args,
+                    device=device,
+                    q=q,
+                    k=k,
+                    v=v,
+                )
+                for _ in range(args.repeats)
+            ]
+            results.append(asdict(_summarize_runs(backend=backend, repeats=args.repeats, runs=runs)))
+        summary = {
+            "operator": "flash_attention",
+            "batch": args.batch,
+            "heads": args.heads,
+            "query_len": args.query_len,
+            "kv_len": args.kv_len,
+            "head_dim": args.head_dim,
+            "is_causal": args.is_causal,
+        }
+    else:
+        raise ValueError(f"unsupported operator benchmark: {args.operator}")
 
-    return {
-        "operator": "rms_norm",
+    summary.update({
         "device": str(device),
         "dtype": str(args.dtype).replace("torch.", ""),
-        "rows": args.rows,
-        "cols": args.cols,
         "eps": args.eps,
         "steps": args.steps,
         "warmup_steps": args.warmup_steps,
         "repeats": args.repeats,
         "seed": args.seed,
         "block_rows": args.block_rows,
+        "atol": args.atol,
+        "rtol": args.rtol,
         "tilelang_installed": tilelang_available(),
         "backends": list(args.backends),
         "results": results,
-    }
+    })
+    return summary
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--operator", choices=("rms_norm", "flash_attention"), default="rms_norm")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--rows", type=int, default=8192)
     parser.add_argument("--cols", type=int, default=128)
+    parser.add_argument("--batch", type=int, default=8)
+    parser.add_argument("--heads", type=int, default=8)
+    parser.add_argument("--query-len", type=int, default=128)
+    parser.add_argument("--kv-len", type=int, default=128)
+    parser.add_argument("--head-dim", type=int, default=64)
+    parser.add_argument("--is-causal", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--steps", type=int, default=100)
     parser.add_argument("--warmup-steps", type=int, default=20)
     parser.add_argument("--repeats", type=int, default=5)
@@ -372,9 +586,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=",".join(DEFAULT_BACKENDS),
         help="comma-separated subset of torch,tilelang",
     )
+    parser.add_argument("--atol", type=float, default=None, help="absolute tolerance for accuracy checks")
+    parser.add_argument("--rtol", type=float, default=None, help="relative tolerance for accuracy checks")
     args = parser.parse_args(argv)
     args.backends = _parse_backend_names(args.backends)
     args.dtype = getattr(torch, args.dtype)
+    default_atol, default_rtol = _default_error_tolerances(args.dtype)
+    if args.atol is None:
+        args.atol = default_atol
+    if args.rtol is None:
+        args.rtol = default_rtol
     return args
 
 

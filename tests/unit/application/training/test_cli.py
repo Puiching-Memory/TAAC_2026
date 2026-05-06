@@ -240,6 +240,16 @@ def test_parse_pcvr_train_args_accepts_rms_norm_flags(tmp_path: Path) -> None:
     assert args.rms_norm_block_rows == 8
 
 
+def test_parse_pcvr_train_args_accepts_flash_attention_backend_flag(tmp_path: Path) -> None:
+    args = parse_pcvr_train_args(
+        ["--flash-attention-backend", "tilelang"],
+        package_dir=tmp_path,
+        defaults=PCVRTrainConfig(),
+    )
+
+    assert args.flash_attention_backend == "tilelang"
+
+
 def test_parse_pcvr_train_args_honors_platform_path_env_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -476,6 +486,14 @@ def test_pcvr_train_config_serializes_rms_norm_fields() -> None:
 
     assert flat_config["rms_norm_backend"] == "tilelang"
     assert flat_config["rms_norm_block_rows"] == 8
+
+
+def test_pcvr_train_config_serializes_flash_attention_backend_field() -> None:
+    flat_config = PCVRTrainConfig(
+        model=PCVRModelConfig(flash_attention_backend="tilelang")
+    ).to_flat_dict()
+
+    assert flat_config["flash_attention_backend"] == "tilelang"
 
 
 def test_train_pcvr_model_uses_injected_train_hooks(tmp_path: Path) -> None:

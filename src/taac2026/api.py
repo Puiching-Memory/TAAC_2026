@@ -22,11 +22,13 @@ from taac2026.infrastructure.modeling import (
     DenseTokenProjector,
     EmbeddingParameterMixin,
     FeatureEmbeddingBank,
+    FlashAttentionBackend,
     NonSequentialTokenizer,
     RMSNorm,
     SequenceTokenizer,
     causal_valid_attention_mask,
     choose_num_heads,
+    flash_attention_runtime_state,
     make_padding_mask,
     masked_last,
     masked_mean,
@@ -39,6 +41,13 @@ from taac2026.infrastructure.runtime.execution import BinaryClassificationLossCo
 
 RMS_NORM_BACKEND = _modeling.RMS_NORM_BACKEND
 RMS_NORM_BLOCK_ROWS = _modeling.RMS_NORM_BLOCK_ROWS
+FLASH_ATTENTION_BACKEND = _modeling.FLASH_ATTENTION_BACKEND
+
+
+def configure_flash_attention_runtime(*, backend: str) -> None:
+    global FLASH_ATTENTION_BACKEND
+    _modeling.configure_flash_attention_runtime(backend=backend)
+    FLASH_ATTENTION_BACKEND = _modeling.FLASH_ATTENTION_BACKEND
 
 
 def configure_rms_norm_runtime(*, backend: str, block_rows: int) -> None:
@@ -48,12 +57,14 @@ def configure_rms_norm_runtime(*, backend: str, block_rows: int) -> None:
     RMS_NORM_BLOCK_ROWS = _modeling.RMS_NORM_BLOCK_ROWS
 
 __all__ = [
+    "FLASH_ATTENTION_BACKEND",
     "RMS_NORM_BACKEND",
     "RMS_NORM_BLOCK_ROWS",
     "BinaryClassificationLossConfig",
     "DenseTokenProjector",
     "EmbeddingParameterMixin",
     "FeatureEmbeddingBank",
+    "FlashAttentionBackend",
     "ModelInput",
     "NonSequentialTokenizer",
     "PCVRDataCacheConfig",
@@ -72,8 +83,10 @@ __all__ = [
     "SequenceTokenizer",
     "causal_valid_attention_mask",
     "choose_num_heads",
+    "configure_flash_attention_runtime",
     "configure_rms_norm_runtime",
     "create_pcvr_experiment",
+    "flash_attention_runtime_state",
     "make_padding_mask",
     "masked_last",
     "masked_mean",

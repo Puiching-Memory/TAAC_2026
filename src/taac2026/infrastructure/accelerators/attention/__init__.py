@@ -13,8 +13,8 @@ from taac2026.infrastructure.accelerators.attention.flash_attention import (
 	register_flash_attention_kernel,
 	resolved_flash_attention_backend,
 )
+from taac2026.infrastructure.accelerators.attention.kernels import flash_qla
 from taac2026.infrastructure.accelerators.attention.mla import multi_latent_attention
-from taac2026.infrastructure.accelerators.attention.qla import flash_qla
 
 __all__ = [
 	"FlashAttentionBackend",

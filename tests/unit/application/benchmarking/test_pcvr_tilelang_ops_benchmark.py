@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import importlib
+
+import torch
+
 from taac2026.application.benchmarking.pcvr_tilelang_ops_benchmark import (
     OperatorBenchmarkResult,
+    _benchmark_flash_attention_backend,
+    _benchmark_rms_norm_backend,
     _summarize_runs,
     parse_args,
     run_benchmark,
 )
+
+tilelang_benchmark = importlib.import_module("taac2026.application.benchmarking.pcvr_tilelang_ops_benchmark")
 
 
 def test_parse_pcvr_tilelang_ops_benchmark_args_accepts_backend_subset() -> None:
@@ -30,10 +38,43 @@ def test_parse_pcvr_tilelang_ops_benchmark_args_accepts_backend_subset() -> None
 
     assert args.rows == 128
     assert args.cols == 64
+    assert args.operator == "rms_norm"
     assert args.steps == 2
     assert args.warmup_steps == 1
     assert args.repeats == 3
     assert args.backends == ("torch", "tilelang")
+    assert args.atol == 1e-5
+    assert args.rtol == 1e-5
+
+
+def test_parse_pcvr_tilelang_ops_benchmark_accepts_flash_attention_operator() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "flash_attention",
+            "--batch",
+            "2",
+            "--heads",
+            "4",
+            "--query-len",
+            "32",
+            "--kv-len",
+            "64",
+            "--head-dim",
+            "16",
+            "--dtype",
+            "float16",
+        ]
+    )
+
+    assert args.operator == "flash_attention"
+    assert args.batch == 2
+    assert args.heads == 4
+    assert args.query_len == 32
+    assert args.kv_len == 64
+    assert args.head_dim == 16
+    assert args.atol == 1e-2
+    assert args.rtol == 1e-2
 
 
 def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -> None:
@@ -69,9 +110,168 @@ def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -
     assert rows["torch"]["status"] == "ok"
     assert rows["torch"]["resolved_backend"] == "torch"
     assert rows["torch"]["ops_per_sec"] > 0.0
+    assert rows["torch"]["max_abs_error"] == 0.0
+    assert rows["torch"]["max_rel_error"] == 0.0
     assert rows["tilelang"]["status"] == "unsupported"
     assert rows["tilelang"]["successful_repeats"] == 0
     assert rows["tilelang"]["error"]
+    assert summary["atol"] == 1e-5
+    assert summary["rtol"] == 1e-5
+
+
+def test_run_flash_attention_benchmark_reports_cpu_tilelang_as_unsupported() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "flash_attention",
+            "--device",
+            "cpu",
+            "--batch",
+            "2",
+            "--heads",
+            "2",
+            "--query-len",
+            "8",
+            "--kv-len",
+            "8",
+            "--head-dim",
+            "16",
+            "--steps",
+            "2",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "2",
+            "--backends",
+            "torch,tilelang",
+            "--dtype",
+            "float32",
+        ]
+    )
+
+    summary = run_benchmark(args)
+
+    assert summary["operator"] == "flash_attention"
+    assert summary["device"] == "cpu"
+    assert summary["backends"] == ["torch", "tilelang"]
+    rows = {row["backend"]: row for row in summary["results"]}
+    assert rows["torch"]["status"] == "ok"
+    assert rows["torch"]["resolved_backend"] == "torch"
+    assert rows["torch"]["max_abs_error"] == 0.0
+    assert rows["torch"]["max_rel_error"] == 0.0
+    assert rows["tilelang"]["status"] == "unsupported"
+    assert rows["tilelang"]["successful_repeats"] == 0
+    assert rows["tilelang"]["error"]
+
+
+def test_benchmark_marks_tilelang_accuracy_failure_as_error(monkeypatch) -> None:
+    args = parse_args(
+        [
+            "--device",
+            "cpu",
+            "--rows",
+            "4",
+            "--cols",
+            "8",
+            "--steps",
+            "1",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "1",
+            "--backends",
+            "tilelang",
+            "--dtype",
+            "float32",
+            "--atol",
+            "1e-6",
+            "--rtol",
+            "1e-6",
+        ]
+    )
+    x = torch.ones((args.rows, args.cols), dtype=args.dtype)
+    weight = torch.ones((args.cols,), dtype=args.dtype)
+
+    monkeypatch.setattr(tilelang_benchmark, "_benchmark_callable", lambda *args, **kwargs: (0.1, 100.0))
+    monkeypatch.setattr(
+        tilelang_benchmark,
+        "_prepare_rms_norm_callable",
+        lambda **kwargs: (lambda: torch.full_like(x, 2.0), "tilelang", 0.25),
+    )
+
+    result = _benchmark_rms_norm_backend(
+        backend="tilelang",
+        args=args,
+        device=torch.device("cpu"),
+        x=x,
+        weight=weight,
+    )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert "close" in result.error.lower()
+    assert result.max_abs_error is None
+    assert result.max_rel_error is None
+
+
+def test_flash_attention_benchmark_marks_tilelang_accuracy_failure_as_error(monkeypatch) -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "flash_attention",
+            "--device",
+            "cpu",
+            "--batch",
+            "1",
+            "--heads",
+            "2",
+            "--query-len",
+            "4",
+            "--kv-len",
+            "4",
+            "--head-dim",
+            "8",
+            "--steps",
+            "1",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "1",
+            "--backends",
+            "tilelang",
+            "--dtype",
+            "float32",
+            "--atol",
+            "1e-6",
+            "--rtol",
+            "1e-6",
+        ]
+    )
+    q = torch.ones((args.batch, args.heads, args.query_len, args.head_dim), dtype=args.dtype)
+    k = torch.ones((args.batch, args.heads, args.kv_len, args.head_dim), dtype=args.dtype)
+    v = torch.ones((args.batch, args.heads, args.kv_len, args.head_dim), dtype=args.dtype)
+
+    monkeypatch.setattr(tilelang_benchmark, "_benchmark_callable", lambda *args, **kwargs: (0.1, 100.0))
+    monkeypatch.setattr(
+        tilelang_benchmark,
+        "_prepare_flash_attention_callable",
+        lambda **kwargs: (lambda: torch.full_like(q, 2.0), "tilelang", 0.25),
+    )
+
+    result = _benchmark_flash_attention_backend(
+        backend="tilelang",
+        args=args,
+        device=torch.device("cpu"),
+        q=q,
+        k=k,
+        v=v,
+    )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert "close" in result.error.lower()
+    assert result.max_abs_error is None
+    assert result.max_rel_error is None
 
 
 def test_summarize_runs_keeps_first_successful_compile_time() -> None:
@@ -119,3 +319,4 @@ def test_summarize_runs_keeps_first_successful_compile_time() -> None:
     )
 
     assert summary.compile_sec == 0.9
+    assert summary.max_rel_error is None
