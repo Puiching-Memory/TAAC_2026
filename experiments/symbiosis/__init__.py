@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +26,7 @@ from taac2026.application.evaluation.workflow import (
     PCVRPredictionDataBundle,
 )
 from taac2026.domain.model_contract import build_pcvr_model, load_ns_groups
+from taac2026.infrastructure.logging import logger
 from taac2026.application.evaluation.runtime import (
     default_load_train_config,
 )
@@ -140,8 +140,8 @@ def build_symbiosis_train_model(
         context.package_dir,
         context.ckpt_dir,
     )
-    logging.info("User NS groups: %s", user_ns_groups)
-    logging.info("Item NS groups: %s", item_ns_groups)
+    logger.info("User NS groups: {}", user_ns_groups)
+    logger.info("Item NS groups: {}", item_ns_groups)
 
     model = _build_symbiosis_model(
         model_module=context.model_module,
@@ -156,8 +156,8 @@ def build_symbiosis_train_model(
     num_sequences = len(data_bundle.dataset.seq_domains)
     num_ns = model.num_ns
     token_count = context.args.num_queries * num_sequences + num_ns
-    logging.info(
-        "PCVR model created: class=%s, num_ns=%s, T=%s, d_model=%s, rank_mixer_mode=%s",
+    logger.info(
+        "PCVR model created: class={}, num_ns={}, T={}, d_model={}, rank_mixer_mode={}",
         context.model_class_name,
         num_ns,
         token_count,
@@ -165,7 +165,7 @@ def build_symbiosis_train_model(
         context.args.rank_mixer_mode,
     )
     total_params = sum(parameter.numel() for parameter in model.parameters())
-    logging.info("Total parameters: %s", f"{total_params:,}")
+    logger.info("Total parameters: {}", f"{total_params:,}")
     return model
 
 

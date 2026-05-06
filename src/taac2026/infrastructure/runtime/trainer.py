@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 import time
 from datetime import timedelta
@@ -20,6 +19,7 @@ from tqdm import tqdm
 from taac2026.domain.metrics import binary_score_diagnostics
 from taac2026.domain.config import DENSE_LR_SCHEDULER_TYPE_CHOICES
 from taac2026.domain.model_contract import batch_to_model_input
+from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.modeling.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.runtime.checkpoint_io import PCVRTrainerSupportMixin
 from taac2026.infrastructure.runtime.execution import (
@@ -114,8 +114,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             sparse_params = model.get_sparse_params()
             dense_params = model.get_dense_params()
             if not sparse_params:
-                logging.info(
-                    "Model exposes get_sparse_params but has no embedding parameters; using %s for all params",
+                logger.info(
+                    "Model exposes get_sparse_params but has no embedding parameters; using {} for all params",
                     self._dense_optimizer_display_name(),
                 )
                 self.sparse_optimizer = None
@@ -125,14 +125,14 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
                 self.dense_params = list(dense_params)
                 sparse_param_count = sum(parameter.numel() for parameter in sparse_params)
                 dense_param_count = sum(parameter.numel() for parameter in dense_params)
-                logging.info(
-                    "Sparse params: %s tensors, %s parameters (Adagrad lr=%s)",
+                logger.info(
+                    "Sparse params: {} tensors, {} parameters (Adagrad lr={})",
                     len(sparse_params),
                     f"{sparse_param_count:,}",
                     sparse_lr,
                 )
-                logging.info(
-                    "Dense params: %s tensors, %s parameters (%s lr=%s)",
+                logger.info(
+                    "Dense params: {} tensors, {} parameters ({} lr={})",
                     len(dense_params),
                     f"{dense_param_count:,}",
                     self._dense_optimizer_display_name(),
@@ -182,11 +182,11 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         self.train_config = train_config
         self.last_eval_diagnostics: dict[str, float | int] = {}
 
-        logging.info(
-            "PCVRPointwiseTrainer loss_type=%s, focal_alpha=%s, focal_gamma=%s, "
-            "pairwise_auc_weight=%s, pairwise_auc_temperature=%s, "
-            "dense_optimizer_type=%s, scheduler_type=%s, warmup_steps=%s, min_lr_ratio=%s, "
-            "max_steps=%s, reinit_sparse_every_n_steps=%s",
+        logger.info(
+            "PCVRPointwiseTrainer loss_type={}, focal_alpha={}, focal_gamma={}, "
+            "pairwise_auc_weight={}, pairwise_auc_temperature={}, "
+            "dense_optimizer_type={}, scheduler_type={}, warmup_steps={}, min_lr_ratio={}, "
+            "max_steps={}, reinit_sparse_every_n_steps={}",
             self.loss_type,
             self.focal_alpha,
             self.focal_gamma,
@@ -199,7 +199,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             self.max_steps,
             self.reinit_sparse_every_n_steps,
         )
-        logging.info("PCVRPointwiseTrainer runtime: %s", self.runtime_execution.summary(self.device))
+        logger.info("PCVRPointwiseTrainer runtime: {}", self.runtime_execution.summary(self.device))
 
     def _log_loop_progress(
         self,
@@ -217,10 +217,10 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             message = f"{message} | eta={_format_duration(eta_seconds)}"
         if loss is not None:
             message = f"{message} | loss={loss:.4f}"
-        logging.info(message)
+        logger.info(message)
 
     def train(self) -> None:
-        print("Start Training (PCVR pointwise)")
+        logger.info("Start Training (PCVR pointwise)")
         self.model.train()
 
         total_step = 0
@@ -266,16 +266,16 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             if total_step % eval_interval != 0 and total_step != total_train_steps:
                 continue
 
-            logging.info("Train step %s, Average Loss: %s", total_step, window_loss_sum / max(1, window_loss_steps))
+            logger.info("Train step {}, Average Loss: {}", total_step, window_loss_sum / max(1, window_loss_steps))
             window_loss_sum = 0.0
             window_loss_steps = 0
 
-            logging.info("Evaluating at step %s", total_step)
+            logger.info("Evaluating at step {}", total_step)
             val_auc, val_logloss = self.evaluate(step=total_step)
             self.model.train()
             torch.cuda.empty_cache()
 
-            logging.info("Step %s Validation | AUC: %s, LogLoss: %s", total_step, val_auc, val_logloss)
+            logger.info("Step {} Validation | AUC: {}, LogLoss: {}", total_step, val_auc, val_logloss)
 
             if self.writer:
                 self.writer.add_scalar("AUC/valid", val_auc, total_step)
@@ -286,7 +286,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             evaluated_on_last_step = total_step == total_train_steps
 
             if self.early_stopping.early_stop:
-                logging.info("Early stopping at step %s", total_step)
+                logger.info("Early stopping at step {}", total_step)
                 if train_pbar is not None:
                     train_pbar.close()
                 return
@@ -295,11 +295,11 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             train_pbar.close()
 
         if not evaluated_on_last_step:
-            logging.info("Evaluating at step %s", total_step)
+            logger.info("Evaluating at step {}", total_step)
             val_auc, val_logloss = self.evaluate(step=total_step)
             self.model.train()
             torch.cuda.empty_cache()
-            logging.info("Step %s Validation | AUC: %s, LogLoss: %s", total_step, val_auc, val_logloss)
+            logger.info("Step {} Validation | AUC: {}, LogLoss: {}", total_step, val_auc, val_logloss)
             if self.writer:
                 self.writer.add_scalar("AUC/valid", val_auc, total_step)
                 self.writer.add_scalar("LogLoss/valid", val_logloss, total_step)
@@ -349,7 +349,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         return loss.item()
 
     def evaluate(self, step: int | None = None) -> tuple[float, float]:
-        print("Start Evaluation (PCVR pointwise) - validation")
+        logger.info("Start Evaluation (PCVR pointwise) - validation")
         self.model.eval()
 
         total_valid_batches = len(self.valid_loader)
@@ -391,7 +391,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         nan_mask = np.isnan(probabilities)
         if nan_mask.any():
             n_nan = int(nan_mask.sum())
-            logging.warning("[Evaluate] %s/%s predictions are NaN, filtering them out", n_nan, len(probabilities))
+            logger.warning("[Evaluate] {}/{} predictions are NaN, filtering them out", n_nan, len(probabilities))
             valid_mask = ~nan_mask
             probabilities = probabilities[valid_mask]
             labels_np = labels_np[valid_mask]
@@ -409,8 +409,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             logloss = float("inf")
 
         self.last_eval_diagnostics = binary_score_diagnostics(labels_np, probabilities)
-        logging.info(
-            "Validation score diagnostics | pos=%s neg=%s pos_mean=%.6f neg_mean=%.6f margin=%.6f score_std=%.6f",
+        logger.info(
+            "Validation score diagnostics | pos={} neg={} pos_mean={:.6f} neg_mean={:.6f} margin={:.6f} score_std={:.6f}",
             self.last_eval_diagnostics["positive_count"],
             self.last_eval_diagnostics["negative_count"],
             self.last_eval_diagnostics["positive_score_mean"],

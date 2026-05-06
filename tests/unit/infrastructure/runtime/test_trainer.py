@@ -70,7 +70,7 @@ def _dummy_batch(labels: list[float]) -> dict[str, object]:
     }
 
 
-def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, caplog) -> None:
+def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, log_capture) -> None:
     train_loader = [{"label": torch.tensor([0.0])} for _ in range(4)]
     valid_loader = [{"label": torch.tensor([0.0])} for _ in range(3)]
     trainer = PCVRPointwiseTrainer(
@@ -92,10 +92,10 @@ def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, caplog
     monkeypatch.setattr(trainer, "_train_step", lambda batch: next(losses))
     monkeypatch.setattr(trainer, "evaluate", lambda step=None: (0.75, 0.25))
 
-    with caplog.at_level(logging.INFO):
+    with log_capture.at_level(logging.INFO):
         trainer.train()
 
-    messages = [record.getMessage() for record in caplog.records]
+    messages = [record.getMessage() for record in log_capture.records]
     assert any(message.startswith("Train progress 1/4 (25.0%)") and "loss=0.5000" in message for message in messages)
     assert any(message.startswith("Train progress 4/4 (100.0%)") and "loss=0.2000" in message for message in messages)
     assert any(message.startswith("Train step 4, Average Loss:") and message.endswith("0.35") for message in messages)
@@ -103,7 +103,7 @@ def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, caplog
 
 def test_maybe_compile_callable_falls_back_to_eager_on_compile_error(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    log_capture,
 ) -> None:
     def sample_callable(value):
         return value
@@ -114,12 +114,12 @@ def test_maybe_compile_callable_falls_back_to_eager_on_compile_error(
 
     monkeypatch.setattr(torch, "compile", failing_compile)
 
-    with caplog.at_level(logging.WARNING):
+    with log_capture.at_level(logging.WARNING):
         compiled = maybe_compile_callable(sample_callable, enabled=True, label="sample callable")
 
     assert compiled is sample_callable
-    assert "Failed to compile sample callable" in caplog.text
-    assert "falling back to eager execution" in caplog.text
+    assert "Failed to compile sample callable" in log_capture.text
+    assert "falling back to eager execution" in log_capture.text
 
 
 def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> None:
@@ -361,7 +361,7 @@ def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:
     assert math.isfinite(logloss)
 
 
-def test_evaluate_records_score_diagnostics(tmp_path, caplog) -> None:
+def test_evaluate_records_score_diagnostics(tmp_path, log_capture) -> None:
     trainer = PCVRPointwiseTrainer(
         model=_DummyModel(),
         model_input_type=object,
@@ -384,7 +384,7 @@ def test_evaluate_records_score_diagnostics(tmp_path, caplog) -> None:
     )
     trainer._evaluate_step = lambda batch: (next(logits), batch["label"])
 
-    with caplog.at_level(logging.INFO):
+    with log_capture.at_level(logging.INFO):
         auc, logloss = trainer.evaluate(step=1)
 
     assert auc == 1.0
@@ -392,4 +392,4 @@ def test_evaluate_records_score_diagnostics(tmp_path, caplog) -> None:
     assert trainer.last_eval_diagnostics["positive_count"] == 2
     assert trainer.last_eval_diagnostics["negative_count"] == 2
     assert trainer.last_eval_diagnostics["positive_score_mean"] > trainer.last_eval_diagnostics["negative_score_mean"]
-    assert "Validation score diagnostics" in caplog.text
+    assert "Validation score diagnostics" in log_capture.text

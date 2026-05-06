@@ -12,6 +12,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
 
 def _replace_column(table: pa.Table, name: str, values: pa.ChunkedArray) -> pa.Table:
     index = table.schema.get_field_index(name)
@@ -131,7 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         jitter_ids=not args.no_jitter_ids,
         force=args.force,
     )
-    print(dumps(summary, indent=2))
+    write_stdout_line(dumps(summary, indent=2))
     return 0
 
 

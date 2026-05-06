@@ -12,7 +12,6 @@ Optimizations:
 """
 
 import gc
-import logging
 import random
 import zlib
 from collections.abc import Iterator, Sequence
@@ -28,6 +27,7 @@ from torch.utils.data import IterableDataset, DataLoader
 
 from taac2026.infrastructure.io.json import dumps, read_path
 from taac2026.domain.config import PCVRDataPipelineConfig
+from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.data.observation import (
     PCVRRowGroupSplitPlan,
     build_pcvr_observed_schema_report,
@@ -209,7 +209,7 @@ class PCVRParquetDataset(IterableDataset):
             )
             self._seq_plan[domain] = (side_plan, ts_ci)
 
-        logging.info(
+        logger.info(
             f"PCVRParquetDataset: {self.num_rows} rows from "
             f"{len(self._parquet_files)} file(s), batch_size={batch_size}, "
             f"buffer_batches={buffer_batches}, shuffle={shuffle}"
@@ -285,8 +285,8 @@ class PCVRParquetDataset(IterableDataset):
             # max_len: from seq_max_lens arg; unspecified domains fall back to 256.
             self._seq_maxlen[domain] = seq_max_lens.get(domain, 256)
 
-        logging.info(
-            "Loaded PCVR schema for %s dataset: path=%s, row_groups=%s, user_int=%d (%d dims), item_int=%d (%d dims), user_dense=%d (%d dims), seq_domains=%s",
+        logger.info(
+            "Loaded PCVR schema for {} dataset: path={}, row_groups={}, user_int={} ({} dims), item_int={} ({} dims), user_dense={} ({} dims), seq_domains={}",
             self.dataset_role,
             resolved_schema_path,
             self.row_group_range if self.row_group_range is not None else "all",
@@ -298,8 +298,8 @@ class PCVRParquetDataset(IterableDataset):
             self.user_dense_schema.total_dim,
             ", ".join(self.seq_domains) if self.seq_domains else "<none>",
         )
-        logging.info(
-            "PCVR %s schema payload: %s",
+        logger.info(
+            "PCVR {} schema payload: {}",
             self.dataset_role,
             dumps(raw),
         )
@@ -635,10 +635,10 @@ class PCVRParquetDataset(IterableDataset):
 
     def dump_oob_stats(self, path: str | None = None) -> None:
         """Dump out-of-bound statistics to a file if ``path`` is provided,
-        otherwise to ``logging.info``.
+        otherwise to the shared logger.
         """
         if not self._oob_stats:
-            logging.info("No out-of-bound values detected.")
+            logger.info("No out-of-bound values detected.")
             return
         lines = ["=== Out-of-Bound Stats ==="]
         for (group, ci), s in sorted(self._oob_stats.items()):
@@ -652,9 +652,9 @@ class PCVRParquetDataset(IterableDataset):
         if path:
             with Path(path).open("w") as f:
                 f.write(msg + "\n")
-            logging.info(f"OOB stats written to {path}")
+            logger.info("OOB stats written to {}", path)
         else:
-            logging.info(msg)
+            logger.info(msg)
 
     def _pad_varlen_int_column(
         self,
@@ -969,17 +969,17 @@ def get_pcvr_data(
 
     # train_ratio: use only the first N% of the training Row Groups.
     if train_ratio < 1.0 and not split_plan.reuse_train_for_valid:
-        logging.info(
+        logger.info(
             f"train_ratio={train_ratio}: using {split_plan.train_row_groups} train Row Groups"
         )
 
     if split_plan.reuse_train_for_valid:
-        logging.warning(
+        logger.warning(
             "Single Row Group parquet detected; reusing the same Row Group for train and valid "
             "to keep smoke runs functional"
         )
 
-    logging.info(
+    logger.info(
         f"Row Group split: {split_plan.train_row_groups} train ({split_plan.train_rows} rows), "
         f"{split_plan.valid_row_groups} valid ({split_plan.valid_rows} rows)"
     )
@@ -1044,7 +1044,7 @@ def get_pcvr_data(
         pin_memory=use_cuda,
     )
 
-    logging.info(
+    logger.info(
         f"Parquet train: {split_plan.train_rows} rows, valid: {split_plan.valid_rows} rows, "
         f"batch_size={batch_size}, buffer_batches={buffer_batches}"
     )

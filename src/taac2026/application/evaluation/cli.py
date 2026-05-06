@@ -12,6 +12,8 @@ import torch
 from taac2026.domain.requests import EvalRequest, InferRequest, default_run_dir
 from taac2026.application.experiments.registry import load_experiment_package
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
+from taac2026.infrastructure.logging import configure_logging
 from taac2026.infrastructure.runtime.execution import AMP_DTYPE_CHOICES
 
 
@@ -84,6 +86,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise ValueError(f"experiment {args.experiment!r} requires --dataset-path")
     if args.command == "single":
         run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.experiment)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        configure_logging(run_dir / "evaluate.log")
         request = EvalRequest(
             experiment=args.experiment,
             dataset_path=Path(args.dataset_path) if args.dataset_path else None,
@@ -101,12 +105,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         payload = experiment.evaluate(request)
     else:
+        result_dir = Path(args.result_dir)
+        result_dir.mkdir(parents=True, exist_ok=True)
+        configure_logging(result_dir / "infer.log")
         request = InferRequest(
             experiment=args.experiment,
             dataset_path=Path(args.dataset_path) if args.dataset_path else None,
             schema_path=Path(args.schema_path) if args.schema_path else None,
             checkpoint_path=Path(args.checkpoint) if args.checkpoint else None,
-            result_dir=Path(args.result_dir),
+            result_dir=result_dir,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             device=args.device,
@@ -116,7 +123,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         payload = experiment.infer(request)
 
-    print(dumps(payload))
+    write_stdout_line(dumps(payload))
     return 0
 
 

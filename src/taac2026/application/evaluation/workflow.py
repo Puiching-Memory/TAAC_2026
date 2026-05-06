@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -13,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import taac2026.infrastructure.data.dataset as pcvr_data
+from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.checkpoints import load_checkpoint_state_dict
 from taac2026.domain.model_contract import batch_to_model_input, build_pcvr_model, parse_seq_max_lens
 from taac2026.infrastructure.modeling.tensors import sigmoid_probabilities_numpy
@@ -32,8 +32,8 @@ def _log_prediction_progress(
     elapsed_seconds: float,
 ) -> None:
     progress = 100.0 * processed_rows / total_rows if total_rows > 0 else 0.0
-    logging.info(
-        "PCVR %s progress: %d/%d rows (%.1f%%), batch %d/%d, elapsed=%.1fs",
+    logger.info(
+        "PCVR {} progress: {}/{} rows ({:.1f}%), batch {}/{}, elapsed={:.1f}s",
         mode,
         processed_rows,
         total_rows,
@@ -150,8 +150,8 @@ def default_run_prediction_loop(
 ) -> dict[str, Any]:
     total_rows = int(getattr(data_bundle.dataset, "num_rows", 0))
     total_batches = (total_rows + context.batch_size - 1) // context.batch_size if total_rows > 0 else 0
-    logging.info(
-        "PCVR %s loop starting: checkpoint=%s, rows=%d, estimated_batches=%d, batch_size=%d, num_workers=%d, device=%s, runtime=%s",
+    logger.info(
+        "PCVR {} loop starting: checkpoint={}, rows={}, estimated_batches={}, batch_size={}, num_workers={}, device={}, runtime={}",
         context.mode,
         context.checkpoint_path,
         total_rows,
@@ -209,8 +209,8 @@ def default_run_prediction_loop(
                 )
                 while next_progress_log_rows <= processed_rows:
                     next_progress_log_rows += progress_log_every_rows
-    logging.info(
-        "PCVR %s loop completed: rows=%d, batches=%d, elapsed=%.1fs",
+    logger.info(
+        "PCVR {} loop completed: rows={}, batches={}, elapsed={:.1f}s",
         context.mode,
         processed_rows,
         batch_count,

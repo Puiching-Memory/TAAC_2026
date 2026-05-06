@@ -10,6 +10,7 @@ from pathlib import Path
 from taac2026.domain.requests import TrainRequest, default_run_dir
 from taac2026.application.experiments.registry import load_experiment_package
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
 
 
 def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
@@ -57,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         extra_args=tuple(extra_args),
     )
     summary = experiment.train(request) or {"run_dir": str(run_dir)}
-    print(dumps(summary))
+    write_stdout_line(dumps(summary))
     return 0
 
 

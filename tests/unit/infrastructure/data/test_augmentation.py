@@ -309,7 +309,7 @@ def test_strict_time_filter_removes_future_sequence_events(tmp_path: Path) -> No
     assert batch["seq_a_time_bucket"][0, 2].item() == 0
 
 
-def test_dataset_logs_schema_payload_with_dataset_role(tmp_path: Path, caplog) -> None:
+def test_dataset_logs_schema_payload_with_dataset_role(tmp_path: Path, log_capture) -> None:
     schema_path = tmp_path / "schema.json"
     parquet_path = tmp_path / "demo.parquet"
     schema = {
@@ -339,7 +339,7 @@ def test_dataset_logs_schema_payload_with_dataset_role(tmp_path: Path, caplog) -
     )
     pq.write_table(table, parquet_path, row_group_size=1)
 
-    with caplog.at_level(logging.INFO):
+    with log_capture.at_level(logging.INFO):
         PCVRParquetDataset(
             parquet_path=str(parquet_path),
             schema_path=str(schema_path),
@@ -350,12 +350,12 @@ def test_dataset_logs_schema_payload_with_dataset_role(tmp_path: Path, caplog) -
             dataset_role="train",
         )
 
-    assert "Loaded PCVR schema for train dataset" in caplog.text
-    assert str(schema_path.resolve()) in caplog.text
-    assert "PCVR train schema payload" in caplog.text
+    assert "Loaded PCVR schema for train dataset" in log_capture.text
+    assert str(schema_path.resolve()) in log_capture.text
+    assert "PCVR train schema payload" in log_capture.text
     payload_message = next(
         record.getMessage()
-        for record in caplog.records
+        for record in log_capture.records
         if record.getMessage().startswith("PCVR train schema payload: ")
     )
     assert "\n" not in payload_message

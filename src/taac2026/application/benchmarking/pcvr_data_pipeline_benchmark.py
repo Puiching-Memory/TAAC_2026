@@ -12,6 +12,7 @@ from typing import Any
 import torch
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.domain.config import (
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
@@ -210,7 +211,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     summary = run_benchmark(parse_args(argv))
-    print(dumps(summary, indent=2))
+    write_stdout_line(dumps(summary, indent=2))
     return 0
 
 

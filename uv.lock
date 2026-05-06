@@ -806,6 +806,15 @@ wheels = [
 ]
 
 [[package]]
+name = "loguru"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c", size = 61595, upload-time = "2024-12-06T11:20:54.538Z" },
+]
+
+[[package]]
 name = "markdown"
 version = "3.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1968,6 +1977,7 @@ name = "taac2026"
 source = { editable = "." }
 dependencies = [
     { name = "datasets", marker = "sys_platform == 'linux'" },
+    { name = "loguru", marker = "sys_platform == 'linux'" },
     { name = "matplotlib", marker = "sys_platform == 'linux'" },
     { name = "numpy", marker = "sys_platform == 'linux'" },
     { name = "orjson", marker = "sys_platform == 'linux'" },
@@ -2004,6 +2014,7 @@ requires-dist = [
     { name = "datasets", specifier = "==2.14.7" },
     { name = "fbgemm-gpu", marker = "extra == 'cuda126'", specifier = "==1.2.0+cu126", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "taac2026", extra = "cuda126" } },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = "==6.151.12" },
+    { name = "loguru", specifier = "==0.7.3" },
     { name = "matplotlib", specifier = "==3.10.8" },
     { name = "numpy", specifier = "==2.2.5" },
     { name = "orjson", specifier = "==3.11.8" },

@@ -12,6 +12,7 @@ from typing import Any, Literal
 import torch
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.infrastructure.accelerators import (
     clear_tilelang_kernel_cache,
     compile_rms_norm_kernel,
@@ -378,7 +379,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    print(dumps(run_benchmark(parse_args(argv)), indent=2))
+    write_stdout_line(dumps(run_benchmark(parse_args(argv)), indent=2))
     return 0
 
 

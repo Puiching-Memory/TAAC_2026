@@ -6,13 +6,14 @@ import math
 import os
 import random
 import struct
-import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from taac2026.infrastructure.io.json import read_path
+from taac2026.infrastructure.io.streams import write_stdout_line
+from taac2026.infrastructure.logging import configure_logging, logger
 
 try:
   import pyarrow.parquet as pq
@@ -326,9 +327,12 @@ class ProgressTracker:
       percent = 100.0
     else:
       percent = min(100.0, scanned_rows * 100.0 / float(self.total_rows))
-    print(
-      f"[online-eda] progress {self.label}: {scanned_rows}/{self.total_rows} ({percent:.1f}%)",
-      flush=True,
+    logger.info(
+      "[online-eda] progress {}: {}/{} ({:.1f}%)",
+      self.label,
+      scanned_rows,
+      self.total_rows,
+      percent,
     )
     self._last_reported_rows = scanned_rows
 
@@ -622,29 +626,29 @@ def base_subtitle(row_count: int, total_rows: int) -> str:
 
 
 def print_section(title: str) -> None:
-  print(f"\n== {title} ==")
+  write_stdout_line(f"\n== {title} ==")
 
 
 def print_key_values(rows: list[tuple[str, Any]]) -> None:
   for key, value in rows:
-    print(f"{key}: {value}")
+    write_stdout_line(f"{key}: {value}")
 
 
 def print_ranked_rows(rows: list[dict[str, Any]], *, name_key: str, value_keys: list[str], limit: int) -> None:
   if not rows:
-    print("(empty)")
+    write_stdout_line("(empty)")
     return
   for index, row in enumerate(rows[:limit], start=1):
     fragments = [f"{key}={row[key]}" for key in value_keys]
-    print(f"{index}. {row[name_key]} | " + " | ".join(fragments))
+    write_stdout_line(f"{index}. {row[name_key]} | " + " | ".join(fragments))
 
 
 def print_domain_rows(rows: list[dict[str, Any]]) -> None:
   if not rows:
-    print("(empty)")
+    write_stdout_line("(empty)")
     return
   for row in rows:
-    print(
+    write_stdout_line(
       f"{row['domain']}: mean={row['mean']} p95={row['p95']} empty_rate={row['empty_rate']} "
       f"min={row['min']} median={row['median']} max={row['max']}"
     )
@@ -652,14 +656,14 @@ def print_domain_rows(rows: list[dict[str, Any]]) -> None:
 
 def print_overlap_rows(rows: list[dict[str, Any]], domain_names: list[str]) -> None:
   if not rows or not domain_names:
-    print("(empty)")
+    write_stdout_line("(empty)")
     return
   for left in domain_names:
     pieces = []
     for right in domain_names:
       match = next(row for row in rows if row["left"] == left and row["right"] == right)
       pieces.append(f"{right}={match['overlap']}")
-    print(f"{left}: " + ", ".join(pieces))
+    write_stdout_line(f"{left}: " + ", ".join(pieces))
 
 
 def build_null_rows(feature_columns: list[str], null_counts: dict[str, int], scanned_rows: int) -> list[dict[str, Any]]:
@@ -1066,7 +1070,7 @@ def print_report(report: dict[str, Any]) -> None:
       ("sequence", layout_counts["sequence"]),
     ]
   )
-  print("sequence_domains: " + ", ".join(f"{key}={value}" for key, value in domain_counts.items()))
+  write_stdout_line("sequence_domains: " + ", ".join(f"{key}={value}" for key, value in domain_counts.items()))
 
   print_section("Top Null Rates")
   print_ranked_rows(stats["null_rates"], name_key="name", value_keys=["null_rate"], limit=15)
@@ -1094,29 +1098,31 @@ def print_report(report: dict[str, Any]) -> None:
 
   print_section("Approximation")
   for key, value in report["approximation"].items():
-    print(f"{key}: " + ", ".join(f"{inner_key}={inner_value}" for inner_key, inner_value in value.items()))
+    write_stdout_line(f"{key}: " + ", ".join(f"{inner_key}={inner_value}" for inner_key, inner_value in value.items()))
 
 
 def run_online_dataset_eda(config: OnlineDatasetEDAConfig) -> dict[str, Any]:
+  configure_logging()
   validate_config(config)
   dataset_path = config.dataset_path.expanduser().resolve()
   schema_path = resolve_schema_path(dataset_path, config.schema_path)
   dataset = build_dataset_info(dataset_path)
   effective_max_rows = resolve_scan_row_limit(dataset.total_rows, config.max_rows, config.sample_percent)
-  print(f"[online-eda] dataset={dataset_path}", flush=True)
-  print(f"[online-eda] schema={schema_path}", flush=True)
-  print("[online-eda] sink=stdout", flush=True)
+  logger.info("[online-eda] dataset={}", dataset_path)
+  logger.info("[online-eda] schema={}", schema_path)
+  logger.info("[online-eda] sink=stdout")
   if config.sample_percent is not None:
-    print(
-      f"[online-eda] scan=streaming sample_percent={config.sample_percent:.1f} max_rows={effective_max_rows} batch_rows={config.batch_rows}",
-      flush=True,
+    logger.info(
+      "[online-eda] scan=streaming sample_percent={:.1f} max_rows={} batch_rows={}",
+      config.sample_percent,
+      effective_max_rows,
+      config.batch_rows,
     )
   elif effective_max_rows is None:
-    print(f"[online-eda] scan=streaming full batch_rows={config.batch_rows}", flush=True)
+    logger.info("[online-eda] scan=streaming full batch_rows={}", config.batch_rows)
   else:
-    print(f"[online-eda] scan=streaming max_rows={effective_max_rows} batch_rows={config.batch_rows}", flush=True)
-  sys.stdout.flush()
+    logger.info("[online-eda] scan=streaming max_rows={} batch_rows={}", effective_max_rows, config.batch_rows)
   report = build_report(dataset, schema_path, effective_max_rows, config)
   print_report(report)
-  print("skipped:", ", ".join(report["skipped_charts"]))
+  write_stdout_line("skipped: " + ", ".join(report["skipped_charts"]))
   return report

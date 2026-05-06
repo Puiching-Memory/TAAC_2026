@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from taac2026.infrastructure.io.streams import write_stderr_line
 from taac2026.infrastructure.platform.env import RuntimePlatform, select_run_sh_platform
 from taac2026.infrastructure.platform.deps import (
     install_project_pip_dependencies,
@@ -114,7 +115,7 @@ def _run_console_script(
     if runner_mode == "python":
         install_project_pip_dependencies(project_dir, platform)
         return _run_module(module_name, args)
-    print(f"unsupported TAAC_RUNNER: {runner_mode}; expected 'python' or 'uv'", file=sys.stderr)
+    write_stderr_line(f"unsupported TAAC_RUNNER: {runner_mode}; expected 'python' or 'uv'")
     return 2
 
 
@@ -176,7 +177,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parsed = parse_run_command(list(argv or sys.argv[1:]))
         cuda_args = extract_cuda_profile(parsed.args)
     except ValueError as error:
-        print(str(error), file=sys.stderr)
+        write_stderr_line(str(error))
         return 2
 
     os.chdir(project_dir)
@@ -213,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             platform=platform,
         )
 
-    print(f"unknown command: {parsed.command}", file=sys.stderr)
+    write_stderr_line(f"unknown command: {parsed.command}")
     return 2
 
 

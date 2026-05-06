@@ -16,9 +16,10 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
 from importlib import metadata
 from pathlib import Path
+
+from taac2026.infrastructure.logging import configure_logging, logger
 
 
 DEFAULT_UV_INSTALL_URL = "https://astral.sh/uv/install.sh"
@@ -92,8 +93,7 @@ class LogSink:
         return None
 
     def log(self, message: str) -> None:
-        line = f"[{datetime.now().astimezone().strftime('%Y-%m-%dT%H:%M:%S%z')}] {message}"
-        print(line)
+        logger.info(message)
 
 
 def _sanitize_proxy_value(value: str) -> str:
@@ -572,6 +572,7 @@ def _run_diagnostic_step(sink: LogSink, label: str, step: Callable[[], None], *,
 
 
 def collect_host_device_info(config: HostDeviceInfoConfig) -> dict[str, object]:
+    configure_logging()
     sink = LogSink()
     try:
         sink.log("==== Host and device information ====")

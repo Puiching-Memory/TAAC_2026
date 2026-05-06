@@ -17,6 +17,7 @@ from taac2026.infrastructure.bundles.zip_writer import (
 from taac2026.infrastructure.bundles.manifest_store import BundleKind, build_bundle_manifest, get_bundle_definition
 from taac2026.infrastructure.io.files import repo_root
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
 
 
 EntryPointWriter = Callable[[Path, Path], None]
@@ -119,9 +120,9 @@ def run_bundle_cli(
         force=args.force,
     )
     if args.json:
-        print(dumps(bundle_payload(result), indent=2))
+        write_stdout_line(dumps(bundle_payload(result), indent=2))
     else:
-        print(format_bundle_summary(result, kind=command.kind))
+        write_stdout_line(format_bundle_summary(result, kind=command.kind))
     return 0
 
 

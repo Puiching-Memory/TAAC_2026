@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +12,7 @@ import pyarrow.parquet as pq
 from numpy.typing import NDArray
 
 from taac2026.infrastructure.io.json import read_path
+from taac2026.infrastructure.logging import logger
 
 
 DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE = 1024
@@ -273,8 +273,8 @@ def build_pcvr_observed_schema_report(
         "row_count": int(sum(num_rows for _file_path, _rg_index, num_rows in selected_row_groups)),
         "schema": observed_schema,
     }
-    logging.info(
-        "Built PCVR observed schema report for %s: row_groups=%s, rows=%d",
+    logger.info(
+        "Built PCVR observed schema report for {}: row_groups={}, rows={}",
         report["dataset_role"],
         report["row_group_range"],
         report["row_count"],

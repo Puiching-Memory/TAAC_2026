@@ -10,6 +10,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+from taac2026.infrastructure.io.streams import write_stderr_line
 from taac2026.infrastructure.platform.env import RuntimePlatform
 
 
@@ -58,7 +59,7 @@ def install_project_pip_dependencies(project_dir: Path, platform: RuntimePlatfor
     command.extend(split_env_words("TAAC_PIP_EXTRA_ARGS"))
     command.append(target)
 
-    print("Installing TAAC project dependencies from pyproject.toml", file=sys.stderr)
+    write_stderr_line("Installing TAAC project dependencies from pyproject.toml")
     subprocess.check_call(command, cwd=project_dir)
 
 

@@ -1,6 +1,5 @@
 """PCVRBaselinePlus: an accelerated baseline variant for PCVR."""
 
-import logging
 import math
 import torch
 import torch.nn as nn
@@ -8,6 +7,7 @@ import torch.nn.functional as F
 from typing import NamedTuple
 
 from taac2026.api import RMSNorm, configure_rms_norm_runtime as _configure_rms_norm_runtime, maybe_gradient_checkpoint
+from taac2026.infrastructure.logging import logger
 
 
 def configure_rms_norm_runtime(*, rms_norm_backend: str, rms_norm_block_rows: int) -> None:
@@ -1148,7 +1148,7 @@ class RankMixerNSTokenizer(nn.Module):
             for _ in range(num_ns_tokens)
         ])
 
-        logging.info(
+        logger.info(
             f"RankMixerNSTokenizer: {total_num_fids} fids, "
             f"total_emb_dim={total_emb_dim}, chunk_dim={self.chunk_dim}, "
             f"num_ns_tokens={num_ns_tokens}, pad={self._pad_size}"
@@ -1452,7 +1452,7 @@ class PCVRBaselinePlus(nn.Module):
             for domain in self.seq_domains:
                 f, t = _count_filtered(self._seq_vocab_sizes[domain], self._seq_emb_index[domain])
                 if f > 0:
-                    logging.info(f"emb_skip_threshold={emb_skip_threshold}: {domain} skipped {f}/{t} features")
+                    logger.info(f"emb_skip_threshold={emb_skip_threshold}: {domain} skipped {f}/{t} features")
             for name, tokenizer in [
                 ("user_ns", self.user_ns_tokenizer),
                 ("item_ns", self.item_ns_tokenizer),
@@ -1460,7 +1460,7 @@ class PCVRBaselinePlus(nn.Module):
                 f = sum(1 for idx in tokenizer._emb_index if idx == -1)
                 t = len(tokenizer._emb_index)
                 if f > 0:
-                    logging.info(f"emb_skip_threshold={emb_skip_threshold}: {name} skipped {f}/{t} features")
+                    logger.info(f"emb_skip_threshold={emb_skip_threshold}: {name} skipped {f}/{t} features")
 
     def _init_params(self) -> None:
         """Applies Xavier initialization to all embedding weights."""
@@ -1535,8 +1535,8 @@ class PCVRBaselinePlus(nn.Module):
         if self.num_time_buckets > 0:
             skip_count += 1
 
-        logging.info(f"Re-initialized {reinit_count} high-cardinality Embeddings "
-                     f"(vocab>{cardinality_threshold}), kept {skip_count}")
+        logger.info(f"Re-initialized {reinit_count} high-cardinality Embeddings "
+                f"(vocab>{cardinality_threshold}), kept {skip_count}")
         return reinit_ptrs
 
     def get_sparse_params(self) -> list[nn.Parameter]:

@@ -601,8 +601,8 @@ def test_infer_request_runtime_settings_override_train_config(tmp_path: Path) ->
     assert compile_source == "request"
 
 
-def test_log_prediction_progress_reports_rows_and_batches(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.INFO):
+def test_log_prediction_progress_reports_rows_and_batches(log_capture) -> None:
+    with log_capture.at_level(logging.INFO):
         _log_prediction_progress(
             mode="inference",
             processed_rows=50_000,
@@ -612,7 +612,7 @@ def test_log_prediction_progress_reports_rows_and_batches(caplog: pytest.LogCapt
             elapsed_seconds=12.3,
         )
 
-    assert "PCVR inference progress:" in caplog.text
-    assert "50000/310000 rows" in caplog.text
-    assert "batch 200/1211" in caplog.text
-    assert "elapsed=12.3s" in caplog.text
+    assert "PCVR inference progress:" in log_capture.text
+    assert "50000/310000 rows" in log_capture.text
+    assert "batch 200/1211" in log_capture.text
+    assert "elapsed=12.3s" in log_capture.text

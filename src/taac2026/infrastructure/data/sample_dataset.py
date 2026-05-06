@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 from datasets.utils.file_utils import huggingface_hub
+
+from taac2026.infrastructure.logging import logger
 
 
 _SAMPLE_DATASET_REPO_ID = "TAAC2026/data_sample_1000"
@@ -46,8 +47,8 @@ def resolve_default_pcvr_sample_paths(
 
     resolved_dataset_path = default_pcvr_sample_dataset_path()
     resolved_schema_path = schema_path.expanduser().resolve() if schema_path is not None else default_pcvr_sample_schema_path()
-    logging.info(
-        "Resolved default PCVR sample dataset from Hugging Face: dataset_path=%s schema_path=%s",
+    logger.info(
+        "Resolved default PCVR sample dataset from Hugging Face: dataset_path={} schema_path={}",
         resolved_dataset_path,
         resolved_schema_path,
     )

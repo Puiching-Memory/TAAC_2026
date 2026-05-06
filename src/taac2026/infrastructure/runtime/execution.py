@@ -5,11 +5,8 @@ from __future__ import annotations
 import copy
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-import logging
 import os
 import random
-import time
-from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from taac2026.infrastructure.logging import configure_logging, logger
 from taac2026.infrastructure.checkpoints import save_checkpoint_state_dict
 
 
@@ -143,50 +141,14 @@ def maybe_compile_callable(callable_obj, *, enabled: bool, label: str):
     try:
         return torch.compile(callable_obj)
     except Exception as error:  # pragma: no cover - exercised via monkeypatched tests.
-        logging.warning("Failed to compile %s; falling back to eager execution: %s", label, error)
+        logger.warning("Failed to compile {}; falling back to eager execution: {}", label, error)
         return callable_obj
 
 
-class LogFormatter(logging.Formatter):
-    """Log formatter that includes wall-clock and elapsed run time."""
+def create_logger(filepath: str | Path):
+    """Configure shared loguru sinks for a training or evaluation process."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.start_time = time.time()
-
-    def format(self, record: logging.LogRecord) -> str:
-        elapsed_seconds = round(record.created - self.start_time)
-        prefix = f"{time.strftime('%x %X')} - {timedelta(seconds=elapsed_seconds)}"
-        message = record.getMessage().replace("\n", "\n" + " " * (len(prefix) + 3))
-        return f"{prefix} - {message}"
-
-
-def create_logger(filepath: str | Path) -> logging.Logger:
-    """Configure the root logger for a training or evaluation process."""
-
-    log_path = Path(filepath)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_formatter = LogFormatter()
-
-    file_handler = logging.FileHandler(log_path, "w")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(log_formatter)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(log_formatter)
-
-    logger = logging.getLogger()
-    logger.handlers = []
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-    def reset_time() -> None:
-        log_formatter.start_time = time.time()
-
-    logger.reset_time = reset_time  # type: ignore[attr-defined]
+    configure_logging(filepath)
     return logger
 
 
@@ -265,8 +227,8 @@ class EarlyStopping:
                 self.counter = max(0, current_step - self.best_step)
             else:
                 self.counter += 1
-            logging.info(
-                "%searlyStopping counter: %s / %s %s",
+            logger.info(
+                "{}earlyStopping counter: {} / {} {}",
                 self.label,
                 self.counter,
                 self.resolved_patience,
@@ -275,7 +237,7 @@ class EarlyStopping:
             if self.counter >= self.resolved_patience:
                 self.early_stop = True
         else:
-            logging.info("%searlyStopping counter reset!", self.label)
+            logger.info("{}earlyStopping counter reset!", self.label)
             self.best_score = score
             self.best_model = copy.deepcopy(model.state_dict())
             self.best_extra_metrics = extra_metrics
@@ -285,7 +247,7 @@ class EarlyStopping:
 
     def save_checkpoint(self, score: float, model: nn.Module) -> None:
         if self.verbose:
-            logging.info("Validation score increased. Saving model ...")
+            logger.info("Validation score increased. Saving model ...")
         checkpoint_path = Path(self.checkpoint_path)
         save_checkpoint_state_dict(model.state_dict(), checkpoint_path)
         self.best_saved_score = score

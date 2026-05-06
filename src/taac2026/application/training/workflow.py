@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from taac2026.domain.model_contract import (
     load_ns_groups,
     parse_seq_max_lens,
 )
+from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.runtime.execution import EarlyStopping, RuntimeExecutionConfig
 from taac2026.infrastructure.checkpoints import preferred_checkpoint_path
@@ -53,9 +53,9 @@ class PCVRTrainDataBundle:
 def default_build_train_data(context: PCVRTrainContext) -> PCVRTrainDataBundle:
     seq_max_lens = parse_seq_max_lens(str(context.args.seq_max_lens))
     if seq_max_lens:
-        logging.info("Seq max_lens override: %s", seq_max_lens)
+        logger.info("Seq max_lens override: {}", seq_max_lens)
 
-    logging.info("Using PCVR train data pipeline: %s.get_pcvr_data", pcvr_data.__name__)
+    logger.info("Using PCVR train data pipeline: {}.get_pcvr_data", pcvr_data.__name__)
     train_loader, valid_loader, dataset = pcvr_data.get_pcvr_data(
         data_dir=str(context.data_dir),
         schema_path=str(context.schema_path),
@@ -85,8 +85,8 @@ def default_build_train_model(
         context.package_dir,
         context.ckpt_dir,
     )
-    logging.info("User NS groups: %s", user_ns_groups)
-    logging.info("Item NS groups: %s", item_ns_groups)
+    logger.info("User NS groups: {}", user_ns_groups)
+    logger.info("Item NS groups: {}", item_ns_groups)
 
     model = build_pcvr_model(
         model_module=context.model_module,
@@ -101,8 +101,8 @@ def default_build_train_model(
     num_sequences = len(data_bundle.dataset.seq_domains)
     num_ns = model.num_ns
     token_count = context.args.num_queries * num_sequences + num_ns
-    logging.info(
-        "PCVR model created: class=%s, num_ns=%s, T=%s, d_model=%s, rank_mixer_mode=%s",
+    logger.info(
+        "PCVR model created: class={}, num_ns={}, T={}, d_model={}, rank_mixer_mode={}",
         context.model_class_name,
         num_ns,
         token_count,
@@ -110,7 +110,7 @@ def default_build_train_model(
         context.args.rank_mixer_mode,
     )
     total_params = sum(parameter.numel() for parameter in model.parameters())
-    logging.info("Total parameters: %s", f"{total_params:,}")
+    logger.info("Total parameters: {}", f"{total_params:,}")
     return model
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -13,6 +12,7 @@ from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
 import taac2026.infrastructure.data.dataset as pcvr_data
 from taac2026.domain.config import REQUIRED_PCVR_TRAIN_CONFIG_KEYS
+from taac2026.infrastructure.logging import logger
 from taac2026.domain.sidecar import normalize_pcvr_train_config_sidecar
 from taac2026.domain.model_contract import resolve_schema_path
 
@@ -56,7 +56,7 @@ def default_load_runtime_schema(
 ) -> tuple[Path, Any]:
     del experiment
     resolved_schema_path = resolve_schema_path(dataset_path, schema_path, checkpoint_dir)
-    logging.info("Resolved PCVR %s schema.json: %s", mode, resolved_schema_path)
+    logger.info("Resolved PCVR {} schema.json: {}", mode, resolved_schema_path)
     return resolved_schema_path, read_json(resolved_schema_path)
 
 
@@ -115,7 +115,7 @@ def default_write_observed_schema_report(
         dataset_role=dataset_role,
     )
     write_json(output_path, report)
-    logging.info("Wrote PCVR observed schema report for %s: %s", dataset_role, output_path)
+    logger.info("Wrote PCVR observed schema report for {}: {}", dataset_role, output_path)
     return output_path
 
 

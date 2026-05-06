@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -13,6 +12,7 @@ import torch
 
 from taac2026.domain.config import DENSE_LR_SCHEDULER_TYPE_CHOICES, PCVRTrainConfig
 from taac2026.domain.model_contract import resolve_schema_path
+from taac2026.infrastructure.logging import logger
 from taac2026.application.training.workflow import (
     PCVRTrainContext,
     PCVRTrainHooks,
@@ -359,14 +359,14 @@ def train_pcvr_model(
     config = vars(args).copy()
     data_pipeline_config = defaults.data_pipeline
     config.update(data_pipeline_config.to_flat_dict())
-    logging.info("Args: %s", config)
+    logger.info("Args: {}", config)
     runtime_execution = RuntimeExecutionConfig(
         amp=bool(args.amp),
         amp_dtype=str(args.amp_dtype),
         compile=bool(args.compile),
     )
-    logging.info(
-        "Resolved PCVR training runtime: %s", runtime_execution.summary(args.device)
+    logger.info(
+        "Resolved PCVR training runtime: {}", runtime_execution.summary(args.device)
     )
 
     from torch.utils.tensorboard import SummaryWriter
@@ -401,5 +401,5 @@ def train_pcvr_model(
     finally:
         writer.close()
 
-    logging.info("Training complete!")
+    logger.info("Training complete!")
     return summary

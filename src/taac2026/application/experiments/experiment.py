@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import logging
 import os
 import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -23,6 +22,7 @@ from taac2026.application.experiments.runtime import PCVRExperimentRuntimeMixin
 from taac2026.application.evaluation.workflow import PCVRPredictionHooks, _log_prediction_progress
 from taac2026.application.evaluation.runtime import PCVRRuntimeHooks
 from taac2026.infrastructure.data.sample_dataset import resolve_default_pcvr_sample_paths
+from taac2026.infrastructure.logging import logger
 from taac2026.application.training.workflow import PCVRTrainHooks
 from taac2026.application.training.args import train_pcvr_model
 
@@ -167,8 +167,8 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             request,
             config,
         )
-        logging.info(
-            "Resolved PCVR evaluation runtime: experiment=%s, checkpoint=%s, batch_size=%d (%s), num_workers=%d (%s), amp=%s (%s), amp_dtype=%s (%s), compile=%s (%s)",
+        logger.info(
+            "Resolved PCVR evaluation runtime: experiment={}, checkpoint={}, batch_size={} ({}), num_workers={} ({}), amp={} ({}), amp_dtype={} ({}), compile={} ({})",
             self.name,
             checkpoint,
             effective_batch_size,
@@ -252,8 +252,8 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             request,
             config,
         )
-        logging.info(
-            "Resolved PCVR inference runtime: experiment=%s, checkpoint=%s, batch_size=%d (%s), num_workers=%d (%s), amp=%s (%s), amp_dtype=%s (%s), compile=%s (%s)",
+        logger.info(
+            "Resolved PCVR inference runtime: experiment={}, checkpoint={}, batch_size={} ({}), num_workers={} ({}), amp={} ({}), amp_dtype={} ({}), compile={} ({})",
             self.name,
             checkpoint,
             effective_batch_size,

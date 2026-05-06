@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,6 +17,7 @@ from taac2026.infrastructure.checkpoints import (
     write_checkpoint_sidecars,
 )
 from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
+from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.optimization.registry import build_dense_optimizer, dense_optimizer_display_name
 from taac2026.infrastructure.optimization.schedules import dense_lr_multiplier
 from taac2026.infrastructure.optimization.transforms import orthogonalize_gradient
@@ -75,13 +75,13 @@ class PCVRTrainerSupportMixin:
         if not skip_model_file:
             save_checkpoint_state_dict(self.model.state_dict(), checkpoint_dir)
         self._write_sidecar_files(checkpoint_dir)
-        logging.info("Saved checkpoint to %s", preferred_checkpoint_path(checkpoint_dir))
+        logger.info("Saved checkpoint to {}", preferred_checkpoint_path(checkpoint_dir))
         return checkpoint_dir
 
     def _remove_old_best_dirs(self) -> None:
         for old_dir in self.save_dir.glob("global_step*.best_model"):
             shutil.rmtree(old_dir)
-            logging.info("Removed old best_model dir: %s", old_dir)
+            logger.info("Removed old best_model dir: {}", old_dir)
 
     def _batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
         device_batch: dict[str, Any] = {}
@@ -158,8 +158,8 @@ class PCVRTrainerSupportMixin:
             if parameter.data_ptr() not in reinit_ptrs and parameter.data_ptr() in old_state:
                 self.sparse_optimizer.state[parameter] = old_state[parameter.data_ptr()]
                 restored += 1
-        logging.info(
-            "Reinitialized sparse optimizer at step %d (%d params reset, %d preserved)",
+        logger.info(
+            "Reinitialized sparse optimizer at step {} ({} params reset, {} preserved)",
             total_step,
             len(reinit_ptrs),
             restored,
