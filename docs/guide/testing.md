@@ -59,18 +59,18 @@ uv run --with coverage coverage report --fail-under=70 \
 | `tests/unit/application/benchmarking/test_pcvr_optimizer_benchmark.py`    | 优化器 benchmark 报表逻辑                                     |
 | `tests/unit/application/benchmarking/test_pcvr_tilelang_ops_benchmark.py` | TileLang benchmark 报表逻辑                                   |
 | `tests/unit/domain/test_metrics.py`                                       | AUC、LogLoss、GAUC、诊断指标                                  |
-| `tests/unit/application/experiments/test_discovery.py`      | 实验包扫描与发现                                              |
-| `tests/unit/experiments/test_packages.py`       | PCVR 实验包契约、模型类名、前向 / 反向 / predict              |
+| `tests/unit/application/experiments/test_discovery.py`                    | 实验包扫描与发现                                              |
+| `tests/unit/experiments/test_packages.py`                                 | PCVR 实验包契约、模型类名、前向 / 反向 / predict              |
 | `tests/unit/infrastructure/test_checkpoints.py`                           | Checkpoint 文件、sidecar 与格式约束                           |
-| `tests/unit/application/experiments/test_registry.py`                     | 实验包装载                                                     |
-| `tests/unit/experiments/test_maintenance_experiments.py`   | 维护类实验包元数据契约                                        |
-| `tests/unit/experiments/test_online_dataset_eda_runner.py` | Online Dataset EDA 运行器                                     |
-| `tests/unit/domain/test_model_contract.py`                    | Schema 到模型参数的转换                                       |
-| `tests/unit/experiments/test_runtime_contract_matrix.py`          | 运行时契约矩阵、schema/配置/sidecar 一致性                    |
-| `tests/unit/infrastructure/runtime/test_trainer.py`                     | Trainer 循环与优化器协作                                      |
-| `tests/unit/infrastructure/data/test_split.py`                  | Row Group 切分与 observed schema                              |
-| `tests/unit/infrastructure/data/test_augmentation.py`           | 数据增强流水线                                                |
-| `tests/unit/application/experiments/test_pcvr_runtime.py`               | 评估 / 推理运行时与 sidecar 输出                              |
+| `tests/unit/application/experiments/test_registry.py`                     | 实验包装载                                                    |
+| `tests/unit/experiments/test_maintenance_experiments.py`                  | 维护类实验包元数据契约                                        |
+| `tests/unit/experiments/test_online_dataset_eda_runner.py`                | Online Dataset EDA 运行器                                     |
+| `tests/unit/domain/test_model_contract.py`                                | Schema 到模型参数的转换                                       |
+| `tests/unit/experiments/test_runtime_contract_matrix.py`                  | 运行时契约矩阵、schema/配置/sidecar 一致性                    |
+| `tests/unit/infrastructure/runtime/test_trainer.py`                       | Trainer 循环与优化器协作                                      |
+| `tests/unit/infrastructure/data/test_split.py`                            | Row Group 切分与 observed schema                              |
+| `tests/unit/infrastructure/data/test_augmentation.py`                     | 数据增强流水线                                                |
+| `tests/unit/application/experiments/test_pcvr_runtime.py`                 | 评估 / 推理运行时与 sidecar 输出                              |
 | `tests/unit/infrastructure/accelerators/test_tilelang_ops.py`             | TileLang / Torch RMSNorm 算子层契约                           |
 | `tests/unit/infrastructure/accelerators/attention/test_flash_qla.py`      | Flash QLA 加速实现与边界行为                                  |
 
@@ -78,22 +78,22 @@ uv run --with coverage coverage report --fail-under=70 \
 
 先跑最小相关测试，再决定是否扩大到整个 `tests/unit/`。
 
-| 改动位置                                                    | 最小复核                                                                                                                                                                                                    |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `experiments/<name>/model.py`                               | `tests/unit/experiments/test_packages.py`                                                                                                                                         |
-| `experiments/<name>/__init__.py`                            | `tests/unit/experiments/test_packages.py`、`tests/unit/application/experiments/test_discovery.py`、`tests/unit/experiments/test_runtime_contract_matrix.py` |
-| 维护 / 分析类 `experiments/<name>`                           | `tests/unit/experiments/test_maintenance_experiments.py`；若改的是 EDA 运行器，再加 `tests/unit/experiments/test_online_dataset_eda_runner.py`                                |
-| `src/taac2026/application/training/cli.py`                  | `tests/unit/application/training/test_cli.py`                                                                                                                                                               |
-| `src/taac2026/application/evaluation/cli.py`                | `tests/unit/application/evaluation/test_cli.py`                                                                                                                                                             |
-| `src/taac2026/application/evaluation/infer.py`              | `tests/unit/application/evaluation/test_infer_entrypoint.py`                                                                                                                                                |
-| `src/taac2026/application/packaging/`                       | `tests/unit/application/packaging/test_cli.py`、`tests/unit/application/packaging/test_training.py`、`tests/unit/application/packaging/test_inference.py`                                                |
-| `src/taac2026/domain/model_contract.py`              | `tests/unit/domain/test_model_contract.py`、`tests/unit/experiments/test_runtime_contract_matrix.py`                                                                                    |
-| `src/taac2026/infrastructure/runtime/trainer.py`               | `tests/unit/infrastructure/runtime/test_trainer.py`                                                                                                                                                       |
-| `src/taac2026/infrastructure/data/dataset.py`                  | `tests/unit/infrastructure/data/test_split.py`                                                                                                                                                    |
-| `src/taac2026/infrastructure/data/pipeline.py`         | `tests/unit/infrastructure/data/test_augmentation.py`                                                                                                                                             |
-| `src/taac2026/infrastructure/accelerators/`          | `tests/unit/infrastructure/accelerators/test_tilelang_ops.py`、`tests/unit/infrastructure/accelerators/attention/test_flash_qla.py`                                                                                    |
-| `src/taac2026/domain/metrics.py`                            | `tests/unit/domain/test_metrics.py`                                                                                                                                                                         |
-| `run.sh`                                                    | `tests/unit/application/bootstrap/test_run_sh_commands.py`                                                                                                                                                  |
+| 改动位置                                         | 最小复核                                                                                                                                                    |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiments/<name>/model.py`                    | `tests/unit/experiments/test_packages.py`                                                                                                                   |
+| `experiments/<name>/__init__.py`                 | `tests/unit/experiments/test_packages.py`、`tests/unit/application/experiments/test_discovery.py`、`tests/unit/experiments/test_runtime_contract_matrix.py` |
+| 维护 / 分析类 `experiments/<name>`               | `tests/unit/experiments/test_maintenance_experiments.py`；若改的是 EDA 运行器，再加 `tests/unit/experiments/test_online_dataset_eda_runner.py`              |
+| `src/taac2026/application/training/cli.py`       | `tests/unit/application/training/test_cli.py`                                                                                                               |
+| `src/taac2026/application/evaluation/cli.py`     | `tests/unit/application/evaluation/test_cli.py`                                                                                                             |
+| `src/taac2026/application/evaluation/infer.py`   | `tests/unit/application/evaluation/test_infer_entrypoint.py`                                                                                                |
+| `src/taac2026/application/packaging/`            | `tests/unit/application/packaging/test_cli.py`、`tests/unit/application/packaging/test_training.py`、`tests/unit/application/packaging/test_inference.py`   |
+| `src/taac2026/domain/model_contract.py`          | `tests/unit/domain/test_model_contract.py`、`tests/unit/experiments/test_runtime_contract_matrix.py`                                                        |
+| `src/taac2026/infrastructure/runtime/trainer.py` | `tests/unit/infrastructure/runtime/test_trainer.py`                                                                                                         |
+| `src/taac2026/infrastructure/data/dataset.py`    | `tests/unit/infrastructure/data/test_split.py`                                                                                                              |
+| `src/taac2026/infrastructure/data/pipeline.py`   | `tests/unit/infrastructure/data/test_augmentation.py`                                                                                                       |
+| `src/taac2026/infrastructure/accelerators/`      | `tests/unit/infrastructure/accelerators/test_tilelang_ops.py`、`tests/unit/infrastructure/accelerators/attention/test_flash_qla.py`                         |
+| `src/taac2026/domain/metrics.py`                 | `tests/unit/domain/test_metrics.py`                                                                                                                         |
+| `run.sh`                                         | `tests/unit/application/bootstrap/test_run_sh_commands.py`                                                                                                  |
 
 ## 新增测试约定
 
