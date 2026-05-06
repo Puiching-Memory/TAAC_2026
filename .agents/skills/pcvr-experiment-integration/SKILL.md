@@ -13,6 +13,7 @@ For experiment package changes:
 
 - `experiments/<name>/__init__.py`
 - `experiments/<name>/model.py`
+- `src/taac2026/api.py`
 - `src/taac2026/application/experiments/{experiment,factory,discovery,registry,runtime}.py`
 - `src/taac2026/domain/{config,experiment,model_contract,sidecar}.py`
 - `tests/unit/experiments/test_packages.py`
@@ -25,6 +26,12 @@ For shared runtime or model-input changes:
 - `src/taac2026/application/{training,evaluation}/`
 - `tests/unit/domain/test_model_contract.py`
 - focused tests under `tests/unit/application/` and `tests/unit/infrastructure/`
+
+For accelerator-backed model behavior:
+
+- `src/taac2026/infrastructure/accelerators/`
+- `src/taac2026/infrastructure/modeling/`
+- `tests/unit/infrastructure/accelerators/`
 
 For bundle behavior, also use `$taac-competition-environment`.
 

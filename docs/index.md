@@ -2,45 +2,55 @@
 icon: lucide/house
 ---
 
-# TAAC 2026 Experiment Workspace
+# TAAC 2026 Docs
 
-腾讯广告算法大赛 2026 的实验工作区。基于 PyTorch 构建，专注于 PCVR（点击后转化率）预测任务。
+这是 TAAC 2026 实验工作区的文档站。它服务两类读者：想尽快把实验跑起来的人，以及准备修改实验包、运行时或线上 bundle 的人。
 
-## 核心能力
+如果你第一次打开这个仓库，先读 [快速开始](getting-started.md)。分区入口负责导览，具体页面负责实现细节。
 
-- **插件式实验包** -- 所有实验统一位于 `experiments/<name>/`。每个包独立携带模型定义或任务入口、NS 分组与默认配置，新增实验无需修改框架代码。
-- **统一训练/评估/推理入口** -- 通过 `taac-train`、`taac-evaluate` 等 CLI 命令驱动所有实验。
-- **可组合数据管道** -- 序列裁剪、特征掩码、域 Dropout、Shuffle Buffer 等增强组件可自由组合。
-- **线上打包** -- `taac-package-train` / `taac-package-infer` 生成符合比赛平台要求的 Bundle。
+## 我想做什么
 
-## 内置实验包
+| 目标 | 去哪里 |
+| ---- | ------ |
+| 本地跑一次 baseline | [快速开始](getting-started.md) |
+| 选择或比较实验包 | [实验包总览](experiments/index.md) |
+| 找任务型文档 | [指南总览](guide/index.md) |
+| 查 schema / 官方快照 | [归档](archive/index.md) |
+| 读研究笔记 | [想法](ideas/index.md) 与 [论文](papers/index.md) |
 
-| 实验包                                          | 模型           | NS Tokenizer | 亮点                       |
-| ----------------------------------------------- | -------------- | ------------ | -------------------------- |
-| [Baseline](experiments/baseline.md)             | HyFormer       | group        | 基准参考                   |
-| [InterFormer](experiments/interformer.md)       | InterFormer    | group        | 交叉注意力                 |
-| [OneTrans](experiments/onetrans.md)             | OneTrans       | rankmixer    | 单 Transformer             |
-| [Symbiosis](experiments/symbiosis.md)           | Symbiosis      | rankmixer    | AMP + RoPE + 11 项特性开关 |
+## 当前仓库在做什么
 
-## 技术栈
+主任务是 PCVR 二分类。仓库提供：
 
-- Python 3.10 - 3.13 / PyTorch 2.7+ / CUDA 12.6
-- `uv` 包管理器
-- Parquet 列式数据格式
-- Ruff 代码风格 / Pytest 测试 / 70% 覆盖率门限
-- Zensical (MkDocs Material) 文档站
+- 统一实验包入口：`experiments/<name>/`
+- 本地训练、评估、推理入口：`bash run.sh train|val|eval|infer`
+- 线上上传物生成：`taac-package-train` 和 `taac-package-infer`
+- 可复用 PCVR 数据管道、模型组件、optimizer 和 accelerator backend
+- 面向 GitHub Pages 的 Zensical 文档站
 
-## 快速预览
+本地 PCVR smoke 会使用默认 demo parquet；不要给本地 PCVR 训练显式传 `--dataset-path`。线上 bundle 由平台变量提供真实数据路径。
+
+## 文档分工
+
+- 顶层页面说明仓库是什么、怎么启动、代码怎么分层。
+- 分区 `index.md` 负责导览和选择。
+- 实验页记录具体实验的模型结构、默认配置、修改点和测试契约。
+- 指南页记录任务的实现细节、命令、输入输出、环境变量和排障。
+- 归档页保存历史资产，不代表当前运行时契约。
+
+## 入口速查
 
 ```bash
-# 安装
-uv sync --extra dev --extra cuda126
+# 本地训练
+bash run.sh train --experiment experiments/baseline --run-dir outputs/baseline_smoke
 
-# 训练
-uv run taac-train --experiment experiments/baseline
+# 本地评估
+bash run.sh val --experiment experiments/baseline --run-dir outputs/baseline_smoke
 
-# 评估
-uv run taac-evaluate single --experiment experiments/baseline
+# 推理
+bash run.sh infer --experiment experiments/baseline --checkpoint outputs/baseline_smoke --result-dir outputs/baseline_infer
+
+# 打包
+uv run taac-package-train --experiment experiments/baseline --output-dir outputs/bundles/baseline_training
+uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
 ```
-
-PCVR quick preview 默认会通过 `datasets` 拉取 Hugging Face 上的 `demo_1000.parquet`，本地不再支持显式 `--dataset-path`；线上 Bundle 仍由平台提供真实数据路径。

@@ -4,92 +4,126 @@ icon: lucide/zap
 
 # Symbiosis
 
-最先进的实验包，集成了多项架构创新和训练优化。
+Symbiosis 是当前实验集中最复杂的 PCVR 模型包。它不是“最小可复制模板”，而是一个带额外模型开关、自定义 hooks 和消融空间的融合实验。
 
-## 包结构
-
-```
-experiments/symbiosis/
-├── __init__.py   # 包含显式 NS 分组配置
-└── model.py
-```
-
-## 模型思路
-
-Symbiosis 在 HyFormer 基础上引入共生学习机制，通过 11 个独立特性开关控制不同组件的启用。核心创新：
-
-- **Context Exchange** -- 用户和物品上下文之间的信息交换（消融实验中影响最大的组件）
-- **Fourier Time** -- 傅里叶时间编码，捕获时间周期性模式
-- **Multi-Scale** -- 多尺度注意力，同时关注局部和全局模式
-- **Domain Gate** -- 域门控，动态加权不同序列域的贡献
-- **Compressed Memory** -- 压缩记忆机制（block_size=16, top_k=8, recent_tokens=64）
-- **RoPE** -- 旋转位置编码（rope_base=1,000,000）
-
-## 训练
-
-| 参数                   | 值                                         |
-| ---------------------- | ------------------------------------------ |
-| 模型类                 | `PCVRSymbiosis`                            |
-| NS Tokenizer           | `rankmixer` (user_tokens=5, item_tokens=2) |
-| `num_blocks`           | 3                                          |
-| `num_heads`            | 4                                          |
-| `dropout_rate`         | 0.02                                       |
-| `dense_optimizer_type` | `orthogonal_adamw`                         |
-| `amp`                  | True, `amp_dtype=bfloat16`                 |
-| `compile`              | True                                       |
-| `batch_size`           | 128                                        |
-| `pairwise_auc_weight`  | 0.05                                       |
+## 快速运行
 
 ```bash
-uv run taac-train \
-  --experiment experiments/symbiosis
+bash run.sh train \
+  --experiment experiments/symbiosis \
+  --run-dir outputs/symbiosis_smoke
 ```
 
-## 消融开关
-
-11 个特性开关（`PCVRSymbiosisConfig`）：
-
-| 开关                      | 说明            |
-| ------------------------- | --------------- |
-| `use_user_item_graph`     | 用户-物品交互图 |
-| `use_fourier_time`        | 傅里叶时间编码  |
-| `use_context_exchange`    | 上下文交换机制  |
-| `use_multi_scale`         | 多尺度注意力    |
-| `use_domain_gate`         | 域门控          |
-| `use_candidate_decoder`   | 候选解码器      |
-| `use_action_conditioning` | 动作条件化      |
-| `use_compressed_memory`   | 压缩记忆        |
-| `use_attention_sink`      | 注意力 Sink     |
-| `use_lane_mixing`         | 车道混合        |
-| `use_semantic_id`         | 语义 ID         |
-
-消融结果（`outputs/ablations/symbiosis_smoke/`，1000 样本 Bootstrap，seed=42）：
-
-| 配置                | AUC 变化                  |
-| ------------------- | ------------------------- |
-| base                | 基准                      |
-| no_context_exchange | **-0.005791**（最大下降） |
-| no_fourier_time     | 较小下降                  |
-| no_multi_scale      | 较小下降                  |
-| no_user_item_graph  | 较小下降                  |
-
-## 评估输出
-
-Checkpoint 保存在 `outputs/pcvr_symbiosis-<slug>/`，格式与 Baseline 一致。
-
-评估命令：
+消融时可以关闭单个组件，例如：
 
 ```bash
-uv run taac-evaluate single \
-  --experiment experiments/symbiosis
+bash run.sh train \
+  --experiment experiments/symbiosis \
+  --run-dir outputs/symbiosis_no_context_exchange \
+  --no-symbiosis-use-context-exchange
 ```
 
-## 线上打包
+Symbiosis 的参数名来自 `experiments/symbiosis/__init__.py` 中的 `SymbiosisModelDefaults`。布尔参数由 argparse 提供 `--foo` / `--no-foo` 两种形式。
+
+## 实验入口
+
+- 实验名：`pcvr_symbiosis`
+- 模型类：`PCVRSymbiosis`
+- NS tokenizer：`rankmixer`
+- 查询数：`num_queries=1`
+- 模型层数：`num_blocks=3`
+- 默认运行时：AMP 开启，`torch.compile` 开启
+- 优化器：`orthogonal_adamw` + cosine schedule
+- 额外 loss：`pairwise_auc_weight=0.05`
+
+模型侧默认打开的融合组件包括用户-物品图、Fourier 时间编码、上下文交换、多尺度、domain gate、候选解码器、action conditioning、压缩记忆、attention sink、lane mixing 和 semantic id。
+
+Symbiosis 是当前少数覆盖默认 hooks 的实验包：
+
+```python
+train_arg_parser=parse_symbiosis_train_args
+train_hook_overrides={"build_model": build_symbiosis_train_model}
+prediction_hook_overrides={"build_model": build_symbiosis_prediction_model}
+runtime_hook_overrides={"load_train_config": load_symbiosis_train_config}
+```
+
+这些 hook 的作用是把 `SymbiosisModelDefaults` 中的额外开关写进 CLI / train_config，并在评估推理时校验这些开关存在。
+
+## 模型结构
+
+模型实现是 `experiments/symbiosis/model.py` 的 `PCVRSymbiosis`。
+
+前向的 `_embed()` 大致分为：
+
+1. user / item tokenization，并可追加 semantic item token。
+2. `UserItemGraphBlock` 更新 user / item token。
+3. 每个序列域通过 `SequenceTokenizer` 编码，可叠加 Fourier time encoding。
+4. action token 生成 action context。
+5. candidate query 由 user、item、graph、action context 拼接投影得到。
+6. candidate decoder 从序列中抽取候选相关上下文，可使用 compressed memory 和 attention sink。
+7. prompt token + NS token 进入 unified blocks，和序列上下文交互。
+8. context exchange blocks 让全局 context 再读序列。
+9. multi-scale context 汇总 mean / recent / last 三种序列视角。
+10. lane mixer / fusion gate 融合 unified、context、scale、graph、candidate 五条 lane。
+11. action-conditioned classifier 输出 logits。
+
+`predict()` 返回 `(logits, embeddings)`，embeddings 是融合后的候选表示。
+
+## 消融参数
+
+`SymbiosisModelDefaults` 定义的布尔开关会变成 CLI 参数：
+
+| 开关 | 控制 |
+| ---- | ---- |
+| `symbiosis_use_user_item_graph` | user/item graph blocks |
+| `symbiosis_use_fourier_time` | Fourier time encoding |
+| `symbiosis_use_context_exchange` | context exchange blocks |
+| `symbiosis_use_multi_scale` | mean / recent / last 多尺度汇总 |
+| `symbiosis_use_domain_gate` | unified block 内的 domain gate |
+| `symbiosis_use_candidate_decoder` | candidate-conditioned sequence decoder |
+| `symbiosis_use_action_conditioning` | action context 和 prompt conditioning |
+| `symbiosis_use_compressed_memory` | decoder compressed memory |
+| `symbiosis_use_attention_sink` | decoder attention sink |
+| `symbiosis_use_lane_mixing` | five-lane mixer |
+| `symbiosis_use_semantic_id` | semantic item token |
+
+布尔参数支持 `--symbiosis-use-...` 和 `--no-symbiosis-use-...`。
+
+压缩记忆相关整数参数：
+
+- `symbiosis_memory_block_size`
+- `symbiosis_memory_top_k`
+- `symbiosis_recent_tokens`
+
+## 打包
 
 ```bash
-# 训练 Bundle
-uv run taac-package-train --experiment experiments/symbiosis --output-dir outputs/bundle
+uv run taac-package-train \
+  --experiment experiments/symbiosis \
+  --output-dir outputs/bundles/symbiosis_training
+```
 
-# 推理 Bundle
-uv run taac-package-infer --experiment experiments/symbiosis --output-dir outputs/bundle
+```bash
+uv run taac-package-infer \
+  --experiment experiments/symbiosis \
+  --output-dir outputs/bundles/symbiosis_inference
+```
+
+Symbiosis 有自定义训练、预测和运行时 hooks；改动后建议同时验证训练和推理 bundle。
+
+## 改动前先看
+
+- 实验入口和额外 CLI 参数：`experiments/symbiosis/__init__.py`
+- 模型实现：`experiments/symbiosis/model.py`
+- 实验包契约测试：`tests/unit/experiments/test_packages.py`
+- 运行时契约矩阵：`tests/unit/experiments/test_runtime_contract_matrix.py`
+
+如果只是新增普通模型，不要从 Symbiosis 复制；它的 hook 和额外参数会让新实验复杂很多。
+
+## 最小复核
+
+```bash
+uv run pytest tests/unit/experiments/test_packages.py -q
+uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/unit/application/experiments/test_pcvr_runtime.py -q
 ```

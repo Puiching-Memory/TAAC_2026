@@ -5,19 +5,19 @@ description: Use when editing or reviewing TAAC docs, zensical configuration, ge
 
 # TAAC Docs Pages Pipeline
 
-Use this skill to avoid stale-docs and Pages false positives. Treat workflow files and docs config as the source of truth.
+Use this skill to avoid stale-docs and Pages false positives. Treat workflow files, docs config, and touched docs as the source of truth.
 
 ## Read First
 
-- `.github/workflows/deploy-docs.yml`
-- `.github/workflows/ci.yml`
-- `zensical.toml`
-- `docs/guide/local-site.md`
-- `docs/getting-started.md`
-- touched files under `docs/`
+- Touched files under `docs/`
+- The nearest section `index.md` for changed docs, when changing navigation or page roles
+- `zensical.toml`, when changing navigation, assets, theme, or page paths
+- `.github/workflows/deploy-docs.yml` and `.github/workflows/ci.yml`, when making claims about CI or Pages behavior
+- `docs/guide/local-site.md`, when changing local build, deployment, or generated-site behavior
 
 ## Non-Obvious Context
 
+- Section `index.md` pages are directional guides. Leaf docs should carry implementation details: commands, inputs/outputs, environment variables, source entrypoints, and failure modes.
 - `site/` is generated local output. Do not treat drift between `docs/` and `site/` as a GitHub Pages regression unless the user explicitly cares about committed static output.
 - Pages behavior is defined by the workflows. Inspect triggers and build commands before claiming docs-only changes do or do not run CI/deploy.
 - Pull request behavior and main-branch deployment behavior can differ; verify the event path in workflow YAML instead of assuming one pipeline.

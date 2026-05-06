@@ -4,81 +4,102 @@ icon: lucide/server
 
 # Host Device Info
 
-主机与设备诊断信息收集工具，以实验包形式集成，可在本地或线上环境一键采集运行环境快照。
+Host Device Info 是一个维护类实验包，用来在本地或线上采集运行环境快照。它不训练模型，也不需要数据集。
 
-## 概述
-
-`host_device_info` 是一个维护类实验包（`kind: maintenance`），不涉及模型训练。它收集主机硬件、GPU、网络连通性、包管理器状态等诊断信息，输出结构化日志，用于排查线上训练环境问题。
-
-该包不需要数据集（`requires_dataset: False`）。
-
-## 收集内容
-
-| 类别           | 采集项                                                         |
-| -------------- | -------------------------------------------------------------- |
-| 系统信息       | OS release、hostname、uptime、kernel、CPU、内存、磁盘、网络接口 |
-| GPU            | nvidia-smi、nvcc 版本、/dev/nvidia* 设备节点、/dev/dri          |
-| 代理环境       | HTTP_PROXY、HTTPS_PROXY 等 8 个代理变量                        |
-| uv 引导状态    | uv 是否安装、版本、下载源可达性                                |
-| 依赖索引连通性 | PyPI、腾讯 PyPI、Conda main/forge、腾讯 Conda、PyTorch CPU/CUDA126 |
-| 网络探测矩阵   | 各站点 × inherited/no_proxy 两种代理模式                       |
-| pip 下载探测   | pip download 实际下载测试（继承代理 / 无代理 / 腾讯源）        |
-| conda 搜索探测 | conda search 实际搜索测试                                      |
-| 构建工具       | gcc、g++、make、cmake、ninja、pkg-config、cc、c++              |
-| Python 环境    | 可执行文件、版本、平台、CUDA_VISIBLE_DEVICES、已安装包列表     |
-
-## 配置
-
-配置项在 `experiments/host_device_info/__init__.py` 的 `HostDeviceInfoConfig` 中定义。主要可调参数：
-
-| 参数                       | 默认值                              | 说明                         |
-| -------------------------- | ----------------------------------- | ---------------------------- |
-| `probe_timeout_seconds`    | 10                                  | 网络探测超时（秒）           |
-| `probe_detail_limit`       | 240                                 | 日志详情截断长度             |
-| `enable_proxy_matrix`      | True                                | 是否执行连接矩阵探测         |
-| `enable_pip_download_probe`| True                                | 是否执行 pip download 探测   |
-| `enable_conda_search_probe`| True                                | 是否执行 conda search 探测   |
-| `site_probe_targets`       | example/github/python               | 额外站点探测目标             |
-
-## 运行
+## 快速运行
 
 ```bash
-uv run taac-train --experiment experiments/host_device_info
+bash run.sh train --experiment experiments/host_device_info
 ```
 
-不需要 `--dataset-path` 或 `--schema-path`。
+不需要传 `--dataset-path` 或 `--schema-path`。
 
-## 线上打包
+## 实验契约
 
-```bash
-uv run taac-package-train --experiment experiments/host_device_info --output-dir outputs/bundle
+入口文件 `experiments/host_device_info/__init__.py` 导出 `ExperimentSpec`：
+
+```python
+EXPERIMENT = ExperimentSpec(
+    name="host_device_info",
+    kind="maintenance",
+    requires_dataset=False,
+)
 ```
 
-该维护类实验支持训练 bundle 打包，生成 `run.sh` 与 `code_package.zip`，可在线上环境直接执行诊断任务。
+`train_fn` 会拒绝 `extra_args`。如果要调采集项，需要改 `HOST_DEVICE_INFO_CONFIG` 或 `runner.py`，不是在 CLI 后面追加参数。
 
-由于 `host_device_info` 不实现模型推理接口，因此不适用 `taac-package-infer`。
+## 它会看什么
 
-## 输出
+报告会打印到 stdout，按节输出，便于复制、grep 和贴到 issue 里。重点包括：
 
-运行后直接将诊断日志打印到 stdout，同时返回结构化摘要：
+- 操作系统、CPU、内存、磁盘和基础命令。
+- GPU、CUDA、`nvidia-smi`、`nvcc` 和设备节点。
+- Python 可执行文件、版本和已安装包。
+- 代理环境、常见依赖源连通性、pip / conda 探测。
+- 构建工具是否存在。
+
+具体采集项以 `experiments/host_device_info/runner.py` 为准。
+
+## Runner 配置
+
+`HostDeviceInfoConfig` 主要字段：
+
+| 字段 | 默认 | 作用 |
+| ---- | ---- | ---- |
+| `probe_timeout_seconds` | 10 | URL / pip / conda 探测超时 |
+| `probe_detail_limit` | 240 | 失败详情截断长度 |
+| `enable_proxy_matrix` | True | 对站点同时测试 inherited / no_proxy |
+| `enable_pip_download_probe` | True | 执行真实 `pip download` 探测 |
+| `pip_download_package` | `sampleproject==4.0.0` | pip 下载探测包 |
+| `enable_conda_search_probe` | True | 执行真实 `conda search` 探测 |
+| `conda_probe_spec` | `python=3.10` | conda search 查询对象 |
+| `site_probe_targets` | example / github / python | 额外 URL 探测目标 |
+
+默认会脱敏带账号的代理 URL，但不会隐藏普通主机和端口。公开日志前仍应人工看一眼。
+
+## 输出格式
+
+采集输出以日志节分隔，例如：
+
+```text
+---- system ----
+---- gpu ----
+---- proxy env ----
+---- dependency index probes ----
+---- pip download probes ----
+---- conda search probes ----
+```
+
+实验返回的 summary 至少包含：
 
 ```python
 {
     "experiment_name": "host_device_info",
     "run_dir": "...",
     "repo_root": "...",
-    "requested_profile": None,
-    "requested_python": None,
 }
 ```
 
-诊断日志按节组织，每节以 `---- <title> ----` 分隔，便于 grep 和人工阅读。
+这个 summary 只适合自动化检查；真正排障要看 stdout 日志。
 
-## 与 competition-online-server 的关系
+## 打包到线上
 
-[线上运行环境速查](../guide/competition-online-server.md) 是基于多次真实任务日志整理的结论性文档；本工具是采集原始探测数据的自动化入口。两者互补：本工具生成原始数据，速查页整理稳定结论。
+```bash
+uv run taac-package-train \
+  --experiment experiments/host_device_info \
+  --output-dir outputs/bundles/host_device_info
+```
 
-## 来源
+上传后仍执行训练 bundle 的 `run.sh`。这个实验不支持 `taac-package-infer`。
 
-- 运行器源码：`experiments/host_device_info/runner.py`
-- 包入口：`experiments/host_device_info/__init__.py`
+## 源码入口
+
+- 实验入口：`experiments/host_device_info/__init__.py`
+- 采集逻辑：`experiments/host_device_info/runner.py`
+- 平台结论页：[线上运行环境速查](../guide/competition-online-server.md)
+
+## 最小复核
+
+```bash
+uv run pytest tests/unit/experiments/test_maintenance_experiments.py -q
+```

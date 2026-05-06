@@ -4,119 +4,141 @@ icon: lucide/clipboard-list
 
 # 测试
 
-## 前置条件
+测试的目标不是“每次都跑最重的一套”，而是先覆盖你刚改动的契约，再在合并前扩大范围。
+
+## 准备环境
 
 ```bash
 uv sync --locked --extra dev --extra cuda126
 ```
 
-## 常用命令
+只做 CPU 单测时，通常 `--extra dev` 已经足够；涉及本地 CUDA 训练或 accelerator 时再同步 CUDA profile。
+
+## 最常用命令
 
 ```bash
-# 运行所有单元测试
-uv run pytest tests/unit -v
+# 全部单元测试
+uv run pytest tests/unit -q
 
-# 只运行 unit marker
-uv run pytest -m unit -v
+# 实验包契约
+uv run pytest tests/unit/experiments/test_packages.py -q
+uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
 
-# 运行实验包契约测试
-uv run pytest tests/unit/experiments/test_packages.py -v
+# 打包契约
+uv run pytest tests/unit/application/packaging -q
+uv run pytest tests/unit/application/bootstrap -q
 
-# 运行运行时契约矩阵
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -v
+# 风格检查
+uv run ruff check .
 
-# 运行训练 / 推理打包测试
-uv run pytest tests/unit/application/packaging/test_training.py -v
-uv run pytest tests/unit/application/packaging/test_inference.py -v
-
-# 运行风格检查
-uv run --with ruff ruff check .
-
-# 复现当前 CI 的 CPU 单测命令
-uv run --with torch==2.7.1 --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v
+# 文档构建
+uv run zensical build --strict
 ```
 
-如果要在本地复现覆盖率门控，CI 还会在测试完成后执行：
+## Pytest 标记
+
+`pyproject.toml` 注册了这些 marker：
+
+| marker | 含义 |
+| ------ | ---- |
+| `unit` | 快速单元测试和本地契约测试 |
+| `integration` | 跨模块流程测试 |
+| `gpu` | 需要 CUDA GPU 的测试 |
+| `benchmark_cpu` | 可在 CPU 上跑的 benchmark 测试 |
+| `benchmark_gpu` | 只适合本地 GPU CLI 的 benchmark |
+
+`tests/conftest.py` 会按路径自动给 `tests/unit/**` 标 `unit`，给 `tests/integration/**` 标 `integration`。因此 CI 可以用 `pytest -m unit` 只跑 CPU 安全的单元测试。
+
+## 按改动选择最小复核
+
+| 改动位置                         | 先跑                                                                                                      |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `experiments/<name>/__init__.py` | `tests/unit/experiments/test_packages.py`，`tests/unit/experiments/test_runtime_contract_matrix.py`       |
+| `experiments/<name>/model.py`    | `tests/unit/experiments/test_packages.py`                                                                 |
+| 维护类实验                       | `tests/unit/experiments/test_maintenance_experiments.py`                                                  |
+| Online Dataset EDA               | `tests/unit/experiments/test_online_dataset_eda_runner.py`                                                |
+| 训练 CLI / args                  | `tests/unit/application/training/test_cli.py`                                                             |
+| 评估 / 推理 CLI                  | `tests/unit/application/evaluation`                                                                       |
+| 打包逻辑                         | `tests/unit/application/packaging`，`tests/unit/application/bootstrap`                                    |
+| checkpoint / sidecar             | `tests/unit/infrastructure/test_checkpoints.py`，`tests/unit/experiments/test_runtime_contract_matrix.py` |
+| 数据管道                         | `tests/unit/infrastructure/data`                                                                          |
+| accelerator                      | `tests/unit/infrastructure/accelerators`                                                                  |
+| 文档                             | `uv run zensical build --strict`                                                                          |
+
+## CI 会做什么
+
+以 `.github/workflows/ci.yml` 为准，当前 CI 主要做三件事：
+
+- Python 3.10 到 3.13 的 Ruff 检查。
+- Python 3.10 到 3.13 的 CPU 单元测试。
+- 在规范 Python 版本上生成覆盖率，并对指定核心模块做覆盖率门控。
+
+CI 只会被这些路径触发：
+
+```text
+.github/workflows/ci.yml
+experiments/**
+src/**
+tests/**
+pyproject.toml
+uv.lock
+```
+
+纯 `docs/**` 改动不跑 CI；文档部署由 Pages workflow 处理。
+
+本地复现 CPU 单测口径：
+
+```bash
+uv run --with torch==2.7.1 --with coverage \
+  coverage run --data-file=.coverage.cpu -m pytest -m unit -v
+```
+
+覆盖率报告：
 
 ```bash
 cp .coverage.cpu .coverage
 uv run --with coverage coverage report --fail-under=70 \
-	--include='src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/args.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/workflow.py'
+  --include='src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/args.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/workflow.py'
 ```
 
-## 当前测试树
+覆盖率门控只覆盖 `domain/` 和 training CLI / workflow 的核心文件。它不是全仓库覆盖率，新增实验模型时仍以契约测试和 smoke 为准。
 
-`tests/unit/` 现在已经按层次拆分，不再使用旧的平铺布局。
+## GPU 和 Benchmark
 
-| 目录 / 文件                                                               | 覆盖范围                                                      |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `tests/unit/application/training/test_cli.py`                             | 训练 CLI 参数和请求装配                                       |
-| `tests/unit/application/evaluation/test_cli.py`                           | 评估 CLI 参数和请求装配                                       |
-| `tests/unit/application/evaluation/test_infer_entrypoint.py`              | 推理入口环境变量到 CLI 的桥接                                 |
-| `tests/unit/application/packaging/test_training.py`                       | 训练 Bundle 打包结构、manifest 和运行时约定                   |
-| `tests/unit/application/packaging/test_inference.py`                      | 推理 Bundle 打包结构、manifest 和运行时约定                   |
-| `tests/unit/application/bootstrap/test_run_sh_commands.py`                | `run.sh` 只支持 `train` / `val` / `eval` / `infer` 的命令契约 |
-| `tests/unit/application/benchmarking/test_pcvr_optimizer_benchmark.py`    | 优化器 benchmark 报表逻辑                                     |
-| `tests/unit/application/benchmarking/test_pcvr_tilelang_ops_benchmark.py` | TileLang benchmark 报表逻辑                                   |
-| `tests/unit/domain/test_metrics.py`                                       | AUC、LogLoss、GAUC、诊断指标                                  |
-| `tests/unit/application/experiments/test_discovery.py`                    | 实验包扫描与发现                                              |
-| `tests/unit/experiments/test_packages.py`                                 | PCVR 实验包契约、模型类名、前向 / 反向 / predict              |
-| `tests/unit/infrastructure/test_checkpoints.py`                           | Checkpoint 文件、sidecar 与格式约束                           |
-| `tests/unit/application/experiments/test_registry.py`                     | 实验包装载                                                    |
-| `tests/unit/experiments/test_maintenance_experiments.py`                  | 维护类实验包元数据契约                                        |
-| `tests/unit/experiments/test_online_dataset_eda_runner.py`                | Online Dataset EDA 运行器                                     |
-| `tests/unit/domain/test_model_contract.py`                                | Schema 到模型参数的转换                                       |
-| `tests/unit/experiments/test_runtime_contract_matrix.py`                  | 运行时契约矩阵、schema/配置/sidecar 一致性                    |
-| `tests/unit/infrastructure/runtime/test_trainer.py`                       | Trainer 循环与优化器协作                                      |
-| `tests/unit/infrastructure/data/test_split.py`                            | Row Group 切分与 observed schema                              |
-| `tests/unit/infrastructure/data/test_augmentation.py`                     | 数据增强流水线                                                |
-| `tests/unit/application/experiments/test_pcvr_runtime.py`                 | 评估 / 推理运行时与 sidecar 输出                              |
-| `tests/unit/infrastructure/accelerators/test_tilelang_ops.py`             | TileLang / Torch RMSNorm 算子层契约                           |
-| `tests/unit/infrastructure/accelerators/attention/test_flash_qla.py`      | Flash QLA 加速实现与边界行为                                  |
+GPU 相关测试在没有 CUDA 时会 skip，不能用 CPU CI 结果证明 TileLang kernel 可用。改 accelerator 后至少在有 CUDA 的机器上跑：
 
-## 模块改动后的最小复核
+```bash
+uv run pytest tests/unit/infrastructure/accelerators -q
+```
 
-先跑最小相关测试，再决定是否扩大到整个 `tests/unit/`。
+benchmark 入口不应该塞进常规 CI。需要性能结论时，用 CLI 生成 JSON，记录硬件、CUDA / PyTorch 版本、commit 和完整命令。
 
-| 改动位置                                         | 最小复核                                                                                                                                                    |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `experiments/<name>/model.py`                    | `tests/unit/experiments/test_packages.py`                                                                                                                   |
-| `experiments/<name>/__init__.py`                 | `tests/unit/experiments/test_packages.py`、`tests/unit/application/experiments/test_discovery.py`、`tests/unit/experiments/test_runtime_contract_matrix.py` |
-| 维护 / 分析类 `experiments/<name>`               | `tests/unit/experiments/test_maintenance_experiments.py`；若改的是 EDA 运行器，再加 `tests/unit/experiments/test_online_dataset_eda_runner.py`              |
-| `src/taac2026/application/training/cli.py`       | `tests/unit/application/training/test_cli.py`                                                                                                               |
-| `src/taac2026/application/evaluation/cli.py`     | `tests/unit/application/evaluation/test_cli.py`                                                                                                             |
-| `src/taac2026/application/evaluation/infer.py`   | `tests/unit/application/evaluation/test_infer_entrypoint.py`                                                                                                |
-| `src/taac2026/application/packaging/`            | `tests/unit/application/packaging/test_cli.py`、`tests/unit/application/packaging/test_training.py`、`tests/unit/application/packaging/test_inference.py`   |
-| `src/taac2026/domain/model_contract.py`          | `tests/unit/domain/test_model_contract.py`、`tests/unit/experiments/test_runtime_contract_matrix.py`                                                        |
-| `src/taac2026/infrastructure/runtime/trainer.py` | `tests/unit/infrastructure/runtime/test_trainer.py`                                                                                                         |
-| `src/taac2026/infrastructure/data/dataset.py`    | `tests/unit/infrastructure/data/test_split.py`                                                                                                              |
-| `src/taac2026/infrastructure/data/pipeline.py`   | `tests/unit/infrastructure/data/test_augmentation.py`                                                                                                       |
-| `src/taac2026/infrastructure/accelerators/`      | `tests/unit/infrastructure/accelerators/test_tilelang_ops.py`、`tests/unit/infrastructure/accelerators/attention/test_flash_qla.py`                         |
-| `src/taac2026/domain/metrics.py`                 | `tests/unit/domain/test_metrics.py`                                                                                                                         |
-| `run.sh`                                         | `tests/unit/application/bootstrap/test_run_sh_commands.py`                                                                                                  |
+## Smoke Test 的位置
 
-## 新增测试约定
+训练 smoke 是集成验证，不替代单元测试。它适合在下面几种情况补跑：
 
-- 测试文件命名：`test_<module>.py`
-- 测试函数命名：`test_<behavior>`
-- 使用 `conftest.py` 中的 marker 自动标记为 `unit` 或 `integration`
-- 测试数据使用 `data/sample_1000_raw/` 中的示例数据
-- 不依赖外部服务或 GPU
+- 新增模型包后确认端到端能走完。
+- 改了训练 workflow、checkpoint 或模型输入契约。
+- 单测通过，但你怀疑真实 batch 协作会出问题。
 
-## CI 当前检查什么
+示例：
 
-当前 CI 以 `.github/workflows/ci.yml` 为准，核心检查有三类：
+```bash
+bash run.sh train \
+  --experiment experiments/baseline \
+  --run-dir outputs/baseline_smoke \
+  --device cpu \
+  --num_workers 0 \
+  --batch_size 8 \
+  --max_steps 1
+```
 
-- 风格检查：`uv run --with ruff ruff check .`
-- CPU 单元测试：`uv sync --locked --extra dev` 后运行 `uv run --with torch==2.7.1 --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v`
-- 覆盖率门控：恢复 `.coverage.cpu` 后执行 `coverage report --fail-under=70`
+## 常见失败
 
-如果你只是想在本地先做快速自检，优先跑与改动面对应的最小测试集；合并前再跑整套 `tests/unit/`。
-
-## Smoke 不等于单测
-
-训练 Smoke Test（`taac-train` 跑 1 epoch）是集成测试，不替代单元测试：
-
-- 单测验证组件行为（输入输出契约）
-- Smoke Test 验证组件协作（端到端流程）
-- 两者互补，不可替代
+| 现象 | 优先检查 |
+| ---- | -------- |
+| `unrecognized arguments` | 训练参数多为下划线，评估 / 推理参数多为连字符 |
+| `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地测试不要传数据路径 |
+| accelerator 测试 skip | 当前机器没有 CUDA 或缺 TileLang runtime |
+| bundle 测试失败但本地 import 正常 | 检查 zip 内容和 manifest，而不是只看仓库根目录 import |
+| 文档构建失败 | 先看相对链接、`zensical.toml` nav 和图片路径 |

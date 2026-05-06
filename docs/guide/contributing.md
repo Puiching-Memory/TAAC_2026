@@ -4,23 +4,31 @@ icon: lucide/git-branch-plus
 
 # 新增实验包
 
-如何在当前共享 PCVR 运行时上新增或修改一个实验包。
+新增实验包时，先让它像现有实验一样被发现、能训练、能评估，再考虑模型创新。共享训练、评估、推理和打包能力都在 `src/taac2026/`，实验包应该保持薄。
 
 ## 最小目录
 
 ```text
-experiments/<experiment_name>/
+experiments/my_experiment/
 ├── __init__.py
 └── model.py
 ```
 
-最小契约就是这两个文件。需要包内辅助层时，可以继续增加 `layers.py` 之类的局部模块。
+需要私有层时可以加 `layers.py`，但不要把共享 runtime 复制进实验包。
 
-## __init__.py
+## 从哪里复制
 
-当前推荐通过 `create_pcvr_experiment()` 创建 PCVR 实验。普通模型实验只需要声明实验名、包目录、模型类名和默认训练配置；默认训练、预测和运行时 hooks 由工厂提供。
+| 你要做什么                 | 建议起点                                                   |
+| -------------------------- | ---------------------------------------------------------- |
+| HyFormer 小改              | `experiments/baseline`                                     |
+| HyFormer + 增强 / TileLang | `experiments/baseline_plus`                                |
+| 用户-物品交互结构          | `experiments/interformer`                                  |
+| 统一 Transformer 结构      | `experiments/onetrans`                                     |
+| 多组件消融                 | `experiments/symbiosis`，但只在确实需要自定义 hooks 时使用 |
 
-一个最小可工作的骨架通常包含：
+## `__init__.py` 负责什么
+
+普通 PCVR 实验通过 `create_pcvr_experiment()` 声明自己：
 
 ```python
 from pathlib import Path
@@ -29,11 +37,7 @@ from taac2026.api import PCVRModelConfig, PCVRNSConfig, PCVRTrainConfig, create_
 
 
 TRAIN_DEFAULTS = PCVRTrainConfig(
-    model=PCVRModelConfig(
-        num_blocks=2,
-        num_heads=4,
-        dropout_rate=0.02,
-    ),
+    model=PCVRModelConfig(num_blocks=2, num_heads=4, dropout_rate=0.02),
     ns=PCVRNSConfig(
         grouping_strategy="explicit",
         user_groups={"U1": [1, 15]},
@@ -50,141 +54,132 @@ EXPERIMENT = create_pcvr_experiment(
     model_class_name="MyModel",
     train_defaults=TRAIN_DEFAULTS,
 )
-
-TRAIN_HOOKS = EXPERIMENT.train_hooks
-PREDICTION_HOOKS = EXPERIMENT.prediction_hooks
-RUNTIME_HOOKS = EXPERIMENT.runtime_hooks
 ```
 
-关键字段：
+关键点：
 
-- `name` -- 唯一标识，通常加 `pcvr_` 前缀
-- `package_dir` -- 推荐使用 `Path(__file__).resolve().parent`
-- `model_class_name` -- 必须与 `model.py` 中的类名完全一致
-- `train_defaults` -- 当前默认训练配置，包括数据、优化器、runtime 和 NS 分组
-- `TRAIN_HOOKS` / `PREDICTION_HOOKS` / `RUNTIME_HOOKS` -- 兼容导出，普通实验包通常直接取自 `EXPERIMENT`
+- `name` 要唯一，通常用 `pcvr_` 前缀。
+- `model_class_name` 必须和 `model.py` 里的类名一致。
+- NS 分组现在写在 `PCVRNSConfig` 里，不需要独立 `ns_groups.json`。
+- 普通模型实验不需要手写 hooks。
 
-如果你不是在做新的运行时扩展，而只是接一个新模型，不需要手写 hook 对象。确实需要覆盖行为时，只传差异项：
+只有确实改变训练、预测或 runtime 行为时，才传 hook override。可以参考 `experiments/symbiosis/__init__.py`。
+
+## 实验发现机制
+
+加载逻辑在 `src/taac2026/application/experiments/registry.py`：
+
+- `--experiment experiments/my_experiment` 会按文件系统路径加载。
+- `--experiment experiments.my_experiment` 会按 Python module 加载。
+- 被加载模块必须导出 `EXPERIMENT`。
+- `EXPERIMENT` 可以是 `ExperimentSpec`，也可以是带 `name`、`train`、`evaluate`、`infer` 方法的对象。
+
+`create_pcvr_experiment()` 位于 `src/taac2026/application/experiments/factory.py`。它会把默认 PCVR hooks 组装成 `PCVRExperiment`，普通实验通常不需要自己实现 `train()`、`evaluate()` 或 `infer()`。
+
+`PCVRExperiment` 的运行逻辑在 `src/taac2026/application/experiments/experiment.py`：
+
+- `train()` 解析本地 demo 数据或线上数据路径，调用训练 workflow。
+- `evaluate()` 根据 checkpoint sidecar 重建模型和 schema，写 `evaluation.json`。
+- `infer()` 读取 checkpoint 和 schema，写 `predictions.json`。
+- 进入实验包模型代码前，会临时把实验目录放到 `sys.path`，并隔离 `model` / `utils` 这类插件模块名。
+
+## `model.py` 负责什么
+
+模型类需要能被共享 PCVR runtime 构造，并满足训练 / 评估 / 推理契约：
+
+- `forward(inputs)` 返回 `(B,)` logits。
+- `predict(inputs)` 返回 `(logits, embeddings)`。
+- 稀疏和稠密参数能被正确分组。
+- checkpoint 侧车里的 `train_config.json` 和 `schema.json` 能在评估 / 推理阶段复用。
+
+优先复用共享建模组件：
 
 ```python
-EXPERIMENT = create_pcvr_experiment(
-    name="pcvr_my_experiment",
-    package_dir=Path(__file__).resolve().parent,
-    model_class_name="MyModel",
-    train_defaults=TRAIN_DEFAULTS,
-    train_hook_overrides={"build_model": build_my_model},
-)
-```
-
-## model.py
-
-`model.py` 只负责当前实验自己的模型实现。建议复用共享建模层里的基础组件和通用 PCVR primitives。
-
-```python
-import torch
-import torch.nn as nn
 from taac2026.infrastructure.modeling import (
     EmbeddingParameterMixin,
+    FeatureEmbeddingBank,
     ModelInput,
     NonSequentialTokenizer,
     SequenceTokenizer,
-    masked_mean,
-    safe_key_padding_mask,
-)
-
-
-class MyModel(EmbeddingParameterMixin, nn.Module):
-    def __init__(
-        self,
-        user_int_feature_specs,
-        item_int_feature_specs,
-        user_dense_dim,
-        item_dense_dim,
-        seq_vocab_sizes,
-        user_ns_groups,
-        item_ns_groups,
-        d_model=64,
-        emb_dim=64,
-        num_blocks=2,
-        num_heads=4,
-        # ... 其他参数
-    ):
-        super().__init__()
-        # 初始化 Embedding、编码器、预测头等
-
-    def forward(self, inputs: ModelInput) -> torch.Tensor:
-        # 返回 (B,) 的 logits
-        ...
-
-    def predict(self, inputs: ModelInput):
-        # 返回 (logits, embeddings)
-        logits = self.forward(inputs)
-        embeddings = self._get_embeddings(inputs)
-        return logits, embeddings
-
-    def reinit_high_cardinality_params(self):
-        # 重初始化高基数 Embedding
-        ...
-```
-
-共享建模包 `taac2026.infrastructure.modeling` 当前提供 `FeatureEmbeddingBank`、`NonSequentialTokenizer`、`DenseTokenProjector`、`SequenceTokenizer`、`RMSNorm`、`configure_rms_norm_runtime` 和 `EmbeddingParameterMixin`。如果模型确实需要论文特有组件，仍然可以把那些私有块拆到同目录下的局部模块。
-
-## NS 分组配置
-
-当前仓库使用 `PCVRNSConfig` 在 `__init__.py` 中显式声明 NS 分组：
-
-```python
-ns=PCVRNSConfig(
-        grouping_strategy="explicit",
-        user_groups={
-        "U1": [1, 15],
-        "U2": [48, 49, 89, 90, 91],
-        },
-        item_groups={
-        "I1": [11, 13],
-        "I2": [5, 6, 7, 8, 12],
-        },
-        tokenizer_type="rankmixer",
-        user_tokens=5,
-        item_tokens=2,
 )
 ```
 
-特征 ID 是列名的数字后缀（`user_int_feats_1` -> fid 1）。
+论文特有组件可以留在实验包内；通用能力应该沉到 `src/taac2026/infrastructure/modeling/`。
 
-当前仓库不再要求每个实验包必须自带独立的 `ns_groups.json` 文件。
+## Checkpoint Sidecar
 
-## 本地验证
+训练成功后，runtime 期望 checkpoint 目录至少包含：
+
+```text
+global_step*.best_model/
+├── model.safetensors
+├── schema.json
+└── train_config.json
+```
+
+`model.safetensors` 只保存权重；`schema.json` 和 `train_config.json` 才能让评估 / 推理重新构造输入契约、NS 分组、runtime execution 和模型默认参数。只复制权重文件会导致评估或推理失败。
+
+改这些内容时要特别小心：
+
+- `PCVRModelConfig` 字段名
+- `PCVRNSConfig` 的 grouping strategy 和 fid 分组
+- `ModelInput` 字段
+- 自定义 hook 写入 `train_config.json` 的额外 key
+- checkpoint 目录命名和最新 checkpoint 解析规则
+
+## 本地验证顺序
+
+先看能否发现并加载：
 
 ```bash
-# 1. 发现实验包
-uv run python -c "from pathlib import Path; from taac2026.application.experiments.discovery import discover_experiment_paths; print(discover_experiment_paths(Path('experiments')))"
-
-# 2. 加载实验包
-uv run python -c "from taac2026.application.experiments.registry import load_experiment_package; exp = load_experiment_package('experiments/my_experiment'); print(exp.name)"
-
-# 3. 训练 Smoke Test
-uv run taac-train \
-      --experiment experiments/my_experiment \
-      --run-dir outputs/my_experiment_smoke \
-      --device cpu \
-      --num_workers 0 \
-      --batch_size 8 \
-      --max_steps 1
-
-# 4. 运行最小相关单测
-uv run pytest tests/unit/experiments/test_packages.py -v
-uv run pytest tests/unit/application/experiments/test_discovery.py -v
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -v
+uv run python -c "from taac2026.application.experiments.registry import load_experiment_package; print(load_experiment_package('experiments/my_experiment').name)"
 ```
 
-## 修改现有包的检查清单
+再跑最小 smoke：
 
-- [ ] `model_class_name` 与 `model.py` 中的类名一致
-- [ ] `PCVRNSConfig` 中声明的特征 ID 在 schema 范围内
-- [ ] `forward()` 返回 `(B,)` 形状的 logits
-- [ ] `predict()` 返回 `(logits, embeddings)` 元组
-- [ ] `get_sparse_params()` 和 `get_dense_params()` 正确分类参数
-- [ ] 训练 Smoke Test 通过（建议 `--device cpu --max_steps 1`）
-- [ ] 最小相关单元测试通过
-- [ ] 如涉及打包或 runtime sidecar，补跑 `tests/unit/application/packaging/test_training.py` 或 `tests/unit/application/packaging/test_inference.py`
+```bash
+bash run.sh train \
+  --experiment experiments/my_experiment \
+  --run-dir outputs/my_experiment_smoke \
+  --device cpu \
+  --num_workers 0 \
+  --batch_size 8 \
+  --max_steps 1
+```
+
+最后跑契约测试：
+
+```bash
+uv run pytest tests/unit/experiments/test_packages.py -q
+uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/unit/application/experiments -q
+```
+
+涉及 bundle 时再加：
+
+```bash
+uv run pytest tests/unit/application/packaging -q
+uv run pytest tests/unit/application/bootstrap -q
+```
+
+如果要确认打包内容，直接看 zip：
+
+```bash
+uv run taac-package-train \
+  --experiment experiments/my_experiment \
+  --output-dir outputs/bundles/my_experiment_training \
+  --json
+
+python -m zipfile -l outputs/bundles/my_experiment_training/code_package.zip | sed -n '1,120p'
+```
+
+zip 里应该包含 `project/src/taac2026/**`、当前实验包、必要的父级 `__init__.py`、`pyproject.toml` 和 manifest；不应该把整个 `outputs/`、`tests/` 或其他无关实验包打进去。
+
+## 提交前检查
+
+- 实验名、目录名和模型类名能对应上。
+- `PCVRNSConfig` 里的 fid 来自当前 schema。
+- 本地 PCVR smoke 不传 `--dataset-path`。
+- `forward()` 和 `predict()` 输出形状符合契约。
+- 训练后能生成 `global_step*.best_model/model.safetensors`、`schema.json` 和 `train_config.json`。
+- 如果改了共享 runtime，至少跑过相关 unit test，而不是只跑自己的实验。

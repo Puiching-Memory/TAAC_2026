@@ -8,11 +8,11 @@ icon: lucide/folder-input
 
 ## 源码浏览
 
-| 文件 | 作用 |
-| --- | --- |
-| [infer.py](files/official_infer_baseline/infer.py) | 推理入口，负责读取环境变量、重建模型、加载 checkpoint 并输出 predictions.json |
-| [dataset.py](files/official_infer_baseline/dataset.py) | 原始 Parquet 数据集读取与 schema 解析 |
-| [model.py](files/official_infer_baseline/model.py) | 自包含 PCVRHyFormer 模型实现 |
+| 文件                                                   | 作用                                                                          |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| [infer.py](files/official_infer_baseline/infer.py)     | 推理入口，负责读取环境变量、重建模型、加载 checkpoint 并输出 predictions.json |
+| [dataset.py](files/official_infer_baseline/dataset.py) | 原始 Parquet 数据集读取与 schema 解析                                         |
+| [model.py](files/official_infer_baseline/model.py)     | 自包含 PCVRHyFormer 模型实现                                                  |
 
 ## 关键契约
 

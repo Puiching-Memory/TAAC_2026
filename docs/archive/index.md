@@ -10,8 +10,7 @@ icon: lucide/archive
 
 | 资产                   | 用途                               | 入口                                                  |
 | ---------------------- | ---------------------------------- | ----------------------------------------------------- |
-| sample_1000_raw schema | 本地 demo 数据集的默认 schema 参考 | [样例 Schema](sample-schema.md)                       |
-| online_schema schema   | 线上训练与 infer 共用的声明式 schema 快照 | [Online Schema 快照](training-schema-snapshot.md) |
+| Schema 归档            | 本地 demo 与线上 schema 静态副本   | [Schema 归档](schema.md)                              |
 | 官方训练 Baseline 快照 | 比赛参考训练基线的历史源码快照     | [官方训练 Baseline 快照](official-train-baseline.md)  |
 | 官方推理 Baseline 快照 | 比赛参考推理基线的历史源码快照     | [官方推理 Baseline 快照](official-infer-baseline.md)  |
 

@@ -4,118 +4,75 @@ icon: lucide/folder-open
 
 # 实验包总览
 
-实验包是当前仓库的核心扩展单元。框架层负责训练、评估、推理、打包和通用运行时，实验包只保留实验特有的模型、默认配置和少量包内辅助模块。
+实验包是这个仓库里“可以被训练、评估、推理或打包”的最小单位。框架层负责通用运行时，实验包只回答三个问题：叫什么、默认怎么训、用哪个模型或维护任务。
 
-当前有两类实验包：
+如果你只是想跑起来，优先从 Baseline 开始；如果你想改模型，再从最接近的实验包复制。
 
-- `experiments/`：PCVR 模型实验
-- `experiments/`：维护 / 分析类实验
+## 怎么选
 
-## 当前实验包
+| 目标                      | 从这里开始                                  | 说明                                                                  |
+| ------------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
+| 需要一个干净参照          | [Baseline](baseline.md)                     | HyFormer 基线，默认不启用数据增强和 TileLang backend                  |
+| 想看当前增强版基线        | [Baseline+](baseline-plus.md)               | 同一类 HyFormer 思路，默认打开 OPT cache、数据增强和 TileLang backend |
+| 想做用户-物品交互结构     | [InterFormer](interformer.md)               | Group tokenizer，强调用户与物品分支之间的交互                         |
+| 想做统一 Transformer 结构 | [OneTrans](onetrans.md)                     | RankMixer tokenizer，把用户、物品和序列放进更统一的编码路径           |
+| 想试复杂融合方案          | [Symbiosis](symbiosis.md)                   | 带额外 CLI 参数和自定义 hooks，适合做消融                             |
+| 想知道线上机器是什么样    | [Host Device Info](host-device-info.md)     | 不需要数据集，采集平台环境快照                                        |
+| 想在线上跑数据概览        | [Online Dataset EDA](online-dataset-eda.md) | 需要数据集，流式扫描 parquet 并打印文本报告                           |
 
-### 模型训练包
+## 运行方式
 
-| 实验包         | 路径                              | 说明                                 |
-| -------------- | --------------------------------- | ------------------------------------ |
-| Baseline       | `experiments/baseline`       | 共享 PCVR 运行时上的基准 HyFormer 包 |
-| Baseline+      | `experiments/baseline_plus`  | 带 OPT cache、数据增强和默认 TileLang RMSNorm 的 baseline 改进包 |
-| InterFormer    | `experiments/interformer`    | InterFormer 结构实验                 |
-| OneTrans       | `experiments/onetrans`       | OneTrans 结构实验                    |
-| Symbiosis      | `experiments/symbiosis`      | 带包内辅助层和额外训练参数的融合实验 |
-
-### 维护工具包
-
-| 实验包             | 用途             | 需要数据集 | 说明                             |
-| ------------------ | ---------------- | ---------- | -------------------------------- |
-| Host Device Info   | 主机设备诊断采集 | 否         | 采集 GPU、网络、依赖源等环境快照 |
-| Online Dataset EDA | 数据集探索分析   | 是         | 流式 Parquet 统计，线上友好      |
-
-## 包内文件
-
-### 模型训练包
-
-PCVR 实验包的最小契约是两个文件：
-
-```text
-experiments/<experiment_name>/
-├── __init__.py
-└── model.py
-```
-
-在此基础上，实验包可以按需要增加自己的辅助模块，例如：
-
-```text
-experiments/symbiosis/
-├── __init__.py
-├── layers.py
-└── model.py
-```
-
-#### `__init__.py`
-
-`__init__.py` 负责导出模块级 `EXPERIMENT`。当前真实契约是：
-
-- 使用 `PCVRExperiment`
-- 声明 `name`
-- 指定 `package_dir`
-- 指定 `model_class_name`
-- 提供 `train_defaults`
-- 提供 `train_arg_parser`
-- 提供 `train_hooks`
-- 提供 `prediction_hooks`
-- 提供 `runtime_hooks`
-
-大多数新实验都会从一个现有包复制这些默认 hook，再替换实验名、模型类名和默认配置。
-
-#### `model.py`
-
-`model.py` 负责导出由 `model_class_name` 指定的模型类。模型类通常：
-
-| 方法                             | 签名                                   | 说明                   |
-| -------------------------------- | -------------------------------------- | ---------------------- |
-| `forward`                        | `(ModelInput) -> logits`               | 前向传播               |
-| `predict`                        | `(ModelInput) -> (logits, embeddings)` | 推理用                 |
-| `get_sparse_params`              | `() -> list[Parameter]`                | 稀疏参数分组           |
-| `get_dense_params`               | `() -> list[Parameter]`                | 稠密参数分组           |
-| `reinit_high_cardinality_params` | `() -> None`                           | 重初始化低频 Embedding |
-
-当前仓库中的 NS 分组直接写在 `PCVRNSConfig` 里；不要再把包内独立 `ns_groups.json` 当成必备文件。
-
-### 维护工具包
-
-维护工具包使用 `ExperimentSpec` 而非 `PCVRExperiment`，不需要模型定义和 NS 分组：
-
-```text
-experiments/<tool_name>/
-├── __init__.py
-└── runner.py
-```
-
-- [Host Device Info](host-device-info.md) -- 主机与设备诊断采集
-- [Online Dataset EDA](online-dataset-eda.md) -- 数据集探索性分析
-
-## 运行任意实验包
+模型实验本地训练：
 
 ```bash
-bash run.sh train --experiment experiments/<name> \
-  --run-dir outputs/<name>
+bash run.sh train \
+  --experiment experiments/baseline \
+  --run-dir outputs/baseline_smoke
 ```
 
-维护类实验也走同一入口，例如：
+维护实验也走同一个入口：
 
 ```bash
 bash run.sh train --experiment experiments/host_device_info
 ```
 
-## 打包任意实验包
+`run.sh` 只处理 `train`、`val` / `eval` 和 `infer`。线上上传物由独立打包命令生成：
 
 ```bash
-uv run taac-package-train --experiment experiments/<name> --output-dir outputs/bundles/<name>_training
-uv run taac-package-infer --experiment experiments/<name> --output-dir outputs/bundles/<name>_inference
+uv run taac-package-train --experiment experiments/baseline --output-dir outputs/bundles/baseline_training
+uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
 ```
 
-维护类实验只支持训练 Bundle，不支持推理 Bundle。
+维护类实验只支持训练 bundle；它们没有推理模型接口。
 
-## 新增或修改实验包
+## 包长什么样
 
-详见 [新增实验包](../guide/contributing.md)。
+普通 PCVR 模型实验通常只有两个必需文件：
+
+```text
+experiments/<name>/
+├── __init__.py
+└── model.py
+```
+
+`__init__.py` 导出 `EXPERIMENT`，放实验名、模型类名、默认训练配置和必要 hooks。`model.py` 放当前实验自己的模型类。确实属于共享运行时的逻辑应放到 `src/taac2026/`，不要塞回实验包。
+
+维护工具包更轻：
+
+```text
+experiments/<tool>/
+├── __init__.py
+└── runner.py
+```
+
+它们使用 `ExperimentSpec`，不需要模型类、checkpoint sidecar 或推理 hooks。
+
+## 改实验时先看哪里
+
+- 实验入口：`experiments/<name>/__init__.py`
+- 模型实现：`experiments/<name>/model.py`
+- 实验发现与装载：`src/taac2026/application/experiments/`
+- 模型输入契约：`src/taac2026/domain/model_contract.py`
+- 新增实验流程：[新增实验包](../guide/contributing.md)
+
+不要从 `docs/archive/files/...` 推断当前契约；那里是历史快照。
