@@ -16,6 +16,7 @@ icon: lucide/folder-open
 | 想看当前增强版基线        | [Baseline+](baseline-plus.md)               | 同一类 HyFormer 思路，默认打开 OPT cache、数据增强和 TileLang backend |
 | 想做用户-物品交互结构     | [InterFormer](interformer.md)               | Group tokenizer，强调用户与物品分支之间的交互                         |
 | 想做统一 Transformer 结构 | [OneTrans](onetrans.md)                     | RankMixer tokenizer，把用户、物品和序列放进更统一的编码路径           |
+| 想试原生统一 token 流     | [UniTok](unitok.md)                         | Field-level token、dense packet 和行为事件进入同一个 backbone          |
 | 想试复杂融合方案          | [Symbiosis](symbiosis.md)                   | 带额外 CLI 参数和自定义 hooks，适合做消融                             |
 | 想知道线上机器是什么样    | [Host Device Info](host-device-info.md)     | 不需要数据集，采集平台环境快照                                        |
 | 想在线上跑数据概览        | [Online Dataset EDA](online-dataset-eda.md) | 需要数据集，流式扫描 parquet 并打印文本报告                           |
