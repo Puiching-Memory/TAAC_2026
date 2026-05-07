@@ -17,10 +17,10 @@ icon: lucide/package
 
 当前 manifest 版本在 `src/taac2026/infrastructure/bundles/manifest_store.py` 中定义：
 
-| bundle | manifest | format | version | entrypoint |
-| ------ | -------- | ------ | ------- | ---------- |
-| training | `project/.taac_training_manifest.json` | `taac2026-training-v2` | 2 | `run.sh` |
-| inference | `project/.taac_inference_manifest.json` | `taac2026-inference-v1` | 1 | `infer.py` |
+| bundle    | manifest                                | format                  | version | entrypoint |
+| --------- | --------------------------------------- | ----------------------- | ------- | ---------- |
+| training  | `project/.taac_training_manifest.json`  | `taac2026-training-v2`  | 2       | `run.sh`   |
+| inference | `project/.taac_inference_manifest.json` | `taac2026-inference-v1` | 1       | `infer.py` |
 
 manifest 会记录：
 
@@ -80,15 +80,15 @@ outputs/bundles/baseline_training/
 
 训练 bundle 还支持这些调试开关：
 
-| 变量 | 作用 |
-| ---- | ---- |
-| `TAAC_EXPERIMENT` | 覆盖 manifest 中的实验包路径 |
-| `TAAC_PYTHON` | 指定 Python 可执行文件，默认是当前 `sys.executable` |
-| `TAAC_SKIP_PIP_INSTALL=1` | 跳过 `pip install .` |
-| `TAAC_INSTALL_PROJECT_DEPS=0` | 关闭默认项目安装 |
-| `TAAC_BUNDLE_PIP_EXTRAS` | 给 `pip install .[...]` 添加 extras |
-| `TAAC_PIP_INDEX_URL` | 覆盖默认 pip index，默认 Tencent PyPI |
-| `TAAC_PIP_EXTRA_ARGS` | 追加 pip 参数，按 shell words 解析 |
+| 变量                          | 作用                                                |
+| ----------------------------- | --------------------------------------------------- |
+| `TAAC_EXPERIMENT`             | 覆盖 manifest 中的实验包路径                        |
+| `TAAC_PYTHON`                 | 指定 Python 可执行文件，默认是当前 `sys.executable` |
+| `TAAC_SKIP_PIP_INSTALL=1`     | 跳过 `pip install .`                                |
+| `TAAC_INSTALL_PROJECT_DEPS=0` | 关闭默认项目安装                                    |
+| `TAAC_BUNDLE_PIP_EXTRAS`      | 给 `pip install .[...]` 添加 extras                 |
+| `TAAC_PIP_INDEX_URL`          | 覆盖默认 pip index，默认 Tencent PyPI               |
+| `TAAC_PIP_EXTRA_ARGS`         | 追加 pip 参数，按 shell words 解析                  |
 
 本地模拟一次训练 bundle：
 
@@ -144,13 +144,13 @@ outputs/bundles/baseline_inference/
 
 推理额外支持：
 
-| 变量 | 作用 |
-| ---- | ---- |
-| `TAAC_INFER_BATCH_SIZE` | 映射为 `--batch-size` |
-| `TAAC_INFER_NUM_WORKERS` | 映射为 `--num-workers` |
-| `TAAC_INFER_AMP` | `1/0/true/false`，映射为 `--amp` / `--no-amp` |
-| `TAAC_INFER_AMP_DTYPE` | 映射为 `--amp-dtype` |
-| `TAAC_INFER_COMPILE` | `1/0/true/false`，映射为 `--compile` / `--no-compile` |
+| 变量                     | 作用                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| `TAAC_INFER_BATCH_SIZE`  | 映射为 `--batch-size`                                 |
+| `TAAC_INFER_NUM_WORKERS` | 映射为 `--num-workers`                                |
+| `TAAC_INFER_AMP`         | `1/0/true/false`，映射为 `--amp` / `--no-amp`         |
+| `TAAC_INFER_AMP_DTYPE`   | 映射为 `--amp-dtype`                                  |
+| `TAAC_INFER_COMPILE`     | `1/0/true/false`，映射为 `--compile` / `--no-compile` |
 
 本地模拟一次推理 bundle：
 

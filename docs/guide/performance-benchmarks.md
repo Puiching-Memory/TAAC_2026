@@ -90,7 +90,7 @@ uv run taac-plot-pcvr-diagnostics \
 
 ## Optimizer Benchmark
 
-Dense optimizer benchmark 用一个合成 MLP 负载比较优化器 step 成本，适合看 `adamw`、`fused_adamw`、`orthogonal_adamw`、`muon` 这类选择的系统开销。
+Dense optimizer benchmark 用一个合成 MLP 负载比较优化器 step 成本，适合看 `adamw`、`fused_adamw`、`orthogonal_adamw`、`muon` 这类选择的系统开销。各 optimizer 的配置方式和行为边界见 [优化器](optimizers.md)。
 
 ```bash
 uv run taac-benchmark-pcvr-optimizer \

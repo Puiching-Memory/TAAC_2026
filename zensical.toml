@@ -50,6 +50,7 @@ nav = [
         { "线上训练打包" = "guide/online-training-bundle.md" },
         { "比赛线上服务器设备信息" = "guide/competition-online-server.md" },
         { "PCVR 数据管道" = "guide/pcvr-data-pipeline.md" },
+        { "优化器" = "guide/optimizers.md" },
         { "学习率调度" = "guide/lr-schedules.md" },
         { "梯度检查点" = "guide/gradient-checkpointing.md" },
         { "性能 Benchmark" = "guide/performance-benchmarks.md" },

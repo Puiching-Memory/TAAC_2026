@@ -39,12 +39,12 @@ uv run zensical build --strict
 
 `pyproject.toml` 注册了这些 marker：
 
-| marker | 含义 |
-| ------ | ---- |
-| `unit` | 快速单元测试和本地契约测试 |
-| `integration` | 跨模块流程测试 |
-| `gpu` | 需要 CUDA GPU 的测试 |
-| `benchmark_cpu` | 可在 CPU 上跑的 benchmark 测试 |
+| marker          | 含义                            |
+| --------------- | ------------------------------- |
+| `unit`          | 快速单元测试和本地契约测试      |
+| `integration`   | 跨模块流程测试                  |
+| `gpu`           | 需要 CUDA GPU 的测试            |
+| `benchmark_cpu` | 可在 CPU 上跑的 benchmark 测试  |
 | `benchmark_gpu` | 只适合本地 GPU CLI 的 benchmark |
 
 `tests/conftest.py` 会按路径自动给 `tests/unit/**` 标 `unit`，给 `tests/integration/**` 标 `integration`。因此 CI 可以用 `pytest -m unit` 只跑 CPU 安全的单元测试。
@@ -135,10 +135,10 @@ bash run.sh train \
 
 ## 常见失败
 
-| 现象 | 优先检查 |
-| ---- | -------- |
-| `unrecognized arguments` | 训练参数多为下划线，评估 / 推理参数多为连字符 |
-| `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地测试不要传数据路径 |
-| accelerator 测试 skip | 当前机器没有 CUDA 或缺 TileLang runtime |
-| bundle 测试失败但本地 import 正常 | 检查 zip 内容和 manifest，而不是只看仓库根目录 import |
-| 文档构建失败 | 先看相对链接、`zensical.toml` nav 和图片路径 |
+| 现象                                              | 优先检查                                              |
+| ------------------------------------------------- | ----------------------------------------------------- |
+| `unrecognized arguments`                          | 训练参数多为下划线，评估 / 推理参数多为连字符         |
+| `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地测试不要传数据路径                      |
+| accelerator 测试 skip                             | 当前机器没有 CUDA 或缺 TileLang runtime               |
+| bundle 测试失败但本地 import 正常                 | 检查 zip 内容和 manifest，而不是只看仓库根目录 import |
+| 文档构建失败                                      | 先看相对链接、`zensical.toml` nav 和图片路径          |
