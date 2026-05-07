@@ -268,7 +268,7 @@ experiments/baseline/
 | `.taac_training_manifest.json`  | package train      | bundle bootstrap       | 训练 bundle 元数据                |
 | `.taac_inference_manifest.json` | package infer      | inference bootstrap    | 推理 bundle 元数据                |
 
-checkpoint sidecar 是 runtime contract，不是日志。改模型构造参数、NS 配置或 schema 解析时，要确认旧/新 checkpoint 的评估和推理路径。
+checkpoint sidecar 是 runtime contract，不是日志。改模型构造参数、NS 配置或 schema 解析时，要确认当前 checkpoint 的评估和推理路径。
 
 ## 一次训练怎么流动
 

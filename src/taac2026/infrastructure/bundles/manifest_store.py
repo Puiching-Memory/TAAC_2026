@@ -95,19 +95,8 @@ class FrameworkMetadata(BaseModel):
     version: str
 
 
-class BundleCompatibility(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    python: str = ">=3.10,<3.14"
-    local_runner: str = "uv"
-    online_runner: str = "python"
-    requires_uv_online: bool = False
-    package_root: str = "project"
-    supports_taac_experiment_override: bool = True
-
-
 class BundleManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid")
 
     manifest_version: int = BUNDLE_MANIFEST_VERSION
     kind: BundleKind = Field(alias="bundle_kind")
@@ -118,7 +107,6 @@ class BundleManifest(BaseModel):
     entrypoint: str
     code_package: str
     runtime_env: dict[str, str]
-    compatibility: BundleCompatibility
 
     def to_dict(self) -> dict[str, object]:
         return self.model_dump(mode="python", by_alias=True)
@@ -127,7 +115,7 @@ class BundleManifest(BaseModel):
 def build_bundle_manifest(*, kind: BundleKind, experiment_path: Path, root: Path) -> dict[str, object]:
     definition = get_bundle_definition(kind)
     manifest = BundleManifest(
-        kind=kind,
+        bundle_kind=kind,
         bundle_format=definition.bundle_format,
         bundle_format_version=definition.bundle_format_version,
         framework=FrameworkMetadata(version=__version__),
@@ -135,7 +123,6 @@ def build_bundle_manifest(*, kind: BundleKind, experiment_path: Path, root: Path
         entrypoint=definition.entrypoint,
         code_package="code_package.zip",
         runtime_env=definition.runtime_env_dict(),
-        compatibility=BundleCompatibility(),
     )
     return validate_bundle_manifest(manifest.to_dict(), kind=kind)
 
@@ -176,7 +163,6 @@ __all__ = [
     "INFERENCE_BUNDLE_FORMAT_VERSION",
     "TRAINING_BUNDLE_FORMAT",
     "TRAINING_BUNDLE_FORMAT_VERSION",
-    "BundleCompatibility",
     "BundleDefinition",
     "BundleKind",
     "BundleManifest",

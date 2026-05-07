@@ -49,7 +49,7 @@ def test_build_training_bundle_contains_runtime_sources(tmp_path: Path) -> None:
     assert manifest["entrypoint"] == "run.sh"
     assert manifest["code_package"] == "code_package.zip"
     assert manifest["runtime_env"]["pip_extras"].startswith("TAAC_BUNDLE_PIP_EXTRAS")
-    assert manifest["compatibility"]["requires_uv_online"] is False
+    assert "compatibility" not in manifest
 
     names = code_package_names(result.code_package_path)
     assert "project/.taac_training_manifest.json" in names
@@ -332,8 +332,6 @@ def test_training_run_script_uses_platform_train_env_paths(tmp_path: Path) -> No
         "TAAC_PYTHON",
         "TAAC_RUNNER",
         "TAAC_SKIP_PIP_INSTALL",
-        "TAAC_DATASET_PATH",
-        "TAAC_OUTPUT_DIR",
         "TRAIN_DATA_PATH",
         "TRAIN_CKPT_PATH",
     ):
@@ -391,8 +389,6 @@ def test_training_run_script_infer_uses_platform_eval_env_paths(tmp_path: Path) 
         "TAAC_PYTHON",
         "TAAC_RUNNER",
         "TAAC_SKIP_PIP_INSTALL",
-        "TAAC_DATASET_PATH",
-        "TAAC_RESULT_DIR",
         "EVAL_DATA_PATH",
         "EVAL_RESULT_PATH",
         "MODEL_OUTPUT_PATH",

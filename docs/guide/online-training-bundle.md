@@ -33,9 +33,8 @@ manifest 会记录：
 - `entrypoint`
 - `code_package`
 - `runtime_env`
-- `compatibility`
 
-`compatibility.requires_uv_online` 必须是 `false`。线上默认 runner 是 Python，而不是 `uv`。
+线上默认 runner 是 Python，而不是 `uv`。
 
 ## 训练 Bundle
 
@@ -199,7 +198,6 @@ unzip -p outputs/bundles/baseline_training/code_package.zip project/.taac_traini
 - `bundled_experiment_path` 是否是你要上传的实验包。
 - `bundle_kind` 是否是 `training` 或 `inference`。
 - `entrypoint` 是否分别是 `run.sh` 或 `infer.py`。
-- `compatibility.requires_uv_online` 是否为 `false`。
 - `runtime_env` 是否列出了平台需要提供的环境变量。
 
 如果你改了 bundle 生成逻辑，至少构建一个训练 bundle 和一个推理 bundle，并检查 zip：

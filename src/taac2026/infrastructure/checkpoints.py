@@ -10,20 +10,16 @@ from typing import Any
 from safetensors.torch import load_file as load_safetensors_file, save_file as save_safetensors_file
 import torch
 
+from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
 from taac2026.infrastructure.io.json import write_path
 
 _GLOBAL_STEP_PATTERN = re.compile(r"^global_step(?P<step>\d+)(?:[A-Za-z0-9_.=\-]*)$")
 PRIMARY_CHECKPOINT_FILENAME = "model.safetensors"
 _CHECKPOINT_SUFFIX = ".safetensors"
-_LEGACY_CHECKPOINT_SUFFIXES = frozenset({".pt", ".pth"})
 
 
 def _is_supported_checkpoint_file(path: Path) -> bool:
     return path.suffix.lower() == _CHECKPOINT_SUFFIX
-
-
-def _is_legacy_checkpoint_file(path: Path) -> bool:
-    return path.suffix.lower() in _LEGACY_CHECKPOINT_SUFFIXES
 
 
 def _find_checkpoint_file(checkpoint_dir: Path) -> Path | None:
@@ -38,8 +34,6 @@ def preferred_checkpoint_path(checkpoint_dir: Path) -> Path:
 def _checkpoint_dir_from_path(checkpoint_path: Path) -> Path:
     if _is_supported_checkpoint_file(checkpoint_path):
         return checkpoint_path.parent
-    if _is_legacy_checkpoint_file(checkpoint_path):
-        raise ValueError(f"unsupported checkpoint format: {checkpoint_path}")
     return checkpoint_path
 
 
@@ -160,9 +154,8 @@ def write_checkpoint_sidecars(
         written["schema"] = target
 
     if train_config is not None:
-        config_to_dump = dict(train_config)
         target = checkpoint_dir / "train_config.json"
-        write_path(target, config_to_dump, indent=2, trailing_newline=True)
+        write_path(target, build_pcvr_train_config_sidecar(train_config), indent=2, trailing_newline=True)
         written["train_config"] = target
 
     return written

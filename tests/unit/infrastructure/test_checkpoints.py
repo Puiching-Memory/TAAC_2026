@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from taac2026.infrastructure.io.json import loads
 from taac2026.infrastructure.checkpoints import (
     PRIMARY_CHECKPOINT_FILENAME,
     build_checkpoint_dir_name,
@@ -25,15 +26,6 @@ def test_resolve_checkpoint_prefers_best_model(tmp_path: Path) -> None:
     (best_dir / PRIMARY_CHECKPOINT_FILENAME).write_text("best", encoding="utf-8")
 
     assert resolve_checkpoint_path(tmp_path) == best_dir / PRIMARY_CHECKPOINT_FILENAME
-
-
-def test_resolve_checkpoint_rejects_legacy_pt_files(tmp_path: Path) -> None:
-    legacy_path = tmp_path / "global_step2.layer=2.best_model" / "legacy.pt"
-    legacy_path.parent.mkdir()
-    legacy_path.write_text("legacy", encoding="utf-8")
-
-    with pytest.raises(ValueError, match=r"unsupported checkpoint format"):
-        resolve_checkpoint_path(tmp_path, legacy_path)
 
 
 def test_validate_checkpoint_name_rejects_non_global_step_prefix() -> None:
@@ -63,10 +55,10 @@ def test_write_checkpoint_sidecars_persists_explicit_ns_group_config(tmp_path: P
 
     assert set(written) == {"schema", "train_config"}
     assert (checkpoint_dir / "schema.json").exists()
-    payload = (checkpoint_dir / "train_config.json").read_text(encoding="utf-8")
-    assert '"ns_grouping_strategy": "explicit"' in payload
-    assert '"user_ns_groups": {' in payload
-    assert '"item_ns_groups": {' in payload
+    payload = loads((checkpoint_dir / "train_config.json").read_bytes())
+    assert payload["train_config"]["ns_grouping_strategy"] == "explicit"
+    assert payload["train_config"]["user_ns_groups"] == {"u": [10, 20]}
+    assert payload["train_config"]["item_ns_groups"] == {"i": [7]}
 
 
 def test_save_and_load_checkpoint_state_dict_round_trip(tmp_path: Path) -> None:
@@ -79,16 +71,7 @@ def test_save_and_load_checkpoint_state_dict_round_trip(tmp_path: Path) -> None:
     checkpoint_path = save_checkpoint_state_dict(state_dict, checkpoint_dir)
 
     assert checkpoint_path == checkpoint_dir / PRIMARY_CHECKPOINT_FILENAME
-    assert not any(checkpoint_dir.glob("*.pt"))
 
     loaded_state_dict = load_checkpoint_state_dict(checkpoint_path, map_location="cpu")
     assert torch.equal(loaded_state_dict["weight"], state_dict["weight"])
     assert torch.equal(loaded_state_dict["bias"], state_dict["bias"])
-
-
-def test_save_checkpoint_rejects_legacy_pt_path(tmp_path: Path) -> None:
-    state_dict = {"weight": torch.arange(2, dtype=torch.float32)}
-
-    with pytest.raises(ValueError, match=r"unsupported checkpoint format"):
-        save_checkpoint_state_dict(state_dict, tmp_path / "legacy.pt")
-

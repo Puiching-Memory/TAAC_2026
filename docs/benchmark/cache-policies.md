@@ -24,7 +24,6 @@ icon: lucide/database-zap
 | native OPT index | `src/taac2026/infrastructure/data/native/opt_cache.cpp`                 |
 | 非 OPT 实现      | `cachetools` 的 `LRUCache`、`FIFOCache`、`LFUCache`、`RRCache`          |
 | OPT 实现         | 项目内实现，依赖访问 trace                                              |
-| legacy 名称      | `memory` 不是合法模式；普通内存 LRU 写作 `lru`                          |
 
 ## 策略差异
 

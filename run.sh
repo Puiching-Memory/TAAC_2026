@@ -11,10 +11,6 @@ BUNDLE_MODE=0
 # TAAC_BUNDLE_PIP_EXTRAS, TAAC_PIP_EXTRAS, and the taac-train entrypoint.
 
 case "${1:-}" in
-	test)
-		echo "run.sh no longer supports 'test'; use 'uv run pytest ...' directly" >&2
-		exit 2
-		;;
 	package-infer)
 		echo "unknown command: package-infer" >&2
 		exit 2

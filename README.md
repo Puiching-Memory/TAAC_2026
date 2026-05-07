@@ -228,7 +228,7 @@ data/sample_1000_raw/
 └── schema.json
 ```
 
-补充说明：官方 `demo_1000.parquet` 当前只有 1 个 Row Group。本仓库已经兼容这种样例文件，在 smoke 训练时会复用同一个 Row Group 做 train/valid 切分，仅用于通路验证，不代表有统计意义的离线验证。
+补充说明：官方 `demo_1000.parquet` 当前只有 1 个 Row Group。本仓库支持这种样例文件，在 smoke 训练时会复用同一个 Row Group 做 train/valid 切分，仅用于通路验证，不代表有统计意义的离线验证。
 
 ## Evaluation
 我们将使用单一的ROC曲线下面积（AUC）指标对所有团队进行排名（越高越好）。为确保实用性，每次提交还必须在官方评估环境和协议下满足特定于赛道和轮次的推理延迟限制；超出延迟预算的提交将被视为无效，因此不予排名，无论AUC分数如何。

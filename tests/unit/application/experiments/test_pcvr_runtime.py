@@ -11,6 +11,7 @@ import pytest
 from taac2026.domain.requests import EvalRequest, InferRequest, TrainRequest
 from taac2026.infrastructure.io.json import dumps, loads
 from taac2026.domain.config import PCVRDataConfig, PCVRTrainConfig
+from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
 import taac2026.application.experiments.experiment as experiment_module
 from taac2026.application.experiments.experiment import PCVRExperiment, _log_prediction_progress
 from taac2026.application.evaluation.workflow import (
@@ -83,7 +84,7 @@ def _write_train_config(checkpoint_dir: Path, overrides: dict[str, object] | Non
     config = PCVRTrainConfig().to_flat_dict()
     if overrides:
         config.update(overrides)
-    (checkpoint_dir / "train_config.json").write_text(dumps(config), encoding="utf-8")
+    (checkpoint_dir / "train_config.json").write_text(dumps(build_pcvr_train_config_sidecar(config)), encoding="utf-8")
 
 
 def test_resolve_infer_runtime_settings_requires_train_config_values(tmp_path: Path) -> None:
@@ -327,7 +328,9 @@ def test_load_train_config_requires_complete_sidecar(tmp_path: Path) -> None:
     experiment = _make_experiment(tmp_path)
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
-    (checkpoint_dir / "train_config.json").write_text(dumps({"batch_size": 128}), encoding="utf-8")
+    incomplete_config = PCVRTrainConfig().to_flat_dict()
+    incomplete_config.pop("amp")
+    (checkpoint_dir / "train_config.json").write_text(dumps(build_pcvr_train_config_sidecar(incomplete_config)), encoding="utf-8")
 
     with pytest.raises(KeyError, match="amp"):
         experiment._load_train_config(checkpoint_dir)

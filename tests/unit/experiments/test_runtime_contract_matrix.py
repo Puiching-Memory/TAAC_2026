@@ -574,7 +574,6 @@ def test_build_checkpoint_dir_name_rejects_negative_global_step() -> None:
     [
         "explicit_file",
         "explicit_dir",
-        "legacy_pt_file",
         "best_model",
         "latest_step",
         "direct_checkpoint",
@@ -597,13 +596,6 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
         model_path = candidate_dir / "model.safetensors"
         model_path.write_text("manual", encoding="utf-8")
         assert resolve_checkpoint_path(run_dir, candidate_dir) == model_path.resolve()
-        return
-
-    if scenario == "legacy_pt_file":
-        legacy_path = tmp_path / "manual.pt"
-        legacy_path.write_text("legacy", encoding="utf-8")
-        with pytest.raises(ValueError, match=r"unsupported checkpoint format"):
-            resolve_checkpoint_path(run_dir, legacy_path)
         return
 
     if scenario == "best_model":
@@ -677,9 +669,11 @@ def test_write_checkpoint_sidecars_cases(
         assert (checkpoint_dir / "schema.json").exists()
     if "train_config" in expected_keys:
         payload = loads((checkpoint_dir / "train_config.json").read_bytes())
-        assert payload["ns_grouping_strategy"] == "explicit"
-        assert payload["user_ns_groups"] == {"u": [10, 20]}
-        assert payload["item_ns_groups"] == {"i": [7]}
+        assert payload["train_config_format"] == PCVR_TRAIN_CONFIG_FORMAT
+        assert payload["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
+        assert payload["train_config"]["ns_grouping_strategy"] == "explicit"
+        assert payload["train_config"]["user_ns_groups"] == {"u": [10, 20]}
+        assert payload["train_config"]["item_ns_groups"] == {"i": [7]}
 
 
 def test_build_pcvr_train_config_sidecar_adds_version_metadata() -> None:
@@ -691,24 +685,30 @@ def test_build_pcvr_train_config_sidecar_adds_version_metadata() -> None:
     assert payload["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
     assert payload["framework_name"] == "taac2026"
     assert payload["framework_version"]
-    assert payload["d_model"] == flat_config["d_model"]
-    assert payload["user_ns_groups"] == flat_config["user_ns_groups"]
+    assert payload["train_config"]["d_model"] == flat_config["d_model"]
+    assert payload["train_config"]["user_ns_groups"] == flat_config["user_ns_groups"]
 
 
-@pytest.mark.parametrize("versioned", [False, True])
-def test_default_load_train_config_accepts_legacy_and_versioned_payloads(tmp_path: Path, versioned: bool) -> None:
+def test_default_load_train_config_requires_current_payload(tmp_path: Path) -> None:
     checkpoint_dir = tmp_path / "global_step1"
     checkpoint_dir.mkdir()
     flat_config = PCVRTrainConfig().to_flat_dict()
-    payload = build_pcvr_train_config_sidecar(flat_config) if versioned else flat_config
-    (checkpoint_dir / "train_config.json").write_text(dumps(payload), encoding="utf-8")
+    (checkpoint_dir / "train_config.json").write_text(dumps(build_pcvr_train_config_sidecar(flat_config)), encoding="utf-8")
 
     loaded = default_load_train_config(None, checkpoint_dir)
 
     assert loaded["d_model"] == flat_config["d_model"]
     assert loaded["ns_grouping_strategy"] == flat_config["ns_grouping_strategy"]
-    if versioned:
-        assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
+    assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
+
+
+def test_default_load_train_config_rejects_flat_payload(tmp_path: Path) -> None:
+    checkpoint_dir = tmp_path / "global_step1"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "train_config.json").write_text(dumps(PCVRTrainConfig().to_flat_dict()), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="train_config_format"):
+        default_load_train_config(None, checkpoint_dir)
 
 
 @pytest.mark.parametrize("identifier_kind", ["path", "path_object"])

@@ -204,15 +204,6 @@ def test_fifo_batch_cache_uses_configured_eviction_policy() -> None:
     assert cache.get(("file", 0, 2)) is not None
 
 
-def test_data_cache_config_rejects_legacy_memory_mode() -> None:
-    try:
-        PCVRDataCacheConfig(mode="memory", max_batches=1)  # type: ignore[arg-type]
-    except ValueError as exc:
-        assert "unsupported data cache mode" in str(exc)
-    else:
-        raise AssertionError("expected ValueError for legacy memory cache mode")
-
-
 def test_data_pipeline_keeps_explicit_empty_cache_instance() -> None:
     cache = PCVRMemoryBatchCache.from_config(
         PCVRDataCacheConfig(mode="opt", max_batches=2)

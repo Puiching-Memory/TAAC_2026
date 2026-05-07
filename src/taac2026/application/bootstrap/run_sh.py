@@ -45,8 +45,6 @@ def parse_run_command(argv: Sequence[str]) -> ParsedRunCommand:
             args = args[1:]
         elif first.startswith("--"):
             command = "train"
-        elif first == "test":
-            raise ValueError("run.sh no longer supports 'test'; use 'uv run pytest ...' directly")
         else:
             command = first
             args = args[1:]

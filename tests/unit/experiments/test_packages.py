@@ -9,6 +9,7 @@ import pytest
 import torch
 
 from taac2026.application.experiments.registry import load_experiment_package
+from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.modeling import safe_key_padding_mask
 from tests.unit.experiments._experiment_matrix import discover_pcvr_experiment_cases, get_experiment_case, load_model_module
@@ -228,7 +229,7 @@ def test_symbiosis_runtime_config_requires_package_specific_keys(tmp_path: Path)
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     (checkpoint_dir / "train_config.json").write_text(
-        dumps(symbiosis_module.TRAIN_DEFAULTS.to_flat_dict()),
+        dumps(build_pcvr_train_config_sidecar(symbiosis_module.TRAIN_DEFAULTS.to_flat_dict())),
         encoding="utf-8",
     )
 

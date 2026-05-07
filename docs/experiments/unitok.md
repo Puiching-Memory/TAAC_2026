@@ -26,7 +26,7 @@ bash run.sh val \
 
 - 实验名：`pcvr_unitok`
 - 模型类：`PCVRUniTok`
-- NS tokenizer 配置：保留默认 RankMixer 字段配置用于 sidecar 兼容，但模型内部使用 field-level sparse tokens
+- NS tokenizer 配置：保留默认 RankMixer 字段配置写入当前 sidecar，但模型内部使用 field-level sparse tokens
 - 默认序列窗口：每个 domain 保留最近 `seq_top_k=64` 个真实事件
 - 默认 dropout：`0.02`
 - 数据管道：tail crop、轻量 feature mask、轻量 domain dropout

@@ -21,11 +21,6 @@ def test_parse_run_command_defaults_to_train_for_flags() -> None:
     assert parsed.args == ["--device", "cpu"]
 
 
-def test_parse_run_command_rejects_legacy_test_subcommand() -> None:
-    with pytest.raises(ValueError, match=r"run\.sh no longer supports 'test'"):
-        parse_run_command(["test", "tests/unit"])
-
-
 def test_extract_cuda_profile_removes_supported_profile(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TAAC_CUDA_PROFILE", raising=False)
 

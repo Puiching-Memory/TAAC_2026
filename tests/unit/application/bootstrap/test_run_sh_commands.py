@@ -27,22 +27,6 @@ def _prepare_project(tmp_path: Path) -> Path:
     return project_dir
 
 
-def test_run_sh_rejects_test_subcommand(tmp_path: Path) -> None:
-    project_dir = _prepare_project(tmp_path)
-
-    result = subprocess.run(
-        ["bash", "run.sh", "test", "tests/unit", "-q"],
-        cwd=project_dir,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert "run.sh no longer supports 'test'; use 'uv run pytest ...' directly" in result.stderr
-
-
 def test_run_sh_rejects_package_infer_subcommand(tmp_path: Path) -> None:
     project_dir = _prepare_project(tmp_path)
 

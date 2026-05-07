@@ -16,7 +16,6 @@ from taac2026.infrastructure.checkpoints import (
     save_checkpoint_state_dict,
     write_checkpoint_sidecars,
 )
-from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
 from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.optimization.registry import build_dense_optimizer, dense_optimizer_display_name
 from taac2026.infrastructure.optimization.schedules import dense_lr_multiplier
@@ -62,7 +61,7 @@ class PCVRTrainerSupportMixin:
         write_checkpoint_sidecars(
             checkpoint_dir,
             schema_path=self.schema_path,
-            train_config=build_pcvr_train_config_sidecar(self.train_config),
+            train_config=self.train_config,
         )
 
     def _save_step_checkpoint(

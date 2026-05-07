@@ -48,7 +48,7 @@ def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None
     assert manifest["entrypoint"] == "infer.py"
     assert manifest["code_package"] == "code_package.zip"
     assert manifest["runtime_env"]["pip_extras"].startswith("TAAC_BUNDLE_PIP_EXTRAS")
-    assert manifest["compatibility"]["requires_uv_online"] is False
+    assert "compatibility" not in manifest
 
     names = code_package_names(result.code_package_path)
     assert "project/.taac_inference_manifest.json" in names
