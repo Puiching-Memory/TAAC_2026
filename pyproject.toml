@@ -39,7 +39,7 @@ dev = [
 	"pytest-cov==7.1.0",
 	"ruff==0.15.12",
 	"vulture==2.16",
-	"zensical==0.0.38",
+	"zensical==0.0.40",
 ]
 cuda126 = [
 	"torch==2.7.1+cu126",
