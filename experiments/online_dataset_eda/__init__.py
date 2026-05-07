@@ -31,7 +31,7 @@ def _train(request: TrainRequest) -> dict[str, object]:
     run_dir = request.run_dir.expanduser().resolve()
     if request.extra_args:
         raise ValueError(
-            "online_dataset_eda experiment does not accept extra_args; edit ONLINE_DATASET_EDA_CONFIG in config/online_dataset_eda/__init__.py"
+            "online_dataset_eda experiment does not accept extra_args; edit ONLINE_DATASET_EDA_CONFIG in experiments/online_dataset_eda/__init__.py"
         )
     report = run_online_dataset_eda(_resolved_online_dataset_eda_config(request))
     return {

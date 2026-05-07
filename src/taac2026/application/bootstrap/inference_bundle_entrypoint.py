@@ -32,12 +32,11 @@ def _default_bundle_workdir(script_dir: Path, code_package: Path) -> Path:
 
 def _extract_code_package(package_path: Path, workdir: Path) -> Path:
     project_dir = workdir / "project"
-    if os.environ.get("TAAC_FORCE_EXTRACT") == "1" or not (project_dir / "pyproject.toml").exists():
-        if project_dir.exists():
-            shutil.rmtree(project_dir)
-        workdir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(package_path) as archive:
-            archive.extractall(workdir)
+    if project_dir.exists():
+        shutil.rmtree(project_dir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(package_path) as archive:
+        archive.extractall(workdir)
     return project_dir
 
 

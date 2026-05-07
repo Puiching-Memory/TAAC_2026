@@ -76,7 +76,6 @@ outputs/bundles/baseline_training/
 | `TAAC_SCHEMA_PATH`     | `schema.json` 路径                |
 | `TAAC_RUNNER=python`   | 线上使用平台 Python，不依赖 `uv`  |
 | `TAAC_BUNDLE_WORKDIR`  | 自定义 bundle 解压目录            |
-| `TAAC_FORCE_EXTRACT=1` | 强制重新解压代码包                |
 
 训练 bundle 还支持这些调试开关：
 
@@ -140,7 +139,6 @@ outputs/bundles/baseline_inference/
 | `MODEL_OUTPUT_PATH`    | 已发布模型或 checkpoint 路径      |
 | `TAAC_SCHEMA_PATH`     | `schema.json` 路径                |
 | `TAAC_BUNDLE_WORKDIR`  | 自定义 bundle 解压目录            |
-| `TAAC_FORCE_EXTRACT=1` | 强制重新解压代码包                |
 
 推理额外支持：
 
@@ -237,10 +235,6 @@ uv run taac-package-train \
 **线上提示 `uv: command not found`**
 
 线上 bundle 应使用 `TAAC_RUNNER=python`，复用平台 Conda Python。
-
-**跑到旧代码**
-
-重新打包，并在测试时设置 `TAAC_FORCE_EXTRACT=1`。
 
 **跑错实验包**
 

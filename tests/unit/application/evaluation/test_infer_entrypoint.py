@@ -12,7 +12,7 @@ def test_infer_entrypoint_passes_taac_experiment_to_cli(monkeypatch: pytest.Monk
     monkeypatch.setenv("EVAL_RESULT_PATH", "/tmp/results")
     monkeypatch.setenv("MODEL_OUTPUT_PATH", "/tmp/model")
     monkeypatch.setenv("TAAC_SCHEMA_PATH", "/tmp/schema.json")
-    monkeypatch.setenv("TAAC_EXPERIMENT", "config/symbiosis")
+    monkeypatch.setenv("TAAC_EXPERIMENT", "experiments/symbiosis")
     captured: list[Sequence[str]] = []
 
     def fake_evaluation_main(argv: Sequence[str]) -> None:
@@ -25,7 +25,7 @@ def test_infer_entrypoint_passes_taac_experiment_to_cli(monkeypatch: pytest.Monk
     assert captured == [[
         "infer",
         "--experiment",
-        "config/symbiosis",
+        "experiments/symbiosis",
         "--dataset-path",
         "/tmp/eval.parquet",
         "--result-dir",

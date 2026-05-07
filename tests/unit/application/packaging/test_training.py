@@ -130,7 +130,6 @@ def test_training_run_script_installs_project_dependencies_before_entrypoint(tmp
         "TAAC_BUNDLE_WORKDIR",
         "TAAC_CODE_PACKAGE",
         "TAAC_EXPERIMENT",
-        "TAAC_FORCE_EXTRACT",
         "TAAC_INSTALL_PROJECT_DEPS",
         "TAAC_BUNDLE_PIP_EXTRAS",
         "TAAC_PIP_EXTRA_ARGS",
@@ -182,7 +181,6 @@ def test_training_run_script_accepts_explicit_bundle_pip_extras(tmp_path: Path) 
         "TAAC_BUNDLE_WORKDIR",
         "TAAC_CODE_PACKAGE",
         "TAAC_EXPERIMENT",
-        "TAAC_FORCE_EXTRACT",
         "TAAC_INSTALL_PROJECT_DEPS",
         "TAAC_BUNDLE_PIP_EXTRAS",
         "TAAC_PIP_EXTRA_ARGS",
@@ -218,6 +216,56 @@ def test_training_run_script_accepts_explicit_bundle_pip_extras(tmp_path: Path) 
     assert_pip_install_args(pip_args, expected_target=".[dev]")
 
 
+def test_training_run_script_reextracts_when_code_package_changes(tmp_path: Path) -> None:
+    output_dir = tmp_path / "baseline_bundle"
+    result = build_training_bundle("experiments/baseline", output_dir=output_dir)
+    write_minimal_training_runtime_package(result.code_package_path, bundled_experiment_path="experiments/first")
+
+    env = os.environ.copy()
+    for variable in (
+        "TAAC_BUNDLE_WORKDIR",
+        "TAAC_CODE_PACKAGE",
+        "TAAC_EXPERIMENT",
+        "TAAC_INSTALL_PROJECT_DEPS",
+        "TAAC_BUNDLE_PIP_EXTRAS",
+        "TAAC_PIP_EXTRA_ARGS",
+        "TAAC_PIP_EXTRAS",
+        "TAAC_PIP_INDEX_URL",
+        "TAAC_PYTHON",
+        "TAAC_RUNNER",
+        "TAAC_SKIP_PIP_INSTALL",
+    ):
+        env.pop(variable, None)
+    env.update(
+        {
+            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
+            "TAAC_PYTHON": sys.executable,
+            "TAAC_RUNNER": "python",
+            "TAAC_SKIP_PIP_INSTALL": "1",
+        }
+    )
+
+    first = subprocess.run(
+        ["bash", str(result.run_script_path), "--device", "cpu"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    write_minimal_training_runtime_package(result.code_package_path, bundled_experiment_path="experiments/second")
+    second = subprocess.run(
+        ["bash", str(result.run_script_path), "--device", "cpu"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert loads(first.stdout)["argv"][:2] == ["--experiment", "experiments/first"]
+    assert loads(second.stdout)["argv"][:2] == ["--experiment", "experiments/second"]
+
+
 def test_training_run_script_does_not_inject_default_experiment(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline_bundle"
     result = build_training_bundle("experiments/baseline", output_dir=output_dir)
@@ -230,7 +278,6 @@ def test_training_run_script_does_not_inject_default_experiment(tmp_path: Path) 
         "TAAC_BUNDLE_WORKDIR",
         "TAAC_CODE_PACKAGE",
         "TAAC_EXPERIMENT",
-        "TAAC_FORCE_EXTRACT",
         "TAAC_INSTALL_PROJECT_DEPS",
         "TAAC_BUNDLE_PIP_EXTRAS",
         "TAAC_PIP_EXTRA_ARGS",
@@ -277,7 +324,6 @@ def test_training_run_script_uses_platform_train_env_paths(tmp_path: Path) -> No
         "TAAC_BUNDLE_WORKDIR",
         "TAAC_CODE_PACKAGE",
         "TAAC_EXPERIMENT",
-        "TAAC_FORCE_EXTRACT",
         "TAAC_INSTALL_PROJECT_DEPS",
         "TAAC_BUNDLE_PIP_EXTRAS",
         "TAAC_PIP_EXTRA_ARGS",
@@ -337,7 +383,6 @@ def test_training_run_script_infer_uses_platform_eval_env_paths(tmp_path: Path) 
         "TAAC_BUNDLE_WORKDIR",
         "TAAC_CODE_PACKAGE",
         "TAAC_EXPERIMENT",
-        "TAAC_FORCE_EXTRACT",
         "TAAC_INSTALL_PROJECT_DEPS",
         "TAAC_BUNDLE_PIP_EXTRAS",
         "TAAC_PIP_EXTRA_ARGS",

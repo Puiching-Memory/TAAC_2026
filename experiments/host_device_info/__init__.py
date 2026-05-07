@@ -28,7 +28,7 @@ def _train(request: TrainRequest) -> dict[str, object]:
     run_dir = request.run_dir.expanduser().resolve()
     if request.extra_args:
         raise ValueError(
-            "host_device_info experiment does not accept extra_args; edit HOST_DEVICE_INFO_CONFIG in config/host_device_info/__init__.py"
+            "host_device_info experiment does not accept extra_args; edit HOST_DEVICE_INFO_CONFIG in experiments/host_device_info/__init__.py"
         )
     summary = collect_host_device_info(_resolved_host_device_info_config())
     return {

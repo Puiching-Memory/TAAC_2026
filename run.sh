@@ -65,11 +65,9 @@ PY
 if [[ -f "${CODE_PACKAGE}" ]]; then
 	BUNDLE_MODE=1
 	PROJECT_DIR="${WORKDIR}/project"
-	if [[ "${TAAC_FORCE_EXTRACT:-0}" == "1" || ! -f "${PROJECT_DIR}/pyproject.toml" ]]; then
-		rm -rf "${PROJECT_DIR}"
-		mkdir -p "${WORKDIR}"
-		extract_code_package "${CODE_PACKAGE}" "${WORKDIR}"
-	fi
+	rm -rf "${PROJECT_DIR}"
+	mkdir -p "${WORKDIR}"
+	extract_code_package "${CODE_PACKAGE}" "${WORKDIR}"
 fi
 
 if [[ ! -f "${PROJECT_DIR}/pyproject.toml" ]]; then
