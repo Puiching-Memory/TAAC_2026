@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,9 +16,13 @@ from taac2026.domain.config import (
     PCVRTrainConfig,
 )
 from taac2026.application.training.cli import main, parse_train_args
+from taac2026.infrastructure.experiments.module_loader import load_module_from_path
 from taac2026.infrastructure.io.json import loads
 from taac2026.application.training.workflow import PCVRTrainDataBundle, build_pcvr_train_hooks
 from taac2026.application.training.args import parse_pcvr_train_args, train_pcvr_model
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _write_minimal_experiment(package_dir: Path, *, requires_dataset: bool) -> Path:
@@ -297,7 +300,7 @@ def test_parse_pcvr_train_args_rejects_symbiosis_ablation_flags(tmp_path: Path) 
 
 
 def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
-    symbiosis_module = importlib.import_module("experiments.symbiosis")
+    symbiosis_module = load_module_from_path(REPO_ROOT / "experiments" / "symbiosis")
 
     args = symbiosis_module.parse_symbiosis_train_args(
         [

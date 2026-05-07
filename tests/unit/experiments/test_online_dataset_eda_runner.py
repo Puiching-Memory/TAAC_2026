@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from pathlib import Path
 import sys
 
@@ -75,21 +76,26 @@ def _run_online_eda_runner(
     return runner_module.run_online_dataset_eda(config)
 
 
-def test_online_dataset_eda_runner_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_online_dataset_eda_runner_prints_summary(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    log_capture,
+) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path)
 
-    report = _run_online_eda_runner(
-        dataset_path=dataset_path,
-        schema_path=schema_path,
-        max_rows=4,
-    )
+    with log_capture.at_level(logging.INFO):
+        report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            max_rows=4,
+        )
     captured = capsys.readouterr()
 
     assert report["row_count"] == 4
-    assert "[online-eda] dataset=" in captured.out
+    assert "[online-eda] dataset=" in log_capture.text
     assert "== Dataset ==" in captured.out
     assert "== Top Null Rates ==" in captured.out
 
@@ -97,64 +103,70 @@ def test_online_dataset_eda_runner_prints_summary(tmp_path: Path, capsys: pytest
 def test_online_dataset_eda_runner_streams_full_dataset_by_default(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    log_capture,
 ) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path)
 
-    report = _run_online_eda_runner(
-        dataset_path=dataset_path,
-        schema_path=schema_path,
-    )
+    with log_capture.at_level(logging.INFO):
+        report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+        )
     captured = capsys.readouterr()
 
     assert report["row_count"] == 4
-    assert "scan=streaming full" in captured.out
+    assert "scan=streaming full" in log_capture.text
     assert "summary: online dataset, 4 rows" in captured.out
 
 
 def test_online_dataset_eda_runner_honors_explicit_max_rows(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    log_capture,
 ) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path)
 
-    report = _run_online_eda_runner(
-        dataset_path=dataset_path,
-        schema_path=schema_path,
-        max_rows=2,
-    )
+    with log_capture.at_level(logging.INFO):
+        report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            max_rows=2,
+        )
     captured = capsys.readouterr()
 
     assert report["row_count"] == 2
-    assert "scan=streaming max_rows=2" in captured.out
+    assert "scan=streaming max_rows=2" in log_capture.text
     assert "summary: online dataset, scanned 2/4 rows" in captured.out
-    assert "progress first-pass:" in captured.out
-    assert "progress second-pass:" in captured.out
+    assert "progress first-pass:" in log_capture.text
+    assert "progress second-pass:" in log_capture.text
 
 
 def test_online_dataset_eda_runner_honors_sample_percent(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    log_capture,
 ) -> None:
     schema_path = tmp_path / "schema.json"
     dataset_path = tmp_path / "demo.parquet"
     _write_schema(schema_path)
     _write_dataset(dataset_path)
 
-    report = _run_online_eda_runner(
-        dataset_path=dataset_path,
-        schema_path=schema_path,
-        sample_percent=50.0,
-    )
+    with log_capture.at_level(logging.INFO):
+        report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            sample_percent=50.0,
+        )
     captured = capsys.readouterr()
 
     assert report["row_count"] == 2
-    assert "scan=streaming sample_percent=50.0 max_rows=2" in captured.out
+    assert "scan=streaming sample_percent=50.0 max_rows=2" in log_capture.text
     assert "summary: online dataset, scanned 2/4 rows" in captured.out
 
 

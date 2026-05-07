@@ -14,6 +14,9 @@ import pyarrow.parquet as pq
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.io.streams import write_stdout_line
 
+MIN_SYNTHETIC_MULTIPLIER = 300
+
+
 def _replace_column(table: pa.Table, name: str, values: pa.ChunkedArray) -> pa.Table:
     index = table.schema.get_field_index(name)
     if index < 0:
@@ -66,6 +69,11 @@ def generate_dataset(
         raise FileNotFoundError(f"source parquet not found: {source_parquet}")
     if not source_schema.exists():
         raise FileNotFoundError(f"source schema not found: {source_schema}")
+    if multiplier < MIN_SYNTHETIC_MULTIPLIER:
+        raise ValueError(
+            f"synthetic PCVR benchmark dataset multiplier must be at least "
+            f"{MIN_SYNTHETIC_MULTIPLIER}x"
+        )
 
     if output_dir.exists():
         if not force:
@@ -113,7 +121,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=Path("outputs/perf/pcvr_synthetic_300x"),
         help="Directory to create for the amplified dataset.",
     )
-    parser.add_argument("--multiplier", type=int, default=300)
+    parser.add_argument("--multiplier", type=int, default=MIN_SYNTHETIC_MULTIPLIER)
     parser.add_argument("--row-group-size", type=int, default=0)
     parser.add_argument("--compression", default="snappy")
     parser.add_argument("--no-jitter-ids", action="store_true")

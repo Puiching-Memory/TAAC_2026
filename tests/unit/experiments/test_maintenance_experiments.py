@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import importlib.util
+import logging
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -291,6 +292,7 @@ def test_online_dataset_eda_experiment_prints_report_to_stdout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    log_capture,
 ) -> None:
     online_dataset_eda_package = _load_package_module("online_dataset_eda")
     experiment = online_dataset_eda_package.EXPERIMENT
@@ -305,14 +307,15 @@ def test_online_dataset_eda_experiment_prints_report_to_stdout(
         replace(online_dataset_eda_package.ONLINE_DATASET_EDA_CONFIG, max_rows=2),
     )
 
-    result = experiment.train(
-        TrainRequest(
-            experiment="experiments/online_dataset_eda",
-            dataset_path=dataset_path,
-            schema_path=schema_path,
-            run_dir=run_dir,
+    with log_capture.at_level(logging.INFO):
+        result = experiment.train(
+            TrainRequest(
+                experiment="experiments/online_dataset_eda",
+                dataset_path=dataset_path,
+                schema_path=schema_path,
+                run_dir=run_dir,
+            )
         )
-    )
 
     captured = capsys.readouterr()
     assert result["dataset_role"] == "online"
@@ -320,7 +323,7 @@ def test_online_dataset_eda_experiment_prints_report_to_stdout(
     assert result["sampled"] is True
     assert "report_path" not in result
     assert "chart_dir" not in result
-    assert "[online-eda] sink=stdout" in captured.out
+    assert "[online-eda] sink=stdout" in log_capture.text
     assert "== Dataset ==" in captured.out
     assert not run_dir.exists()
 
