@@ -26,6 +26,7 @@ _CACHETOOLS_POLICIES: dict[str, type[Cache]] = {
     "rr": RRCache,
 }
 _CACHE_POLICIES = (*_CACHETOOLS_POLICIES, "opt")
+_OPT_MISS_SENTINEL = object()
 
 
 def _normalize_cache_policy(policy: str) -> str:
@@ -61,6 +62,7 @@ class PCVRMemoryBatchCache:
         self._trace_cyclic = True
         self._access_count = 0
         self._opt_fallback = False
+        self._last_opt_miss_key = _OPT_MISS_SENTINEL
 
     @classmethod
     def from_config(cls, config: PCVRDataCacheConfig | None) -> PCVRMemoryBatchCache:
@@ -91,10 +93,14 @@ class PCVRMemoryBatchCache:
             self._trace_length = 0
             self._access_count = 0
             self._opt_fallback = False
+            self._last_opt_miss_key = _OPT_MISS_SENTINEL
             self._ensure_cachetools_items("lru")
             return
 
         if trace_length == self._trace_length and cyclic == self._trace_cyclic and trace_positions == self._trace_positions:
+            self._access_count = 0
+            self._opt_fallback = False
+            self._last_opt_miss_key = _OPT_MISS_SENTINEL
             return
 
         self._items = {}
@@ -103,14 +109,18 @@ class PCVRMemoryBatchCache:
         self._trace_cyclic = cyclic
         self._access_count = 0
         self._opt_fallback = False
+        self._last_opt_miss_key = _OPT_MISS_SENTINEL
 
     def get(self, key: Hashable) -> PCVRBatch | None:
         if not self.enabled or self.max_batches <= 0:
             return None
+        self._last_opt_miss_key = _OPT_MISS_SENTINEL
         self._record_access(key)
         try:
             batch = self._items[key]
         except KeyError:
+            if self._opt_active:
+                self._last_opt_miss_key = key
             return None
         return clone_pcvr_batch(batch)
 
@@ -118,14 +128,23 @@ class PCVRMemoryBatchCache:
         if not self.enabled or self.max_batches <= 0:
             return
         if not self._opt_active:
+            self._last_opt_miss_key = _OPT_MISS_SENTINEL
             self._ensure_cachetools_items("lru" if self.policy == "opt" else self.policy)
             self._items[key] = clone_pcvr_batch(batch)
             return
 
-        self._items[key] = clone_pcvr_batch(batch)
-        while self.max_batches > 0 and len(self._items) > self.max_batches:
+        if key not in self._items and len(self._items) >= self.max_batches:
+            if self._last_opt_miss_key != _OPT_MISS_SENTINEL and self._last_opt_miss_key == key:
+                self._last_opt_miss_key = _OPT_MISS_SENTINEL
+                return
             victim = self._select_opt_victim()
+            if self._next_use(key) >= self._next_use(victim):
+                self._last_opt_miss_key = _OPT_MISS_SENTINEL
+                return
             del self._items[victim]
+
+        self._last_opt_miss_key = _OPT_MISS_SENTINEL
+        self._items[key] = clone_pcvr_batch(batch)
 
     def __len__(self) -> int:
         return len(self._items)
@@ -213,8 +232,6 @@ class PCVRSharedBatchCache:
         self._key_to_slot = torch.empty(0, dtype=torch.int64).share_memory_()
         self._slot_to_key = torch.full((self.max_batches,), -1, dtype=torch.int64).share_memory_()
         self._row_counts = torch.zeros(self.max_batches, dtype=torch.int64).share_memory_()
-        self._last_access = torch.zeros(self.max_batches, dtype=torch.int64).share_memory_()
-        self._touch_counter = torch.zeros(1, dtype=torch.int64).share_memory_()
         self._access_count = torch.zeros(1, dtype=torch.int64).share_memory_()
         self._trace_length = 0
         self._trace_cyclic = True
@@ -222,6 +239,7 @@ class PCVRSharedBatchCache:
             key: torch.empty((self.max_batches, *spec.shape), dtype=spec.dtype).share_memory_()
             for key, spec in self.tensor_specs.items()
         }
+        self._storage_items = tuple(self._storage.items())
 
     def __len__(self) -> int:
         if self._opt_active:
@@ -256,8 +274,6 @@ class PCVRSharedBatchCache:
                 self._key_to_slot = torch.empty(0, dtype=torch.int64).share_memory_()
                 self._slot_to_key.fill_(-1)
                 self._row_counts.zero_()
-                self._last_access.zero_()
-                self._touch_counter.zero_()
                 self._access_count.zero_()
                 self._trace_length = 0
                 self._trace_cyclic = bool(cyclic)
@@ -271,8 +287,6 @@ class PCVRSharedBatchCache:
             self._key_to_slot = torch.full((trace_length,), -1, dtype=torch.int64).share_memory_()
             self._slot_to_key.fill_(-1)
             self._row_counts.zero_()
-            self._last_access.zero_()
-            self._touch_counter.zero_()
             self._access_count.zero_()
             self._trace_length = trace_length
             self._trace_cyclic = bool(cyclic)
@@ -307,8 +321,6 @@ class PCVRSharedBatchCache:
                     self._trace_cyclic,
                     self._key_to_slot,
                     self._slot_to_key,
-                    self._last_access,
-                    self._touch_counter,
                     self._access_count,
                 )
             )
@@ -333,19 +345,18 @@ class PCVRSharedBatchCache:
 
     def _write_slot(self, slot_index: int, key: Hashable, batch: PCVRBatch) -> None:
         row_count = pcvr_batch_row_count(batch)
-        for tensor_key, storage in self._storage.items():
+        for tensor_key, storage in self._storage_items:
             value = batch.get(tensor_key)
             if not isinstance(value, torch.Tensor):
                 raise KeyError(f"shared cache tensor key missing from batch: {tensor_key}")
             target = storage[slot_index]
-            target.zero_()
             if row_count > 0:
                 target[:row_count].copy_(value)
         self._row_counts[slot_index] = row_count
 
     def _materialize_slot(self, slot_index: int, row_count: int) -> PCVRBatch:
         batch: PCVRBatch = dict(self.static_values)
-        for tensor_key, storage in self._storage.items():
+        for tensor_key, storage in self._storage_items:
             batch[tensor_key] = storage[slot_index][:row_count].clone()
         return batch
 
@@ -364,8 +375,6 @@ class PCVRSharedBatchCache:
                     self._trace_length,
                     self._trace_cyclic,
                     self._key_to_slot,
-                    self._last_access,
-                    self._touch_counter,
                     self._access_count,
                 )
             )

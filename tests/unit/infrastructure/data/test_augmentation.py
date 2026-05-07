@@ -15,6 +15,7 @@ from taac2026.domain.config import (
     PCVRFeatureMaskConfig,
     PCVRSequenceCropConfig,
 )
+from taac2026.infrastructure.data import cache as cache_module
 from taac2026.infrastructure.data.dataset import PCVRParquetDataset
 from taac2026.infrastructure.data.pipeline import (
     PCVRDataPipeline,
@@ -245,6 +246,89 @@ def test_opt_batch_cache_evicts_farthest_future_key() -> None:
     assert cache.get(("file", 0, 2)) is None
 
 
+def test_opt_batch_cache_skips_clone_for_rejected_candidate(monkeypatch) -> None:
+    clone_calls = 0
+    original_clone = cache_module.clone_pcvr_batch
+
+    def counted_clone(batch):
+        nonlocal clone_calls
+        clone_calls += 1
+        return original_clone(batch)
+
+    monkeypatch.setattr(cache_module, "clone_pcvr_batch", counted_clone)
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="opt", max_batches=2)
+    )
+    cache.configure_access_trace(
+        [
+            ("file", 0, 0),
+            ("file", 0, 1),
+            ("file", 0, 2),
+            ("file", 0, 3),
+        ]
+    )
+
+    for key in (("file", 0, 0), ("file", 0, 1)):
+        assert cache.get(key) is None
+        cache.put(key, _make_batch())
+
+    assert clone_calls == 2
+    assert cache.get(("file", 0, 2)) is None
+    cache.put(("file", 0, 2), _make_batch())
+
+    assert clone_calls == 2
+    assert len(cache) == 2
+
+
+def test_opt_batch_cache_rejects_last_miss_without_victim_scan(monkeypatch) -> None:
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="opt", max_batches=2)
+    )
+    cache.configure_access_trace(
+        [
+            ("file", 0, 0),
+            ("file", 0, 1),
+            ("file", 0, 2),
+            ("file", 0, 3),
+        ]
+    )
+
+    for key in (("file", 0, 0), ("file", 0, 1)):
+        assert cache.get(key) is None
+        cache.put(key, _make_batch())
+
+    def fail_select_victim():
+        raise AssertionError("last-miss rejection should not scan cached victims")
+
+    monkeypatch.setattr(cache, "_select_opt_victim", fail_select_victim)
+
+    assert cache.get(("file", 0, 2)) is None
+    cache.put(("file", 0, 2), _make_batch())
+
+    assert len(cache) == 2
+
+
+def test_opt_batch_cache_reconfigures_same_trace_without_fallback() -> None:
+    trace = [
+        ("file", 0, 0),
+        ("file", 0, 1),
+        ("file", 0, 2),
+    ]
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="opt", max_batches=2)
+    )
+    cache.configure_access_trace(trace)
+
+    assert cache.get(("file", 0, 0)) is None
+    cache.put(("file", 0, 0), _make_batch())
+
+    cache.configure_access_trace(trace)
+
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache._opt_fallback is False
+    assert cache._access_count == 1
+
+
 def test_shared_opt_batch_cache_evicts_farthest_future_key() -> None:
     cache = PCVRSharedBatchCache(
         enabled=True,
@@ -323,6 +407,26 @@ def test_shared_lru_batch_cache_reuses_slot_for_existing_key() -> None:
     assert len(cache) == 1
     assert cached is not None
     assert cached["label"].tolist() == [2, 12]
+
+
+def test_shared_batch_cache_overwrites_partial_slot_without_stale_rows() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=1,
+        policy="lru",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    cache.put(("file", 0, 0), {"label": torch.tensor([2], dtype=torch.long)})
+
+    cached = cache.get(("file", 0, 0))
+
+    assert cached is not None
+    assert cached["label"].tolist() == [2]
 
 
 def test_strict_time_filter_removes_future_sequence_events(tmp_path: Path) -> None:
