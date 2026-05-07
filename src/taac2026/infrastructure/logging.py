@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+import os
 from pathlib import Path
 import sys
 import time
@@ -14,6 +15,7 @@ from tqdm import tqdm
 
 
 _configured_sink_ids: list[int] = []
+_default_loguru_sink_removed = False
 _elapsed_origin = time.time()
 
 
@@ -36,8 +38,29 @@ def _format_record(record: dict[str, Any]) -> str:
     return "{extra[taac_prefix]} - {extra[taac_message]}\n{exception}"
 
 
+def _format_plain_record(record: dict[str, Any]) -> str:
+    record["extra"]["taac_message"] = record["message"]
+    return "{extra[taac_message]}\n{exception}"
+
+
 def _console_sink(message: Any) -> None:
     tqdm.write(str(message).rstrip("\n"), file=sys.stderr)
+
+
+def _remove_default_loguru_sink() -> None:
+    global _default_loguru_sink_removed
+
+    if _default_loguru_sink_removed:
+        return
+    try:
+        logger.remove(0)
+    except ValueError:
+        pass
+    _default_loguru_sink_removed = True
+
+
+def _use_platform_console_format() -> bool:
+    return os.environ.get("TAAC_BUNDLE_MODE") == "1"
 
 
 class _InterceptHandler(logging.Handler):
@@ -78,6 +101,7 @@ def configure_logging(
         logger.remove(sink_id)
     _configured_sink_ids = []
 
+    _remove_default_loguru_sink()
     _reset_elapsed_origin()
     _configure_stdlib_logging()
 
@@ -87,7 +111,7 @@ def configure_logging(
             colorize=False,
             diagnose=False,
             backtrace=False,
-            format=_format_record,
+            format=_format_plain_record if _use_platform_console_format() else _format_record,
             level=console_level,
         )
     )
