@@ -80,6 +80,7 @@ taac-generate-pcvr-synthetic-dataset = "taac2026.application.benchmarking.genera
 taac-benchmark-pcvr-data-pipeline = "taac2026.application.benchmarking.pcvr_data_pipeline_benchmark:main"
 taac-benchmark-pcvr-optimizer = "taac2026.application.benchmarking.pcvr_optimizer_benchmark:main"
 taac-benchmark-pcvr-tilelang-ops = "taac2026.application.benchmarking.pcvr_tilelang_ops_benchmark:main"
+taac-plot-pcvr-diagnostics = "taac2026.application.benchmarking.pcvr_diagnostic_plots:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "taac2026.__version__"}

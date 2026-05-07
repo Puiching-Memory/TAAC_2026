@@ -135,6 +135,26 @@ def test_embedding_bag_mean_auto_preserves_registered_kernel(monkeypatch) -> Non
     torch.testing.assert_close(output, expected)
 
 
+def test_embedding_bag_mean_backend_env_overrides_auto_to_torch(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setenv(embedding_bag_ops._EMBEDDING_BAG_MEAN_BACKEND_ENV, "torch")
+
+    assert resolved_embedding_bag_mean_backend(weight, values) == "torch"
+
+
+def test_embedding_bag_mean_backend_env_rejects_invalid_auto(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setenv(embedding_bag_ops._EMBEDDING_BAG_MEAN_BACKEND_ENV, "invalid")
+
+    assert resolved_embedding_bag_mean_backend(weight, values, "torch") == "torch"
+    with pytest.raises(ValueError, match=embedding_bag_ops._EMBEDDING_BAG_MEAN_BACKEND_ENV):
+        resolved_embedding_bag_mean_backend(weight, values)
+
+
 def test_resolved_embedding_bag_mean_backend_rejects_tilelang_on_cpu() -> None:
     weight = torch.randn(8, 5, dtype=torch.float32)
     values = torch.ones(3, 4, dtype=torch.long)

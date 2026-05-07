@@ -1,0 +1,691 @@
+{
+  "output_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics",
+  "figures": {
+    "runtime_resources": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics/pcvr_runtime_resources.svg",
+    "prediction_distribution": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics/pcvr_prediction_distribution.svg",
+    "prediction_correlation": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics/pcvr_prediction_correlation.svg",
+    "sample_disagreement": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics/pcvr_sample_disagreement.svg",
+    "stability": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics/pcvr_stability.svg"
+  },
+  "runs": [
+    {
+      "label": "baseline",
+      "group": "pcvr_hyformer",
+      "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_seed42",
+      "evaluation_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_seed42/evaluation.json",
+      "predictions_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_seed42/validation_predictions.jsonl",
+      "prediction_count": 1000,
+      "missing_required_inputs": [],
+      "warnings": [],
+      "metrics": {
+        "auc": 0.951870673147739,
+        "auc_ci": {
+          "samples": 200,
+          "confidence": 0.95,
+          "low": 0.925329807409044,
+          "high": 0.971421831271174,
+          "std": 0.011711928860925801,
+          "positive_resample_count": 124,
+          "negative_resample_count": 876
+        },
+        "logloss": 0.3409505259959202,
+        "brier": 0.09931462637733376,
+        "gauc": {
+          "value": 0.5,
+          "coverage": 0.0
+        },
+        "score_diagnostics": {
+          "sample_count": 1000,
+          "positive_count": 124,
+          "negative_count": 876,
+          "invalid_count": 0,
+          "positive_rate": 0.124,
+          "score_mean": 0.13917289281636477,
+          "score_std": 0.021811589347413993,
+          "positive_score_mean": 0.1795573110782331,
+          "negative_score_mean": 0.13345637698934232,
+          "score_margin_mean": 0.046100934088890794,
+          "positive_score_p10": 0.14215033799409865,
+          "positive_score_p50": 0.16671431809663773,
+          "positive_score_p90": 0.22812882512807847,
+          "negative_score_p10": 0.1258097141981125,
+          "negative_score_p50": 0.13174232095479965,
+          "negative_score_p90": 0.1414269208908081
+        },
+        "sample_count": 1000
+      },
+      "telemetry": {
+        "training": {
+          "label": "training",
+          "started_at_unix": 1778145885.185792,
+          "ended_at_unix": 1778145891.8146744,
+          "elapsed_sec": 6.628883155004587,
+          "cpu_peak_rss_mb": 3550.82421875,
+          "metadata": {
+            "model_class": "PCVRHyFormer",
+            "package_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/experiments/baseline",
+            "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_seed42"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 12468.85302734375,
+          "cuda_peak_reserved_mb": 12624.0,
+          "steps": 4,
+          "train_rows": 1000,
+          "valid_rows": 1000,
+          "rows": 1000,
+          "model_parameters": 160938753,
+          "rows_per_sec": 150.854974603834,
+          "steps_per_sec": 0.603419898415336
+        },
+        "evaluation": {
+          "label": "evaluation",
+          "started_at_unix": 1778145907.231049,
+          "ended_at_unix": 1778145911.6240575,
+          "elapsed_sec": 4.393009108025581,
+          "cpu_peak_rss_mb": 1755.6953125,
+          "metadata": {
+            "experiment_name": "pcvr_hyformer",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 2124.42529296875,
+          "cuda_peak_reserved_mb": 2828.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.10001087188720703,
+          "checkpoint_file_mb": 613.9808464050293,
+          "rows_per_sec": 227.63440170727208,
+          "batches_per_sec": 0.9105376068290882
+        },
+        "inference": {
+          "label": "inference",
+          "started_at_unix": 1778145928.653664,
+          "ended_at_unix": 1778145933.0843494,
+          "elapsed_sec": 4.43068516702624,
+          "cpu_peak_rss_mb": 1796.9453125,
+          "metadata": {
+            "experiment_name": "pcvr_hyformer",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 2124.42529296875,
+          "cuda_peak_reserved_mb": 2828.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.03433704376220703,
+          "checkpoint_file_mb": 613.9808464050293,
+          "rows_per_sec": 225.69872656313646,
+          "batches_per_sec": 0.9027949062525458
+        }
+      }
+    },
+    {
+      "label": "baseline_plus",
+      "group": "pcvr_baseline_plus",
+      "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_plus_seed42",
+      "evaluation_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_plus_seed42/evaluation.json",
+      "predictions_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_plus_seed42/validation_predictions.jsonl",
+      "prediction_count": 1000,
+      "missing_required_inputs": [],
+      "warnings": [],
+      "metrics": {
+        "auc": 0.9115757107084991,
+        "auc_ci": {
+          "samples": 200,
+          "confidence": 0.95,
+          "low": 0.8813705994991898,
+          "high": 0.9431161621741052,
+          "std": 0.01671575862399112,
+          "positive_resample_count": 124,
+          "negative_resample_count": 876
+        },
+        "logloss": 0.3252952212965474,
+        "brier": 0.09470630788300863,
+        "gauc": {
+          "value": 0.5,
+          "coverage": 0.0
+        },
+        "score_diagnostics": {
+          "sample_count": 1000,
+          "positive_count": 124,
+          "negative_count": 876,
+          "invalid_count": 0,
+          "positive_rate": 0.124,
+          "score_mean": 0.13019965328276156,
+          "score_std": 0.035973471946272255,
+          "positive_score_mean": 0.19169246982182225,
+          "negative_score_mean": 0.12149519066764339,
+          "score_margin_mean": 0.07019727915417887,
+          "positive_score_p10": 0.12346313744783402,
+          "positive_score_p50": 0.16969271004199982,
+          "positive_score_p90": 0.28888177275657656,
+          "negative_score_p10": 0.11062765493988991,
+          "negative_score_p50": 0.11850785836577415,
+          "negative_score_p90": 0.13264941424131393
+        },
+        "sample_count": 1000
+      },
+      "telemetry": {
+        "training": {
+          "label": "training",
+          "started_at_unix": 1778147307.1496189,
+          "ended_at_unix": 1778147313.569338,
+          "elapsed_sec": 6.419720019039232,
+          "cpu_peak_rss_mb": 4147.046875,
+          "metadata": {
+            "model_class": "PCVRBaselinePlus",
+            "package_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/experiments/baseline_plus",
+            "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_plus_seed42"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 13184.04931640625,
+          "cuda_peak_reserved_mb": 13304.0,
+          "steps": 4,
+          "train_rows": 1000,
+          "valid_rows": 1000,
+          "rows": 1000,
+          "model_parameters": 160935041,
+          "rows_per_sec": 155.77003312204553,
+          "steps_per_sec": 0.6230801324881822
+        },
+        "evaluation": {
+          "label": "evaluation",
+          "started_at_unix": 1778147324.488203,
+          "ended_at_unix": 1778147328.0568411,
+          "elapsed_sec": 3.568639172008261,
+          "cpu_peak_rss_mb": 1820.1953125,
+          "metadata": {
+            "experiment_name": "pcvr_baseline_plus",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_plus_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 2220.39697265625,
+          "cuda_peak_reserved_mb": 2828.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.10009288787841797,
+          "checkpoint_file_mb": 613.9609870910645,
+          "rows_per_sec": 280.218859851064,
+          "batches_per_sec": 1.120875439404256
+        },
+        "inference": {
+          "label": "inference",
+          "started_at_unix": 1778147337.9187608,
+          "ended_at_unix": 1778147341.9144166,
+          "elapsed_sec": 3.995655598002486,
+          "cpu_peak_rss_mb": 1824.4609375,
+          "metadata": {
+            "experiment_name": "pcvr_baseline_plus",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/baseline_plus_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 2220.39697265625,
+          "cuda_peak_reserved_mb": 2828.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.03441905975341797,
+          "checkpoint_file_mb": 613.9609870910645,
+          "rows_per_sec": 250.2718203490615,
+          "batches_per_sec": 1.001087281396246
+        }
+      }
+    },
+    {
+      "label": "interformer",
+      "group": "pcvr_interformer",
+      "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/interformer_seed42",
+      "evaluation_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/interformer_seed42/evaluation.json",
+      "predictions_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/interformer_seed42/validation_predictions.jsonl",
+      "prediction_count": 1000,
+      "missing_required_inputs": [],
+      "warnings": [],
+      "metrics": {
+        "auc": 0.9644645750478715,
+        "auc_ci": {
+          "samples": 200,
+          "confidence": 0.95,
+          "low": 0.9452828104286346,
+          "high": 0.9777901292532037,
+          "std": 0.008052282199150107,
+          "positive_resample_count": 124,
+          "negative_resample_count": 876
+        },
+        "logloss": 0.36917857964579137,
+        "brier": 0.10566112086433009,
+        "gauc": {
+          "value": 0.5,
+          "coverage": 0.0
+        },
+        "score_diagnostics": {
+          "sample_count": 1000,
+          "positive_count": 124,
+          "negative_count": 876,
+          "invalid_count": 0,
+          "positive_rate": 0.124,
+          "score_mean": 0.19827403327822685,
+          "score_std": 0.01845602360751639,
+          "positive_score_mean": 0.23383909764309083,
+          "negative_score_mean": 0.19323970909872557,
+          "score_margin_mean": 0.04059938854436526,
+          "positive_score_p10": 0.20441162586212158,
+          "positive_score_p50": 0.2277110442519188,
+          "positive_score_p90": 0.26993886530399325,
+          "negative_score_p10": 0.18534362316131592,
+          "negative_score_p50": 0.1915910542011261,
+          "negative_score_p90": 0.2020648866891861
+        },
+        "sample_count": 1000
+      },
+      "telemetry": {
+        "training": {
+          "label": "training",
+          "started_at_unix": 1778147351.3612015,
+          "ended_at_unix": 1778147357.081558,
+          "elapsed_sec": 5.720356844016351,
+          "cpu_peak_rss_mb": 3707.8046875,
+          "metadata": {
+            "model_class": "PCVRInterFormer",
+            "package_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/experiments/interformer",
+            "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/interformer_seed42"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 9425.6484375,
+          "cuda_peak_reserved_mb": 12632.0,
+          "steps": 4,
+          "train_rows": 1000,
+          "valid_rows": 1000,
+          "rows": 1000,
+          "model_parameters": 159116289,
+          "rows_per_sec": 174.81426898149323,
+          "steps_per_sec": 0.6992570759259729
+        },
+        "evaluation": {
+          "label": "evaluation",
+          "started_at_unix": 1778147367.9687276,
+          "ended_at_unix": 1778147371.7196364,
+          "elapsed_sec": 3.750909389986191,
+          "cpu_peak_rss_mb": 1843.38671875,
+          "metadata": {
+            "experiment_name": "pcvr_interformer",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/interformer_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 3119.4453125,
+          "cuda_peak_reserved_mb": 4110.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.0999898910522461,
+          "checkpoint_file_mb": 607.0041542053223,
+          "rows_per_sec": 266.6020146126968,
+          "batches_per_sec": 1.0664080584507871
+        },
+        "inference": {
+          "label": "inference",
+          "started_at_unix": 1778147381.7362494,
+          "ended_at_unix": 1778147385.4282103,
+          "elapsed_sec": 3.691960393975023,
+          "cpu_peak_rss_mb": 1852.03515625,
+          "metadata": {
+            "experiment_name": "pcvr_interformer",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/interformer_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 3119.4453125,
+          "cuda_peak_reserved_mb": 4110.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.034316062927246094,
+          "checkpoint_file_mb": 607.0041542053223,
+          "rows_per_sec": 270.85881030357694,
+          "batches_per_sec": 1.0834352412143078
+        }
+      }
+    },
+    {
+      "label": "onetrans",
+      "group": "pcvr_onetrans",
+      "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/onetrans_seed42",
+      "evaluation_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/onetrans_seed42/evaluation.json",
+      "predictions_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/onetrans_seed42/validation_predictions.jsonl",
+      "prediction_count": 1000,
+      "missing_required_inputs": [],
+      "warnings": [],
+      "metrics": {
+        "auc": 0.7838875386654883,
+        "auc_ci": {
+          "samples": 200,
+          "confidence": 0.95,
+          "low": 0.7603867469435852,
+          "high": 0.8106192001767566,
+          "std": 0.014107494290470464,
+          "positive_resample_count": 124,
+          "negative_resample_count": 876
+        },
+        "logloss": 0.40438580102669447,
+        "brier": 0.11873243502996618,
+        "gauc": {
+          "value": 0.5,
+          "coverage": 0.0
+        },
+        "score_diagnostics": {
+          "sample_count": 1000,
+          "positive_count": 124,
+          "negative_count": 876,
+          "invalid_count": 0,
+          "positive_rate": 0.124,
+          "score_mean": 0.25284689509868624,
+          "score_std": 0.07064744306943728,
+          "positive_score_mean": 0.2991539457392308,
+          "negative_score_mean": 0.24629201578427123,
+          "score_margin_mean": 0.052861929954959586,
+          "positive_score_p10": 0.22780862748622893,
+          "positive_score_p50": 0.26799434423446655,
+          "positive_score_p90": 0.40321708023548125,
+          "negative_score_p10": 0.19600392132997513,
+          "negative_score_p50": 0.20769433677196503,
+          "negative_score_p90": 0.3538910299539566
+        },
+        "sample_count": 1000
+      },
+      "telemetry": {
+        "training": {
+          "label": "training",
+          "started_at_unix": 1778147394.9069338,
+          "ended_at_unix": 1778147400.7263775,
+          "elapsed_sec": 5.819446065986995,
+          "cpu_peak_rss_mb": 3620.125,
+          "metadata": {
+            "model_class": "PCVROneTrans",
+            "package_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/experiments/onetrans",
+            "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/onetrans_seed42"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 22821.970703125,
+          "cuda_peak_reserved_mb": 33474.0,
+          "steps": 4,
+          "train_rows": 1000,
+          "valid_rows": 1000,
+          "rows": 1000,
+          "model_parameters": 160578305,
+          "rows_per_sec": 171.8376609493325,
+          "steps_per_sec": 0.68735064379733
+        },
+        "evaluation": {
+          "label": "evaluation",
+          "started_at_unix": 1778147411.3159125,
+          "ended_at_unix": 1778147414.9430456,
+          "elapsed_sec": 3.6271346600260586,
+          "cpu_peak_rss_mb": 1861.375,
+          "metadata": {
+            "experiment_name": "pcvr_onetrans",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/onetrans_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 20863.74169921875,
+          "cuda_peak_reserved_mb": 21912.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.09989070892333984,
+          "checkpoint_file_mb": 612.5887031555176,
+          "rows_per_sec": 275.69971719572595,
+          "batches_per_sec": 1.1027988687829038
+        },
+        "inference": {
+          "label": "inference",
+          "started_at_unix": 1778147424.6944013,
+          "ended_at_unix": 1778147428.319713,
+          "elapsed_sec": 3.625312429969199,
+          "cpu_peak_rss_mb": 1826.8828125,
+          "metadata": {
+            "experiment_name": "pcvr_onetrans",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/onetrans_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 20863.74169921875,
+          "cuda_peak_reserved_mb": 21912.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.034216880798339844,
+          "checkpoint_file_mb": 612.5887031555176,
+          "rows_per_sec": 275.83829513102023,
+          "batches_per_sec": 1.1033531805240808
+        }
+      }
+    },
+    {
+      "label": "symbiosis",
+      "group": "pcvr_symbiosis",
+      "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/symbiosis_seed42",
+      "evaluation_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/symbiosis_seed42/evaluation.json",
+      "predictions_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/symbiosis_seed42/validation_predictions.jsonl",
+      "prediction_count": 1000,
+      "missing_required_inputs": [],
+      "warnings": [],
+      "metrics": {
+        "auc": 0.9784577993813521,
+        "auc_ci": {
+          "samples": 200,
+          "confidence": 0.95,
+          "low": 0.9692083471424363,
+          "high": 0.9876018421343349,
+          "std": 0.005030144896623433,
+          "positive_resample_count": 124,
+          "negative_resample_count": 876
+        },
+        "logloss": 0.23716548037449559,
+        "brier": 0.06206200633146003,
+        "gauc": {
+          "value": 0.5,
+          "coverage": 0.0
+        },
+        "score_diagnostics": {
+          "sample_count": 1000,
+          "positive_count": 124,
+          "negative_count": 876,
+          "invalid_count": 0,
+          "positive_rate": 0.124,
+          "score_mean": 0.15688567716628313,
+          "score_std": 0.11870785042599444,
+          "positive_score_mean": 0.40581719000493327,
+          "negative_score_mean": 0.12164879635350617,
+          "score_margin_mean": 0.2841683936514271,
+          "positive_score_p10": 0.21773708015680313,
+          "positive_score_p50": 0.3876928836107254,
+          "positive_score_p90": 0.6513549089431763,
+          "negative_score_p10": 0.09009299427270889,
+          "negative_score_p50": 0.10521054267883301,
+          "negative_score_p90": 0.16451646387577057
+        },
+        "sample_count": 1000
+      },
+      "telemetry": {
+        "training": {
+          "label": "training",
+          "started_at_unix": 1778147437.4104576,
+          "ended_at_unix": 1778147444.590403,
+          "elapsed_sec": 7.179945973039139,
+          "cpu_peak_rss_mb": 3681.45703125,
+          "metadata": {
+            "model_class": "PCVRSymbiosis",
+            "package_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/experiments/symbiosis",
+            "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/symbiosis_seed42"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 3152.37060546875,
+          "cuda_peak_reserved_mb": 4210.0,
+          "steps": 8,
+          "train_rows": 1000,
+          "valid_rows": 1000,
+          "rows": 1000,
+          "model_parameters": 160926922,
+          "rows_per_sec": 139.2768140254847,
+          "steps_per_sec": 1.1142145122038776
+        },
+        "evaluation": {
+          "label": "evaluation",
+          "started_at_unix": 1778147457.0814548,
+          "ended_at_unix": 1778147461.0555658,
+          "elapsed_sec": 3.9741107340087183,
+          "cpu_peak_rss_mb": 1746.80078125,
+          "metadata": {
+            "experiment_name": "pcvr_symbiosis",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/symbiosis_seed42/global_step8.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 1231.28125,
+          "cuda_peak_reserved_mb": 1432.0,
+          "rows": 1000,
+          "batches": 8,
+          "prediction_file_mb": 0.10009098052978516,
+          "checkpoint_file_mb": 613.924674987793,
+          "rows_per_sec": 251.62862006899636,
+          "batches_per_sec": 2.0130289605519707
+        },
+        "inference": {
+          "label": "inference",
+          "started_at_unix": 1778147470.7334783,
+          "ended_at_unix": 1778147474.5047715,
+          "elapsed_sec": 3.7712933360016905,
+          "cpu_peak_rss_mb": 1764.765625,
+          "metadata": {
+            "experiment_name": "pcvr_symbiosis",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/symbiosis_seed42/global_step8.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 1231.28125,
+          "cuda_peak_reserved_mb": 1432.0,
+          "rows": 1000,
+          "batches": 8,
+          "prediction_file_mb": 0.034417152404785156,
+          "checkpoint_file_mb": 613.924674987793,
+          "rows_per_sec": 265.1610232632277,
+          "batches_per_sec": 2.1212881861058217
+        }
+      }
+    },
+    {
+      "label": "unitok",
+      "group": "pcvr_unitok",
+      "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/unitok_seed42",
+      "evaluation_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/unitok_seed42/evaluation.json",
+      "predictions_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/unitok_seed42/validation_predictions.jsonl",
+      "prediction_count": 1000,
+      "missing_required_inputs": [],
+      "warnings": [],
+      "metrics": {
+        "auc": 0.9002798644866696,
+        "auc_ci": {
+          "samples": 200,
+          "confidence": 0.95,
+          "low": 0.8678040764471939,
+          "high": 0.9259935649580203,
+          "std": 0.016048536883486713,
+          "positive_resample_count": 124,
+          "negative_resample_count": 876
+        },
+        "logloss": 0.42872994087377003,
+        "brier": 0.12592949918749244,
+        "gauc": {
+          "value": 0.5,
+          "coverage": 0.0
+        },
+        "score_diagnostics": {
+          "sample_count": 1000,
+          "positive_count": 124,
+          "negative_count": 876,
+          "invalid_count": 0,
+          "positive_rate": 0.124,
+          "score_mean": 0.2829491704702377,
+          "score_std": 0.02225366293577475,
+          "positive_score_mean": 0.3170401588562996,
+          "negative_score_mean": 0.27812350544755315,
+          "score_margin_mean": 0.03891665340874645,
+          "positive_score_p10": 0.2836888760328293,
+          "positive_score_p50": 0.3140166699886322,
+          "positive_score_p90": 0.3786046415567398,
+          "negative_score_p10": 0.2619810700416565,
+          "negative_score_p50": 0.2766997516155243,
+          "negative_score_p90": 0.29425324499607086
+        },
+        "sample_count": 1000
+      },
+      "telemetry": {
+        "training": {
+          "label": "training",
+          "started_at_unix": 1778146298.3613203,
+          "ended_at_unix": 1778146303.941779,
+          "elapsed_sec": 5.580459374003112,
+          "cpu_peak_rss_mb": 3626.1015625,
+          "metadata": {
+            "model_class": "PCVRUniTok",
+            "package_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/experiments/unitok",
+            "run_dir": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/unitok_seed42"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 3509.4013671875,
+          "cuda_peak_reserved_mb": 4758.0,
+          "steps": 4,
+          "train_rows": 1000,
+          "valid_rows": 1000,
+          "rows": 1000,
+          "model_parameters": 158804417,
+          "rows_per_sec": 179.19671714815397,
+          "steps_per_sec": 0.7167868685926159
+        },
+        "evaluation": {
+          "label": "evaluation",
+          "started_at_unix": 1778146321.738867,
+          "ended_at_unix": 1778146325.2478964,
+          "elapsed_sec": 3.5090297349961475,
+          "cpu_peak_rss_mb": 1837.8828125,
+          "metadata": {
+            "experiment_name": "pcvr_unitok",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/unitok_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 1487.55126953125,
+          "cuda_peak_reserved_mb": 1788.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.0997304916381836,
+          "checkpoint_file_mb": 605.8067817687988,
+          "rows_per_sec": 284.9790613133969,
+          "batches_per_sec": 1.1399162452535876
+        },
+        "inference": {
+          "label": "inference",
+          "started_at_unix": 1778146341.5969172,
+          "ended_at_unix": 1778146344.973138,
+          "elapsed_sec": 3.3762209659907967,
+          "cpu_peak_rss_mb": 1839.546875,
+          "metadata": {
+            "experiment_name": "pcvr_unitok",
+            "checkpoint_path": "/desay120T/ct/dev/uid01954/TAAC_2026/outputs/smoke/unitok_seed42/global_step4.head=4.hidden=64.best_model/model.safetensors",
+            "dataset_path": "/root/.cache/huggingface/hub/datasets--TAAC2026--data_sample_1000/blobs/0ceaa386ec322436231f2615e5ee89e791d79c727a788c0fb439b0ecb6b68848"
+          },
+          "cuda_device": "cuda",
+          "cuda_peak_allocated_mb": 1487.55126953125,
+          "cuda_peak_reserved_mb": 1788.0,
+          "rows": 1000,
+          "batches": 4,
+          "prediction_file_mb": 0.034056663513183594,
+          "checkpoint_file_mb": 605.8067817687988,
+          "rows_per_sec": 296.1891446303891,
+          "batches_per_sec": 1.1847565785215564
+        }
+      }
+    }
+  ],
+  "summary_path": "/desay120T/ct/dev/uid01954/TAAC_2026/figures/pcvr_diagnostics/pcvr_diagnostics_summary.json"
+}

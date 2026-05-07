@@ -55,6 +55,7 @@ def _write_dataset(path: Path) -> None:
         "domain_c_seq_31": [[], [21, 21], [22], [23, 24, 24]],
         "domain_d_seq_40": [[7, 8], [], [9], []],
         "domain_d_seq_41": [[31, 31], [], [32], []],
+        "label_type": [2, 1, 2, None],
     }
     pq.write_table(pa.table(columns), path)
 
@@ -65,13 +66,16 @@ def _run_online_eda_runner(
     schema_path: Path,
     max_rows: int | None = None,
     sample_percent: float | None = None,
+    config_overrides: dict[str, object] | None = None,
 ) -> dict[str, object]:
     runner_module = _load_online_eda_runner_module()
+    overrides = config_overrides or {}
     config = runner_module.OnlineDatasetEDAConfig(
         dataset_path=dataset_path.resolve(),
         schema_path=schema_path.resolve(),
         max_rows=max_rows,
         sample_percent=sample_percent,
+        **overrides,
     )
     return runner_module.run_online_dataset_eda(config)
 
@@ -98,6 +102,149 @@ def test_online_dataset_eda_runner_prints_summary(
     assert "[online-eda] dataset=" in log_capture.text
     assert "== Dataset ==" in captured.out
     assert "== Top Null Rates ==" in captured.out
+
+
+def test_online_dataset_eda_runner_reports_first_layer_stats(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    log_capture,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    dataset_path = tmp_path / "demo.parquet"
+    _write_schema(schema_path)
+    _write_dataset(dataset_path)
+
+    with log_capture.at_level(logging.INFO):
+        report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            max_rows=4,
+        )
+    captured = capsys.readouterr()
+    stats = report["stats"]
+
+    assert report["label_columns"] == ["label_type"]
+    assert report["label_dependent_analyses_enabled"] is True
+    assert stats["label_distribution"] == [
+        {
+            "name": "label_type",
+            "total": 4,
+            "observed": 3,
+            "positive": 2,
+            "negative": 1,
+            "missing": 1,
+            "positive_rate": 0.666667,
+        }
+    ]
+    assert stats["dense_distributions"] == [
+        {
+            "name": "user_dense_feats_4",
+            "mean": 0.2,
+            "variance": 0.036667,
+            "std": 0.191485,
+            "zero_frac": 0.333333,
+        }
+    ]
+    assert {row["name"] for row in stats["sequence_token_cardinality"]} == {
+        "domain_a_seq_11",
+        "domain_b_seq_21",
+        "domain_c_seq_31",
+        "domain_d_seq_41",
+    }
+    assert all(row["cardinality"] > 0 for row in stats["sequence_token_cardinality"])
+    coverage_by_domain = {row["domain"]: row for row in stats["cross_domain_coverage"]}
+    assert coverage_by_domain["seq_a"] == {"domain": "seq_a", "sampled_users": 3, "covered_users": 2, "coverage": 0.666667}
+    assert coverage_by_domain["seq_d"] == {"domain": "seq_d", "sampled_users": 3, "covered_users": 2, "coverage": 0.666667}
+    assert "== Label Distribution ==" in captured.out
+    assert "label_type: positive=2 negative=1 observed=3 missing=1 positive_rate=0.666667" in captured.out
+    assert "== Top Sequence Token Cardinalities ==" in captured.out
+    assert "== Sampled Cross-Domain Coverage ==" in captured.out
+
+
+def test_online_dataset_eda_runner_reports_second_layer_stats(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    log_capture,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    dataset_path = tmp_path / "demo.parquet"
+    _write_schema(schema_path)
+    _write_dataset(dataset_path)
+
+    with log_capture.at_level(logging.INFO):
+        report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            max_rows=4,
+            config_overrides={
+                "label_feature_min_support": 1,
+                "label_feature_top_k": 10,
+                "categorical_pair_max_columns": 3,
+                "categorical_pair_max_cardinality": 20,
+                "categorical_pair_sample_rows": 4,
+                "categorical_pair_top_k": 5,
+            },
+        )
+    captured = capsys.readouterr()
+    stats = report["stats"]
+
+    null_by_label = {row["name"]: row for row in stats["null_rate_by_label"]}
+    assert null_by_label["user_int_feats_2"] == {
+        "name": "user_int_feats_2",
+        "positive_null_rate": 0.0,
+        "negative_null_rate": 1.0,
+        "delta": -1.0,
+        "positive_rows": 2,
+        "negative_rows": 1,
+    }
+    assert null_by_label["domain_b_seq_20"] == {
+        "name": "domain_b_seq_20",
+        "positive_null_rate": 0.0,
+        "negative_null_rate": 1.0,
+        "delta": -1.0,
+        "positive_rows": 2,
+        "negative_rows": 1,
+    }
+
+    user_lift_by_token = {
+        (row["feature"], row["token"]): row
+        for row in stats["user_feature_label_lift"]
+    }
+    assert user_lift_by_token[("user_int_feats_1", 2)] == {
+        "group": "user_int",
+        "feature": "user_int_feats_1",
+        "token": 2,
+        "support": 1,
+        "positive": 1,
+        "negative": 0,
+        "positive_rate": 1.0,
+        "baseline_positive_rate": 0.666667,
+        "lift": 1.5,
+        "log_odds": 1.098612,
+    }
+    item_lift_by_token = {
+        (row["feature"], row["token"]): row
+        for row in stats["item_feature_label_lift"]
+    }
+    assert item_lift_by_token[("item_int_feats_3", 100)] == {
+        "group": "item_int",
+        "feature": "item_int_feats_3",
+        "token": 100,
+        "support": 2,
+        "positive": 2,
+        "negative": 0,
+        "positive_rate": 1.0,
+        "baseline_positive_rate": 0.666667,
+        "lift": 1.5,
+        "log_odds": 1.609438,
+    }
+
+    assert stats["categorical_pair_associations"]
+    assert all(row["sample_rows"] > 0 for row in stats["categorical_pair_associations"])
+    assert "== Null Rate By Label ==" in captured.out
+    assert "== Top User Feature Label Lift ==" in captured.out
+    assert "== Top Item Feature Label Lift ==" in captured.out
+    assert "== Top Categorical Pair Associations ==" in captured.out
 
 
 def test_online_dataset_eda_runner_streams_full_dataset_by_default(

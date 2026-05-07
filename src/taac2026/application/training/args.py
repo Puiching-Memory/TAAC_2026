@@ -12,11 +12,13 @@ import torch
 
 from taac2026.domain.config import DENSE_LR_SCHEDULER_TYPE_CHOICES, PCVRTrainConfig
 from taac2026.domain.model_contract import resolve_schema_path
+from taac2026.infrastructure.io.files import write_json
 from taac2026.infrastructure.logging import logger
 from taac2026.application.training.workflow import (
     PCVRTrainContext,
     PCVRTrainHooks,
 )
+from taac2026.infrastructure.runtime.telemetry import RuntimeTelemetry
 from taac2026.infrastructure.runtime.execution import (
     AMP_DTYPE_CHOICES,
     BINARY_LOSS_TYPE_CHOICES,
@@ -379,6 +381,15 @@ def train_pcvr_model(
     from torch.utils.tensorboard import SummaryWriter
 
     writer = SummaryWriter(tf_events_dir)
+    telemetry = RuntimeTelemetry(
+        label="training",
+        device=args.device,
+        metadata={
+            "model_class": model_class_name,
+            "package_dir": str(package_dir),
+            "run_dir": str(ckpt_dir),
+        },
+    ).start()
     try:
         schema_path = resolve_schema_path(
             data_dir,
@@ -405,6 +416,20 @@ def train_pcvr_model(
         trainer = train_hooks.build_trainer(context, data_bundle, model)
         train_hooks.run_training(context, trainer)
         summary = dict(train_hooks.build_summary(context, trainer) or {})
+        train_rows = int(getattr(data_bundle.dataset, "num_rows", 0) or 0)
+        valid_dataset = getattr(data_bundle.valid_loader, "dataset", None)
+        valid_rows = int(getattr(valid_dataset, "num_rows", 0) or 0)
+        summary["telemetry"] = telemetry.finish(
+            steps=int(getattr(trainer, "optim_step", 0) or 0),
+            train_rows=train_rows,
+            valid_rows=valid_rows,
+            rows=train_rows,
+            model_parameters=int(sum(parameter.numel() for parameter in model.parameters()))
+            if hasattr(model, "parameters")
+            else 0,
+        )
+        write_json(ckpt_dir / "training_telemetry.json", summary["telemetry"])
+        write_json(ckpt_dir / "training_summary.json", summary)
     finally:
         writer.close()
 

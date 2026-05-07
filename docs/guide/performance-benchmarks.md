@@ -69,6 +69,25 @@ done
 
 重点看 JSON 里的 `rows_per_sec`、`batches_per_sec`、`measured_rows`、`measured_batches` 和 `cache_impl`。如果 `measured_rows` 太小，结论通常不稳定。
 
+## PCVR Smoke 诊断图
+
+本地只有 demo1000 时，不要把 AUC 当成主结论。训练和评估命令会写出 `training_telemetry.json`、`evaluation_telemetry.json` 和 `validation_predictions.jsonl`，可以直接生成运行成本、预测分布、模型相关性、样本分歧和稳定性图：
+
+```bash
+uv run taac-plot-pcvr-diagnostics \
+  --run baseline=outputs/smoke/baseline_seed42 \
+  --run baseline_plus=outputs/smoke/baseline_plus_seed42 \
+  --run interformer=outputs/smoke/interformer_seed42 \
+  --run onetrans=outputs/smoke/onetrans_seed42 \
+  --run symbiosis=outputs/smoke/symbiosis_seed42 \
+  --run unitok=outputs/smoke/unitok_seed42 \
+  --output-dir figures/pcvr_diagnostics
+```
+
+如果 run 目录还没有 `evaluation.json` 和 `validation_predictions.jsonl`，先跑对应的 `bash run.sh val ...`；如果还需要推理耗时图，也要先跑 `bash run.sh infer ...`。绘图命令默认会拒绝缺少评估产物的输入，避免生成只有 no-data 的占位图。
+
+详细口径见 [PCVR Smoke Diagnostics](../benchmark/pcvr-diagnostics.md)。
+
 ## Optimizer Benchmark
 
 Dense optimizer benchmark 用一个合成 MLP 负载比较优化器 step 成本，适合看 `adamw`、`fused_adamw`、`orthogonal_adamw`、`muon` 这类选择的系统开销。

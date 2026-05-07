@@ -10,9 +10,10 @@ icon: lucide/gauge
 
 ## 数据管道索引
 
-| 主题           | CLI 入口                            | 当前用途                        | 页面                                |
-| -------------- | ----------------------------------- | ------------------------------- | ----------------------------------- |
-| Cache policies | `taac-benchmark-pcvr-data-pipeline` | 比较 `lru/fifo/lfu/rr/opt` 策略 | [Cache Policies](cache-policies.md) |
+| 主题                   | CLI 入口                            | 当前用途                                   | 页面                                      |
+| ---------------------- | ----------------------------------- | ------------------------------------------ | ----------------------------------------- |
+| PCVR smoke diagnostics | `taac-plot-pcvr-diagnostics`        | demo1000 下的运行成本、预测行为和稳定性图 | [PCVR Smoke Diagnostics](pcvr-diagnostics.md) |
+| Cache policies         | `taac-benchmark-pcvr-data-pipeline` | 比较 `lru/fifo/lfu/rr/opt` 策略            | [Cache Policies](cache-policies.md)       |
 
 ## 算子索引
 

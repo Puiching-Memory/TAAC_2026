@@ -23,6 +23,7 @@ from taac2026.application.evaluation.workflow import PCVRPredictionHooks, _log_p
 from taac2026.application.evaluation.runtime import PCVRRuntimeHooks
 from taac2026.infrastructure.data.sample_dataset import resolve_default_pcvr_sample_paths
 from taac2026.infrastructure.logging import logger
+from taac2026.infrastructure.runtime.telemetry import RuntimeTelemetry, file_size_mb
 from taac2026.application.training.workflow import PCVRTrainHooks
 from taac2026.application.training.args import train_pcvr_model
 
@@ -183,6 +184,15 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             compile_source,
         )
 
+        telemetry = RuntimeTelemetry(
+            label="evaluation",
+            device=request.device,
+            metadata={
+                "experiment_name": self.name,
+                "checkpoint_path": str(checkpoint),
+                "dataset_path": str(resolved_dataset_path),
+            },
+        ).start()
         with self._module_context():
             evaluation = self._run_prediction_loop(
                 dataset_path=resolved_dataset_path,
@@ -217,7 +227,16 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             "metrics": metrics,
             "data_diagnostics": self.runtime_hooks.build_evaluation_data_diagnostics(self, resolved_dataset_path),
             "validation_predictions_path": str(predictions_path),
+            "batch_size": effective_batch_size,
+            "num_workers": effective_num_workers,
         }
+        telemetry_payload = telemetry.finish(
+            rows=int(evaluation.get("processed_rows", len(probabilities))),
+            batches=int(evaluation.get("batch_count", 0) or 0),
+            prediction_file_mb=file_size_mb(predictions_path),
+            checkpoint_file_mb=file_size_mb(checkpoint),
+        )
+        payload["telemetry"] = telemetry_payload
         observed_schema_path = output_path.with_name("evaluation_observed_schema.json")
         self.runtime_hooks.write_observed_schema_report(
             self,
@@ -228,6 +247,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
         )
         payload["observed_schema_paths"] = {"eval": str(observed_schema_path)}
         write_json(output_path, payload)
+        write_json(output_path.with_name("evaluation_telemetry.json"), telemetry_payload)
         return payload
 
     def infer(self, request: InferRequest) -> Mapping[str, Any]:
@@ -268,6 +288,15 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             compile_source,
         )
 
+        telemetry = RuntimeTelemetry(
+            label="inference",
+            device=request.device,
+            metadata={
+                "experiment_name": self.name,
+                "checkpoint_path": str(checkpoint),
+                "dataset_path": str(resolved_dataset_path),
+            },
+        ).start()
         with self._module_context():
             evaluation = self._run_prediction_loop(
                 dataset_path=resolved_dataset_path,
@@ -289,6 +318,13 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
         request.result_dir.mkdir(parents=True, exist_ok=True)
         output_path = request.result_dir / "predictions.json"
         write_json(output_path, {"predictions": prediction_map})
+        telemetry_payload = telemetry.finish(
+            rows=int(evaluation.get("processed_rows", len(prediction_map))),
+            batches=int(evaluation.get("batch_count", 0) or 0),
+            prediction_file_mb=file_size_mb(output_path),
+            checkpoint_file_mb=file_size_mb(checkpoint),
+        )
+        write_json(request.result_dir / "inference_telemetry.json", telemetry_payload)
         return {
             "checkpoint_path": str(checkpoint),
             "schema_path": str(resolved_schema_path),
@@ -297,6 +333,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             "prediction_count": len(prediction_map),
             "batch_size": effective_batch_size,
             "num_workers": effective_num_workers,
+            "telemetry": telemetry_payload,
         }
 
 

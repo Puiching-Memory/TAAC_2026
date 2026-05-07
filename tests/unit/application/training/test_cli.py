@@ -535,16 +535,20 @@ def test_train_pcvr_model_uses_injected_train_hooks(tmp_path: Path) -> None:
             data_module="custom_data_module",
         )
 
+    class _FakeModel:
+        def parameters(self):
+            return []
+
     def build_model(context, data_bundle):
         events.append(("model", data_bundle.data_module))
-        return {"model_module": context.model_class_name}
+        return _FakeModel()
 
     class _FakeTrainer:
         trained = False
 
     def build_trainer(context, data_bundle, model):
         del context
-        events.append(("trainer", (data_bundle.train_loader, model)))
+        events.append(("trainer", (data_bundle.train_loader, type(model).__name__)))
         return _FakeTrainer()
 
     def run_training(context, trainer):
@@ -578,10 +582,14 @@ def test_train_pcvr_model_uses_injected_train_hooks(tmp_path: Path) -> None:
 
     assert summary["trainer_ran"] is True
     assert summary["schema_path"] == str(schema_path.resolve())
+    assert summary["telemetry"]["label"] == "training"
+    assert summary["telemetry"]["model_parameters"] == 0
+    assert (ckpt_dir / "training_telemetry.json").exists()
+    assert (ckpt_dir / "training_summary.json").exists()
     assert events == [
         ("data", schema_path.resolve()),
         ("model", "custom_data_module"),
-        ("trainer", ("train_loader", {"model_module": "InjectedModel"})),
+        ("trainer", ("train_loader", "_FakeModel")),
         (
             "run",
             {

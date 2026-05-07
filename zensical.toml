@@ -38,6 +38,7 @@ nav = [
     ] },
     { "Benchmark" = [
         { "总览" = "benchmark/index.md" },
+        { "PCVR Smoke Diagnostics" = "benchmark/pcvr-diagnostics.md" },
         { "Cache Policies" = "benchmark/cache-policies.md" },
         { "RMSNorm" = "benchmark/rms-norm.md" },
         { "Flash Attention" = "benchmark/flash-attention.md" },

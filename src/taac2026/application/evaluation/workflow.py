@@ -216,7 +216,14 @@ def default_run_prediction_loop(
         batch_count,
         time.perf_counter() - started_at,
     )
-    return {"labels": labels, "probabilities": probabilities, "records": records}
+    return {
+        "labels": labels,
+        "probabilities": probabilities,
+        "records": records,
+        "processed_rows": processed_rows,
+        "batch_count": batch_count,
+        "loop_elapsed_sec": time.perf_counter() - started_at,
+    }
 
 
 @dataclass(frozen=True, slots=True)

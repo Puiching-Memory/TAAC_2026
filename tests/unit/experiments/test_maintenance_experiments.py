@@ -84,6 +84,7 @@ def _write_dataset(path: Path) -> None:
                 "user_dense_feats_4": [[0.1, 0.2], [0.0, 0.0], [0.5, 0.4], []],
                 "domain_a_seq_10": [[1, 2, 3], [2], [], [4, 5]],
                 "domain_a_seq_11": [[100, 100, 101], [102], [], [103, 103]],
+                "label_type": [2, 1, 2, None],
             }
         ),
         path,

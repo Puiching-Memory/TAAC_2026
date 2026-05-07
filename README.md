@@ -52,9 +52,15 @@
 
 ## 我们的工作
 
-![Model Performance VS Size](figures/model_performance_vs_size.svg)
+![PCVR Runtime Resources](figures/pcvr_diagnostics/pcvr_runtime_resources.svg)
 
-![Model Performance VS Compute](figures/model_performance_vs_compute.svg)
+![PCVR Prediction Distribution](figures/pcvr_diagnostics/pcvr_prediction_distribution.svg)
+
+![PCVR Prediction Correlation](figures/pcvr_diagnostics/pcvr_prediction_correlation.svg)
+
+![PCVR Sample Disagreement](figures/pcvr_diagnostics/pcvr_sample_disagreement.svg)
+
+![PCVR Stability](figures/pcvr_diagnostics/pcvr_stability.svg)
 
 ## 快速开始
 

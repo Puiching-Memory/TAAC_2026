@@ -163,6 +163,9 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     assert payload["num_workers"] == 4
     assert payload["schema_path"] == str((checkpoint_dir / "schema.json").resolve())
     assert payload["schema"] == schema_payload
+    assert payload["telemetry"]["label"] == "inference"
+    assert payload["telemetry"]["rows"] == 1
+    assert (tmp_path / "results" / "inference_telemetry.json").exists()
     assert loads((tmp_path / "results" / "predictions.json").read_bytes()) == {
         "predictions": {"u1": 0.5},
     }
@@ -556,6 +559,8 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     assert diagnostics["negative_count"] == 2
     assert diagnostics["score_margin_mean"] == pytest.approx(0.7)
     assert payload["metrics"]["auc_ci"]["low"] <= payload["metrics"]["auc"] <= payload["metrics"]["auc_ci"]["high"]
+    assert payload["telemetry"]["label"] == "evaluation"
+    assert payload["telemetry"]["rows"] == 4
     assert payload["data_diagnostics"]["row_group_split"]["is_l1_ready"] is True
     assert payload["schema_path"] == str((checkpoint_dir / "schema.json").resolve())
     assert payload["schema"] == schema_payload
@@ -566,6 +571,7 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
     assert observed_schema_payload["schema"]["user_int"] == [[1, 2, 1], [2, 4, 3]]
     saved_payload = loads(output_path.read_bytes())
     assert saved_payload["metrics"]["score_diagnostics"] == diagnostics
+    assert saved_payload["telemetry"]["label"] == "evaluation"
     assert saved_payload["data_diagnostics"] == payload["data_diagnostics"]
     assert saved_payload["schema"] == schema_payload
     assert saved_payload["observed_schema_paths"] == payload["observed_schema_paths"]
@@ -575,6 +581,7 @@ def test_evaluate_writes_score_diagnostics(tmp_path: Path, monkeypatch: pytest.M
         {"user_id": "u0", "score": 0.1, "target": 0.0, "timestamp": None},
         {"user_id": "u1", "score": 0.9, "target": 1.0, "timestamp": None},
     ]
+    assert (tmp_path / "evaluation_telemetry.json").exists()
 
 
 def test_infer_request_runtime_settings_override_train_config(tmp_path: Path) -> None:
