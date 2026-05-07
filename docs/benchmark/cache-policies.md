@@ -4,30 +4,99 @@ icon: lucide/database-zap
 
 # Cache Policies Benchmark
 
-## 支持记录
+## 当前结论
 
-- CLI 入口：`taac-benchmark-pcvr-data-pipeline`。
-- 主要源码：`src/taac2026/application/benchmarking/pcvr_data_pipeline_benchmark.py`。
-- cache 实现：`src/taac2026/infrastructure/data/cache.py`。
-- 非 OPT 策略使用 `cachetools`：`lru`、`fifo`、`lfu`、`rr`。
-- OPT 仍由项目内实现，因为它依赖已知访问 trace 和多 worker shared-memory 索引。
-- `memory` 不是合法模式；普通最近最少使用缓存现在写作 `lru`。
+这页记录当前代码下 PCVR 数据管线 cache 策略的完整测评。比较对象包括 `none`、`lru`、`fifo`、`lfu`、`rr`、`opt`。非 OPT 策略使用 `cachetools`，项目内只保留 OPT，因为它依赖已知访问 trace 和多 worker shared-memory 索引。
 
-## 算法差异
+2026-05-07 这轮单 worker、无 shuffle、synthetic x300 数据集测评显示：
 
-| mode   | 驱逐依据       | 典型优势                             | 典型风险                                       |
-| ------ | -------------- | ------------------------------------ | ---------------------------------------------- |
-| `lru`  | 最近访问时间   | 适合局部性强、热点随时间漂移的数据   | 扫描式访问可能把未来还会用的热点挤掉           |
-| `fifo` | 写入顺序       | 维护开销低，行为稳定，适合简单基线   | 不看访问频次，老热点会被直接淘汰               |
-| `lfu`  | 历史访问频次   | 适合长期热点明显的数据               | 热点变化后旧高频 key 可能停留太久              |
-| `rr`   | 随机选择       | 策略开销小，可作为“无结构假设”对照组 | 方差较大，单次结果不稳定                       |
-| `opt`  | 下一次使用距离 | trace 准确时接近理论最优淘汰         | 需要访问顺序可预测；trace 不匹配会退回安全行为 |
+- 小工作集可以被 cache 覆盖时，所有 cache 策略都明显快于 `none`，吞吐约为 `none` 的 `1.94x` 到 `2.07x`。
+- 全量工作集无法被 cache 覆盖时，策略差异变大：`opt` 和 `lfu` 分别约为 `none` 的 `1.25x` 和 `1.24x`；`rr` 接近 `none`；`lru` 和 `fifo` 低于 `none`。
+- 这轮数据支持在“顺序访问、trace 准确、单 worker、cache 容量不足”的口径下使用 `opt`。多 worker shared OPT 仍需要单独测，因为同步和张量拷贝成本不同。
 
-这些策略的端到端差异通常不只来自命中率。PCVR 数据管道 cache 存的是增强前的基础 batch，命中后会 clone batch，后续 transform 仍然会执行。因此读数要同时考虑 parquet 读取成本、batch 构建成本、clone 成本、cache 维护成本和 transform 成本。
+## 支持范围
 
-## 推荐命令
+| 项目             | 当前状态                                                                |
+| ---------------- | ----------------------------------------------------------------------- |
+| CLI 入口         | `taac-benchmark-pcvr-data-pipeline`                                     |
+| benchmark 源码   | `src/taac2026/application/benchmarking/pcvr_data_pipeline_benchmark.py` |
+| cache 源码       | `src/taac2026/infrastructure/data/cache.py`                             |
+| native OPT index | `src/taac2026/infrastructure/data/native/opt_cache.cpp`                 |
+| 非 OPT 实现      | `cachetools` 的 `LRUCache`、`FIFOCache`、`LFUCache`、`RRCache`          |
+| OPT 实现         | 项目内实现，依赖访问 trace                                              |
+| legacy 名称      | `memory` 不是合法模式；普通内存 LRU 写作 `lru`                          |
 
-先准备一个足够大的合成数据集。不要用 1000 行 demo 数据推断 cache 策略差异：
+## 策略差异
+
+| mode   | 实现                   | 驱逐依据       | 适合场景                   | 主要风险                                      |
+| ------ | ---------------------- | -------------- | -------------------------- | --------------------------------------------- |
+| `none` | 无 cache               | 不缓存         | I/O 和 batch 构建基线      | 不复用已转换 batch                            |
+| `lru`  | `cachetools.LRUCache`  | 最近访问时间   | 局部性强、热点随时间漂移   | 顺序扫描且容量不足时可能无收益                |
+| `fifo` | `cachetools.FIFOCache` | 写入顺序       | 低维护开销基线             | 不看未来访问和访问频次                        |
+| `lfu`  | `cachetools.LFUCache`  | 历史访问频次   | 重复 pass 中热点稳定       | 热点漂移后旧高频 key 可能滞留                 |
+| `rr`   | `cachetools.RRCache`   | 随机选择       | 无结构假设对照组           | 单次方差较大                                  |
+| `opt`  | 项目内 OPT             | 下一次使用距离 | trace 准确、访问顺序可预测 | trace 错位会 fallback；shared path 有同步成本 |
+
+PCVR cache 存的是增强前的基础 batch。cache 命中后仍会 clone batch，后续 transform 也仍会执行。因此端到端吞吐同时受 parquet 读取、batch 转换、clone、cache 维护和 transform 成本影响，不要只用命中率解释结果。
+
+## 测评环境
+
+| 项目       | 值                                                                 |
+| ---------- | ------------------------------------------------------------------ |
+| 时间       | 2026-05-07 UTC                                                     |
+| commit     | `28a346a`                                                          |
+| 主机       | `HGX-076`                                                          |
+| CPU        | Intel Xeon Platinum 8468，2 sockets，192 logical CPUs              |
+| GPU        | NVIDIA H800                                                        |
+| Python     | 3.10.20                                                            |
+| PyTorch    | 2.7.1+cu126                                                        |
+| CUDA       | 12.6                                                               |
+| cachetools | 7.1.1                                                              |
+| 数据集     | `outputs/perf/pcvr_synthetic_300x/demo_300000.parquet`，约 12.0 GB |
+| schema     | `outputs/perf/pcvr_synthetic_300x/schema.json`                     |
+| 原始输出   | `outputs/benchmarks/cache_policies_current/`                       |
+
+`outputs/benchmarks/` 是本地 benchmark 输出目录，不提交到仓库。正式报告需要重新记录 commit、硬件、依赖版本、完整命令和 JSON 输出。
+
+## 完整测评结果
+
+### 小工作集：cache 能覆盖一个 pass
+
+口径：`--train-ratio 0.1 --cache-batches 128 --num-workers 0 --passes 3 --warmup-batches 5 --buffer-batches 1 --torch-threads 4 --no-shuffle`。
+
+训练集为 27 Row Groups / 27,000 rows，每个 pass 约 106 batches，cache 容量 128 batches 可以覆盖一个 pass 的基础 batch。
+
+| mode   | rows/s | batches/s | elapsed sec | vs `none` | measured batches |
+| ------ | -----: | --------: | ----------: | --------: | ---------------: |
+| `none` |   4396 |     17.58 |       18.09 |     1.00x |              318 |
+| `lru`  |   9104 |     36.40 |        8.74 |     2.07x |              318 |
+| `fifo` |   9032 |     36.11 |        8.81 |     2.05x |              318 |
+| `lfu`  |   8965 |     35.84 |        8.87 |     2.04x |              318 |
+| `rr`   |   8950 |     35.78 |        8.89 |     2.04x |              318 |
+| `opt`  |   8545 |     34.16 |        9.31 |     1.94x |              318 |
+
+观察：小工作集下 cache 本身的收益很明显，各策略之间差异小于是否开启 cache 的差异。`opt` 没有领先，因为工作集已被 cache 覆盖，理论最优驱逐的优势很小，额外 trace 维护仍有成本。
+
+### 全量工作集：cache 容量不足
+
+口径：`--cache-batches 512 --num-workers 0 --passes 3 --warmup-batches 5 --buffer-batches 1 --torch-threads 4 --no-shuffle`。
+
+训练集为 270 Row Groups / 270,000 rows，每个 pass 约 1055 batches，cache 容量 512 batches 无法覆盖完整 pass。
+
+| mode   | rows/s | batches/s | elapsed sec | vs `none` | measured batches |
+| ------ | -----: | --------: | ----------: | --------: | ---------------: |
+| `none` |   4476 |     17.90 |      176.79 |     1.00x |             3165 |
+| `lru`  |   3906 |     15.62 |      202.60 |     0.87x |             3165 |
+| `fifo` |   3891 |     15.56 |      203.37 |     0.87x |             3165 |
+| `lfu`  |   5550 |     22.20 |      142.59 |     1.24x |             3165 |
+| `rr`   |   4322 |     17.29 |      183.09 |     0.97x |             3165 |
+| `opt`  |   5591 |     22.36 |      141.54 |     1.25x |             3165 |
+
+观察：全量顺序访问且 cache 容量不足时，`opt` 最高，`lfu` 接近 `opt`。`lru` 和 `fifo` 低于 `none`，说明 miss、clone 和维护成本会抵消转换复用收益。`rr` 接近 `none`，适合作为无结构假设对照。
+
+## 复现命令
+
+先生成足够大的合成数据集。不要用 1000 行 demo 数据推断 cache 策略差异。
 
 ```bash
 uv run taac-generate-pcvr-synthetic-dataset \
@@ -37,107 +106,13 @@ uv run taac-generate-pcvr-synthetic-dataset \
   --force
 ```
 
-只比较基础 cache 策略时，使用 `cache` preset 并覆盖 `--cache-mode`：
+完整矩阵命令：
 
 ```bash
-mkdir -p outputs/benchmarks
+mkdir -p outputs/benchmarks/cache_policies_current
+modes=(none lru fifo lfu rr opt)
 
-for mode in none lru fifo lfu rr opt; do
-  uv run taac-benchmark-pcvr-data-pipeline \
-    --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
-    --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
-    --preset cache \
-    --cache-mode "$mode" \
-    --cache-batches 512 \
-    --passes 3 \
-    > "outputs/benchmarks/data_pipeline_cache_${mode}.json"
-done
-```
-
-如果要看 cache 与随机增强叠加后的效果，把 preset 改成 `augment`，仍然用同一组 `--cache-mode`：
-
-```bash
-for mode in none lru fifo lfu rr opt; do
-  uv run taac-benchmark-pcvr-data-pipeline \
-    --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
-    --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
-    --preset augment \
-    --cache-mode "$mode" \
-    --cache-batches 512 \
-    --views-per-row 2 \
-    --seq-window-min-len 8 \
-    --passes 3 \
-    > "outputs/benchmarks/data_pipeline_augment_cache_${mode}.json"
-done
-```
-
-多 worker 下的 OPT 会走 shared-memory cache。比较这一条路径时要显式记录 worker 数：
-
-```bash
-uv run taac-benchmark-pcvr-data-pipeline \
-  --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
-  --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
-  --preset cache \
-  --cache-mode opt \
-  --cache-batches 512 \
-  --num-workers 4 \
-  --passes 3 \
-  > outputs/benchmarks/data_pipeline_cache_opt_workers4.json
-```
-
-## 读数要点
-
-优先比较这些 JSON 字段：
-
-| 字段               | 含义                                       |
-| ------------------ | ------------------------------------------ |
-| `cache_mode`       | 实际启用的 cache mode                      |
-| `cache_impl`       | per-process cache 或 shared-memory cache   |
-| `shared_cache`     | 是否使用全局访问 trace / shared cache 路径 |
-| `rows_per_sec`     | 端到端行吞吐                               |
-| `batches_per_sec`  | 端到端 batch 吞吐                          |
-| `warmup_rows`      | warmup 消耗的数据量                        |
-| `measured_passes`  | 实际完成的 pass 数                         |
-| `measured_batches` | 计入测速的 batch 数                        |
-| `batches_per_pass` | 每个 pass 的估算 batch 数                  |
-
-cache 策略对比必须至少跑多 pass。第一轮大多是填充缓存；第二轮以后才更接近重复访问的收益。`measured_passes` 如果只有 1，通常只能说明冷启动成本，不能说明策略优劣。
-
-## 结果解读
-
-- 如果 `none` 已经很快，说明瓶颈可能不在数据转换，cache 算法差异会被噪声淹没。
-- 如果 `lru` 明显优于 `fifo`，通常说明近期局部性强，最近访问比写入顺序更能预测未来访问。
-- 如果 `lfu` 优于 `lru`，通常说明存在稳定长周期热点，而不是短期滑动窗口热点。
-- 如果 `rr` 接近 `lru/fifo/lfu`，说明当前访问模式下驱逐策略不敏感，或者 cache 容量已经足够大。
-- 如果 `opt` 没有优势，先检查 `shared_cache`、`num_workers`、shuffle 和 trace 是否与预期一致。
-- 如果打开增强后所有 cache 模式收益下降，可能是 transform 成本主导，cache 只省掉了基础 batch 构建成本。
-
-## 最近验收观察
-
-最近一次本地验收时间：2026-05-06 UTC。原始 JSON 输出保存在 `outputs/benchmarks/cache_policies/`，该目录不提交到仓库。
-
-环境记录：
-
-| 项目         | 值                                                                 |
-| ------------ | ------------------------------------------------------------------ |
-| commit       | `947db86`                                                          |
-| 主机         | `HGX-076`                                                          |
-| CPU          | Intel Xeon Platinum 8468，2 sockets，192 logical CPUs              |
-| GPU          | NVIDIA H800                                                        |
-| Python       | 3.10.20                                                            |
-| PyTorch      | 2.7.1+cu126                                                        |
-| CUDA         | 12.6                                                               |
-| cachetools   | 7.1.1                                                              |
-| 数据集       | `outputs/perf/pcvr_synthetic_300x/demo_300000.parquet`，约 12.0 GB |
-| schema       | `outputs/perf/pcvr_synthetic_300x/schema.json`                     |
-| 通用参数     | `--preset cache --passes 3 --warmup-batches 5 --buffer-batches 1 --torch-threads 4 --no-shuffle` |
-
-### 小工作集：cache 能覆盖工作集
-
-这组用 `--train-ratio 0.1 --cache-batches 128 --num-workers 0`。训练集为 27 Row Groups / 27,000 rows，每个 pass 约 106 batches，cache 容量可以覆盖一个 pass 的基础 batch。这个口径主要观察“重复访问时，热 cache 能省多少基础 batch 构建成本”。
-
-```bash
-for mode in none lru fifo lfu rr opt; do
+for mode in "${modes[@]}"; do
   uv run taac-benchmark-pcvr-data-pipeline \
     --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
     --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
@@ -151,50 +126,63 @@ for mode in none lru fifo lfu rr opt; do
     --torch-threads 4 \
     --no-shuffle \
     --train-ratio 0.1 \
-    > "outputs/benchmarks/cache_policies/cache_${mode}_workers0_train0p1_fit.json"
+    > "outputs/benchmarks/cache_policies_current/cache_${mode}_fit.json"
+done
+
+for mode in "${modes[@]}"; do
+  uv run taac-benchmark-pcvr-data-pipeline \
+    --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
+    --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
+    --preset cache \
+    --cache-mode "$mode" \
+    --cache-batches 512 \
+    --passes 3 \
+    --warmup-batches 5 \
+    --num-workers 0 \
+    --buffer-batches 1 \
+    --torch-threads 4 \
+    --no-shuffle \
+    > "outputs/benchmarks/cache_policies_current/cache_${mode}_full.json"
 done
 ```
 
-| mode   | rows/s | batches/s | elapsed sec | vs `none` | cache impl             |
-| ------ | -----: | --------: | ----------: | --------: | ---------------------- |
-| `none` |   4308 |     17.22 |        18.5 |     1.00x | PCVRMemoryBatchCache   |
-| `lru`  |   9050 |     36.18 |         8.8 |     2.10x | PCVRMemoryBatchCache   |
-| `fifo` |   8739 |     34.94 |         9.1 |     2.03x | PCVRMemoryBatchCache   |
-| `lfu`  |   8617 |     34.45 |         9.2 |     2.00x | PCVRMemoryBatchCache   |
-| `rr`   |   8895 |     35.56 |         8.9 |     2.06x | PCVRMemoryBatchCache   |
-| `opt`  |   9025 |     36.08 |         8.8 |     2.10x | PCVRMemoryBatchCache   |
+多 worker 下 OPT 会走 shared-memory cache，需要单独测：
 
-观察：当 cache 能覆盖工作集时，所有缓存策略都接近 2x `none`。这说明本数据管道里可缓存的基础 batch 构建成本确实明显；在这个口径下，策略之间的差异小于“是否命中热 cache”的差异。
+```bash
+uv run taac-benchmark-pcvr-data-pipeline \
+  --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
+  --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
+  --preset cache \
+  --cache-mode opt \
+  --cache-batches 512 \
+  --num-workers 4 \
+  --passes 3 \
+  --warmup-batches 5 \
+  --buffer-batches 1 \
+  --torch-threads 4 \
+  --no-shuffle \
+  > outputs/benchmarks/cache_policies_current/cache_opt_workers4.json
+```
 
-### 全量工作集：cache 容量不足
+## JSON 字段
 
-这组用 `--cache-batches 512 --num-workers 0` 跑完整训练切分。训练集为 270 Row Groups / 270,000 rows，每个 pass 约 1055 batches，cache 无法覆盖一个完整 pass。这个口径主要观察“cache 容量不足时，驱逐策略和维护成本是否划算”。
+| 字段                             | 含义                                             |
+| -------------------------------- | ------------------------------------------------ |
+| `cache_mode`                     | 实际启用的 cache mode                            |
+| `cache_impl`                     | `PCVRMemoryBatchCache` 或 `PCVRSharedBatchCache` |
+| `shared_cache`                   | 是否使用全局访问 trace / shared cache 路径       |
+| `rows_per_sec`                   | 端到端行吞吐                                     |
+| `batches_per_sec`                | 端到端 batch 吞吐                                |
+| `warmup_batches` / `warmup_rows` | warmup 消耗的数据量                              |
+| `measured_passes`                | 实际完成的 pass 数                               |
+| `measured_batches`               | 计入测速的 batch 数                              |
+| `batches_per_pass`               | 每个 pass 的估算 batch 数                        |
 
-| mode   | rows/s | batches/s | elapsed sec | vs `none` | cache impl             |
-| ------ | -----: | --------: | ----------: | --------: | ---------------------- |
-| `none` |   4386 |     17.54 |       180.4 |     1.00x | PCVRMemoryBatchCache   |
-| `lru`  |   4147 |     16.59 |       190.8 |     0.95x | PCVRMemoryBatchCache   |
-| `fifo` |   3863 |     15.45 |       204.8 |     0.88x | PCVRMemoryBatchCache   |
-| `lfu`  |   5411 |     21.64 |       146.2 |     1.23x | PCVRMemoryBatchCache   |
-| `rr`   |   4350 |     17.40 |       181.9 |     0.99x | PCVRMemoryBatchCache   |
-| `opt`  |   3877 |     15.51 |       204.1 |     0.88x | PCVRMemoryBatchCache   |
+## 解读规则
 
-观察：全量顺序压力下，`lru/fifo/opt` 没有赢过 `none`，说明 cache 维护、clone 和驱逐成本可能抵消收益。`lfu` 在这次顺序运行中最高，但这组是按 `none -> lru -> fifo -> lfu -> rr -> opt` 顺序执行，OS page cache 会逐步变热，所以不要把这张表解释成稳定排名。正式比较需要交错顺序并重复多轮。
-
-### 多 worker：OPT shared cache 路径
-
-这组只比较 `none` 和 `opt`，参数为 `--cache-batches 512 --num-workers 4`。`opt` 在多 worker 训练路径会启用 `PCVRSharedBatchCache`。
-
-| mode   | cache impl           | shared cache | rows/s | batches/s | elapsed sec | vs `none` |
-| ------ | -------------------- | ------------ | -----: | --------: | ----------: | --------: |
-| `none` | PCVRMemoryBatchCache | false        |  14436 |     57.74 |        54.8 |     1.00x |
-| `opt`  | PCVRSharedBatchCache | true         |  12241 |     48.97 |        64.6 |     0.85x |
-
-观察：这个本地口径下，shared OPT 没有提升吞吐，反而慢于 `none`。这不代表 OPT 永远不可用，只说明在 270k rows、4 workers、512 batches cache、无 shuffle 的 synthetic x300 数据上，shared-memory cache 的同步/拷贝开销大于它省下的数据转换成本。Baseline+ 默认打开 OPT cache 时，应继续用真实训练口径验证端到端收益。
-
-## 当前结论
-
-- cache 能覆盖重复工作集时，`lru/fifo/lfu/rr/opt` 都能显著提升吞吐，本次约 2.0x - 2.1x。
-- cache 容量不足时，非命中成本很真实：部分策略比 `none` 慢。
-- 这次数据不支持“OPT 一定更快”的结论；尤其多 worker shared OPT 需要结合真实 worker 数、shuffle、cache 容量和 transform 成本继续验证。
-- 以后记录性能结论时，需要至少保留小工作集和全量工作集两个口径，并交错模式顺序重复运行，避免 OS page cache 暖身造成假排名。
+- `none` 很快时，cache 算法差异容易被 parquet 读取和 batch 转换噪声淹没。
+- 小工作集更适合证明 cache 是否有价值；全量工作集更适合比较驱逐和维护成本。
+- `opt` 需要 trace 和实际访问顺序一致。发现 OPT 没有优势时，先看 `warmup_batches`、pass 边界、shuffle、`num_workers` 和 `shared_cache`。
+- 打开随机增强后，cache 只能省掉基础 batch 构建成本，不能省掉 transform 成本。
+- 多 worker shared OPT 的同步和张量复制成本可能大于节省的转换成本，需要用真实训练 worker 数验证。
+- 当前表格是单次顺序运行。正式排名建议交错 mode 顺序并重复运行，避免 OS page cache 和后台负载影响结论。
