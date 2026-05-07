@@ -173,9 +173,9 @@ def test_augmentation_is_reproducible_with_fixed_generator_seed() -> None:
     _assert_tensor_dict_equal(first, second)
 
 
-def test_memory_batch_cache_returns_isolated_clones() -> None:
+def test_lru_batch_cache_returns_isolated_clones() -> None:
     cache = PCVRMemoryBatchCache.from_config(
-        PCVRDataCacheConfig(mode="memory", max_batches=1)
+        PCVRDataCacheConfig(mode="lru", max_batches=1)
     )
     cache.put(("file", 0, 0), _make_batch())
 
@@ -186,6 +186,30 @@ def test_memory_batch_cache_returns_isolated_clones() -> None:
     cached_again = cache.get(("file", 0, 0))
     assert cached_again is not None
     assert cached_again["user_int_feats"][0, 0].item() == 1
+
+
+def test_fifo_batch_cache_uses_configured_eviction_policy() -> None:
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="fifo", max_batches=2)
+    )
+
+    cache.put(("file", 0, 0), _make_batch())
+    cache.put(("file", 0, 1), _make_batch())
+    assert cache.get(("file", 0, 0)) is not None
+    cache.put(("file", 0, 2), _make_batch())
+
+    assert cache.get(("file", 0, 0)) is None
+    assert cache.get(("file", 0, 1)) is not None
+    assert cache.get(("file", 0, 2)) is not None
+
+
+def test_data_cache_config_rejects_legacy_memory_mode() -> None:
+    try:
+        PCVRDataCacheConfig(mode="memory", max_batches=1)  # type: ignore[arg-type]
+    except ValueError as exc:
+        assert "unsupported data cache mode" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for legacy memory cache mode")
 
 
 def test_data_pipeline_keeps_explicit_empty_cache_instance() -> None:

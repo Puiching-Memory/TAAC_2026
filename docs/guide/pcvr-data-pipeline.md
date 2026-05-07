@@ -35,10 +35,13 @@ PCVR 数据管道负责把 parquet 数据变成训练 batch，并在需要时叠
 | `PCVRFeatureMaskConfig`   | 随机置零稀疏特征和序列事件 | 提升鲁棒性                     |
 | `PCVRDomainDropoutConfig` | 按行丢弃整个序列域         | 模拟缺失域，减少单域依赖       |
 
-cache 有三种模式：
+cache 支持这些模式：
 
 - `none`：关闭。
-- `memory`：普通 LRU。
+- `lru`：最近最少使用淘汰。
+- `fifo`：先入先出淘汰。
+- `lfu`：最少使用频次淘汰。
+- `rr`：随机淘汰。
 - `opt`：按已知访问轨迹做 OPT 淘汰；不满足条件时会退回安全策略。
 
 配置对象的当前字段：
@@ -116,9 +119,9 @@ PCVRDomainDropoutConfig(
 
 cache 存的是增强前的基础 batch。
 
-`memory` 模式是 LRU。适合小数据或重复访问明显的场景。
+`lru`、`fifo`、`lfu` 和 `rr` 使用 `cachetools` 实现。适合小数据或重复访问明显的场景。
 
-`opt` 模式需要已知访问 trace。trace 满足预期时按下一次使用距离淘汰；如果发现重复 key 或访问顺序不符合预期，会退回安全行为。多 worker 场景下可能使用 shared-memory cache，具体实现见：
+`opt` 模式保留项目内实现，因为它需要已知访问 trace。trace 满足预期时按下一次使用距离淘汰；如果发现重复 key 或访问顺序不符合预期，会退回安全行为。多 worker 场景下可能使用 shared-memory cache，具体实现见：
 
 - `PCVRMemoryBatchCache`
 - `PCVRSharedBatchCache`

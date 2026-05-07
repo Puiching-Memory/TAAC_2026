@@ -398,7 +398,7 @@ def test_parse_pcvr_train_args_uses_typed_data_pipeline_defaults(
 ) -> None:
     defaults = PCVRTrainConfig(
         data_pipeline=PCVRDataPipelineConfig(
-            cache=PCVRDataCacheConfig(mode="memory", max_batches=32),
+            cache=PCVRDataCacheConfig(mode="lru", max_batches=32),
             seed=77,
             transforms=(
                 PCVRSequenceCropConfig(
@@ -420,7 +420,7 @@ def test_parse_pcvr_train_args_uses_typed_data_pipeline_defaults(
 def test_pcvr_train_config_serializes_structured_data_pipeline() -> None:
     defaults = PCVRTrainConfig(
         data_pipeline=PCVRDataPipelineConfig(
-            cache=PCVRDataCacheConfig(mode="memory", max_batches=32),
+            cache=PCVRDataCacheConfig(mode="lru", max_batches=32),
             seed=77,
             strict_time_filter=False,
             transforms=(
@@ -440,7 +440,7 @@ def test_pcvr_train_config_serializes_structured_data_pipeline() -> None:
     assert "data_pipeline_transforms" not in flat_config
     assert "augmentation_mode" not in flat_config
     assert flat_config["data_pipeline"] == {
-        "cache": {"mode": "memory", "max_batches": 32},
+        "cache": {"mode": "lru", "max_batches": 32},
         "seed": 77,
         "strict_time_filter": False,
         "transforms": [

@@ -26,11 +26,19 @@ from taac2026.domain.model_contract import parse_seq_max_lens
 
 def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:
     transforms = []
-    cache = PCVRDataCacheConfig()
-    if args.pipeline_preset in {"cache", "augment"}:
-        cache = PCVRDataCacheConfig(mode="memory", max_batches=args.cache_batches)
-    elif args.pipeline_preset in {"opt", "opt-augment"}:
-        cache = PCVRDataCacheConfig(mode="opt", max_batches=args.cache_batches)
+    cache_mode = getattr(args, "cache_mode", None)
+    if cache_mode is None:
+        if args.pipeline_preset in {"cache", "augment"}:
+            cache_mode = "lru"
+        elif args.pipeline_preset in {"opt", "opt-augment"}:
+            cache_mode = "opt"
+        else:
+            cache_mode = "none"
+    cache = (
+        PCVRDataCacheConfig()
+        if cache_mode == "none"
+        else PCVRDataCacheConfig(mode=cache_mode, max_batches=args.cache_batches)
+    )
     if args.pipeline_preset in {"augment", "opt-augment"}:
         transforms.extend(
             [
@@ -194,6 +202,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--pipeline-preset",
         choices=("none", "cache", "opt", "augment", "opt-augment"),
         default=None,
+    )
+    parser.add_argument(
+        "--cache-mode",
+        choices=("none", "lru", "fifo", "lfu", "rr", "opt"),
+        default=None,
+        help="override cache mode while keeping the selected transform preset",
     )
     parser.add_argument("--cache-batches", type=int, default=512)
     parser.add_argument("--views-per-row", type=int, default=2)

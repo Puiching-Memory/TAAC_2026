@@ -4,9 +4,15 @@ icon: lucide/gauge
 
 # Benchmark 总览
 
-这个目录记录 TAAC 里的 benchmark 口径，尤其是 TileLang 算子的逐项记录。每个已接入 `taac-benchmark-pcvr-tilelang-ops` 的算子都应该有独立页面，写清楚支持状态、可复现命令、关键参数、误差口径和最近一次本地验收观察。
+这个目录记录 TAAC 里的 benchmark 口径，包括数据管道 cache 策略和 TileLang 算子的逐项记录。每个独立 benchmark 页面都应该写清楚支持状态、可复现命令、关键参数、误差或吞吐口径和最近一次本地验收观察。
 
 这里的数字不是长期事实。正式结论必须重新记录 commit、硬件、CUDA / PyTorch / TileLang 版本、完整命令和 JSON 输出。推荐输出到 `outputs/benchmarks/`，不要提交生成结果，除非要做一次明确的报告快照。
+
+## 数据管道索引
+
+| 主题           | CLI 入口                            | 当前用途                        | 页面                                |
+| -------------- | ----------------------------------- | ------------------------------- | ----------------------------------- |
+| Cache policies | `taac-benchmark-pcvr-data-pipeline` | 比较 `lru/fifo/lfu/rr/opt` 策略 | [Cache Policies](cache-policies.md) |
 
 ## 算子索引
 

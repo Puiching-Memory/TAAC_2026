@@ -37,6 +37,7 @@ nav = [
     ] },
     { "Benchmark" = [
         { "总览" = "benchmark/index.md" },
+        { "Cache Policies" = "benchmark/cache-policies.md" },
         { "RMSNorm" = "benchmark/rms-norm.md" },
         { "Flash Attention" = "benchmark/flash-attention.md" },
         { "Embedding Bag Mean" = "benchmark/embedding-bag-mean.md" },

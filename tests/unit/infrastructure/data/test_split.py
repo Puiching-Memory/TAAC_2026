@@ -182,7 +182,7 @@ def test_get_pcvr_data_applies_augmentation_only_to_train_dataset(
     parquet_path = tmp_path / "demo.parquet"
     parquet_path.write_text("placeholder", encoding="utf-8")
     data_pipeline_config = PCVRDataPipelineConfig(
-        cache=PCVRDataCacheConfig(mode="memory", max_batches=4),
+        cache=PCVRDataCacheConfig(mode="lru", max_batches=4),
         transforms=(PCVRSequenceCropConfig(views_per_row=2),),
         seed=11,
     )

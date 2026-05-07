@@ -49,7 +49,7 @@ uv run taac-benchmark-pcvr-data-pipeline \
 | preset        | 含义                                      |
 | ------------- | ----------------------------------------- |
 | `none`        | 纯数据加载，不启用 cache 或增强           |
-| `cache`       | 启用 memory cache                         |
+| `cache`       | 启用 LRU cache                            |
 | `opt`         | 启用 OPT batch cache                      |
 | `augment`     | 启用序列裁剪、特征 mask 和 domain dropout |
 | `opt-augment` | OPT cache + 数据增强                      |

@@ -18,7 +18,7 @@ RankMixerMode = Literal["full", "ffn_only", "none"]
 NSTokenizerType = Literal["group", "rankmixer"]
 NSGroupingStrategy = Literal["explicit", "singleton"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
-PCVRDataCacheMode = Literal["none", "memory", "opt"]
+PCVRDataCacheMode = Literal["none", "lru", "fifo", "lfu", "rr", "opt"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
 RMSNormBackend = Literal["torch", "tilelang"]
@@ -26,6 +26,7 @@ FlashAttentionBackend = Literal["torch", "tilelang"]
 
 
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
+PCVR_DATA_CACHE_MODE_CHOICES = ("none", "lru", "fifo", "lfu", "rr", "opt")
 
 
 def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, list[int]]:
@@ -74,9 +75,13 @@ class PCVRDataCacheConfig:
     mode: PCVRDataCacheMode = "none"
     max_batches: int = 0
 
+    def __post_init__(self) -> None:
+        if self.mode not in PCVR_DATA_CACHE_MODE_CHOICES:
+            raise ValueError(f"unsupported data cache mode: {self.mode}")
+
     @property
     def enabled(self) -> bool:
-        return self.mode in {"memory", "opt"}
+        return self.mode != "none"
 
 
 PCVRDataTransformConfig = (
@@ -208,7 +213,6 @@ class PCVRModelConfig:
 @dataclass(frozen=True, slots=True)
 class PCVRNSConfig:
     grouping_strategy: NSGroupingStrategy = "explicit"
-    metadata: dict[str, str] = field(default_factory=dict)
     user_groups: dict[str, list[int]] = field(default_factory=dict)
     item_groups: dict[str, list[int]] = field(default_factory=dict)
     tokenizer_type: NSTokenizerType = "rankmixer"

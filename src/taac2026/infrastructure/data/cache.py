@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from collections import OrderedDict
 from collections.abc import Hashable, Iterable
 from typing import Any
 
+from cachetools import Cache, FIFOCache, LFUCache, LRUCache, RRCache
 import torch
 
 from taac2026.domain.config import PCVRDataCacheConfig
@@ -19,8 +19,31 @@ from taac2026.infrastructure.data.batches import (
 from taac2026.infrastructure.data.native.opt_cache import load_native_opt_cache
 
 
+_CACHETOOLS_POLICIES: dict[str, type[Cache]] = {
+    "lru": LRUCache,
+    "fifo": FIFOCache,
+    "lfu": LFUCache,
+    "rr": RRCache,
+}
+_CACHE_POLICIES = (*_CACHETOOLS_POLICIES, "opt")
+
+
+def _normalize_cache_policy(policy: str) -> str:
+    if policy not in _CACHE_POLICIES:
+        raise ValueError(f"unsupported cache policy: {policy}")
+    return policy
+
+
+def _new_cachetools_cache(policy: str, max_batches: int) -> Cache:
+    try:
+        cache_type = _CACHETOOLS_POLICIES[policy]
+    except KeyError as exc:
+        raise ValueError(f"cache policy is not handled by cachetools: {policy}") from exc
+    return cache_type(max_batches)
+
+
 class PCVRMemoryBatchCache:
-    """Small per-process LRU cache for converted base PCVR batches."""
+    """Small per-process cache for converted base PCVR batches."""
 
     def __init__(
         self,
@@ -31,8 +54,8 @@ class PCVRMemoryBatchCache:
     ) -> None:
         self.enabled = enabled
         self.max_batches = max(0, int(max_batches))
-        self.policy = policy if policy == "opt" else "lru"
-        self._items: OrderedDict[Hashable, PCVRBatch] = OrderedDict()
+        self.policy = _normalize_cache_policy(policy)
+        self._items: dict[Hashable, PCVRBatch] | Cache = {}
         self._trace_positions: dict[Hashable, int] = {}
         self._trace_length = 0
         self._trace_cyclic = True
@@ -46,7 +69,7 @@ class PCVRMemoryBatchCache:
         return cls(
             enabled=config.enabled,
             max_batches=config.max_batches,
-            policy="opt" if config.mode == "opt" else "lru",
+            policy="lru" if config.mode == "none" else config.mode,
         )
 
     def configure_access_trace(self, trace: Iterable[Hashable], *, cyclic: bool = True) -> None:
@@ -58,6 +81,7 @@ class PCVRMemoryBatchCache:
         for key in trace:
             if key in trace_positions:
                 self._opt_fallback = True
+                self._ensure_cachetools_items("lru")
                 return
             trace_positions[key] = trace_length
             trace_length += 1
@@ -67,12 +91,13 @@ class PCVRMemoryBatchCache:
             self._trace_length = 0
             self._access_count = 0
             self._opt_fallback = False
+            self._ensure_cachetools_items("lru")
             return
 
         if trace_length == self._trace_length and cyclic == self._trace_cyclic and trace_positions == self._trace_positions:
             return
 
-        self._items.clear()
+        self._items = {}
         self._trace_positions = trace_positions
         self._trace_length = trace_length
         self._trace_cyclic = cyclic
@@ -80,26 +105,24 @@ class PCVRMemoryBatchCache:
         self._opt_fallback = False
 
     def get(self, key: Hashable) -> PCVRBatch | None:
-        if not self.enabled:
+        if not self.enabled or self.max_batches <= 0:
             return None
         self._record_access(key)
-        batch = self._items.get(key)
-        if batch is None:
+        try:
+            batch = self._items[key]
+        except KeyError:
             return None
-        if not self._opt_active:
-            self._items.move_to_end(key)
         return clone_pcvr_batch(batch)
 
     def put(self, key: Hashable, batch: PCVRBatch) -> None:
-        if not self.enabled:
+        if not self.enabled or self.max_batches <= 0:
             return
-        self._items[key] = clone_pcvr_batch(batch)
         if not self._opt_active:
-            self._items.move_to_end(key)
-            while self.max_batches > 0 and len(self._items) > self.max_batches:
-                self._items.popitem(last=False)
+            self._ensure_cachetools_items("lru" if self.policy == "opt" else self.policy)
+            self._items[key] = clone_pcvr_batch(batch)
             return
 
+        self._items[key] = clone_pcvr_batch(batch)
         while self.max_batches > 0 and len(self._items) > self.max_batches:
             victim = self._select_opt_victim()
             del self._items[victim]
@@ -121,8 +144,17 @@ class PCVRMemoryBatchCache:
         expected_position = self._access_count % self._trace_length
         if self._trace_positions.get(key) != expected_position:
             self._opt_fallback = True
+            self._ensure_cachetools_items("lru")
             return
         self._access_count += 1
+
+    def _ensure_cachetools_items(self, policy: str) -> None:
+        if isinstance(self._items, Cache):
+            return
+        cache = _new_cachetools_cache(policy, self.max_batches)
+        for key, value in self._items.items():
+            cache[key] = value
+        self._items = cache
 
     def _next_use(self, key: Hashable) -> float:
         position = self._trace_positions.get(key)
@@ -151,8 +183,8 @@ class PCVRMemoryBatchCache:
 class PCVRSharedBatchCache:
     """Shared-memory CPU batch cache for multi-worker single-card training."""
 
-    uses_global_access_trace = True
-    uses_native_opt_index = True
+    uses_global_access_trace = False
+    uses_native_opt_index = False
 
     def __init__(
         self,
@@ -165,13 +197,18 @@ class PCVRSharedBatchCache:
     ) -> None:
         self.enabled = enabled
         self.max_batches = max(0, int(max_batches))
-        self.policy = policy if policy == "opt" else "lru"
+        self.policy = _normalize_cache_policy(policy)
+        self.uses_global_access_trace = self.policy == "opt"
+        self.uses_native_opt_index = self.policy == "opt"
         self.static_values = dict(static_values or {})
         self.tensor_specs = dict(tensor_specs or {})
         self._lock = mp.RLock()
-        self._manager = mp.Manager() if self.policy != "opt" else None
-        self._lru_key_to_slot = self._manager.dict() if self._manager is not None else None
-        self._lru_slot_to_key = self._manager.list([None] * self.max_batches) if self._manager is not None else None
+        self._slot_cache = (
+            _new_cachetools_cache(self.policy, self.max_batches)
+            if self.policy != "opt" and self.max_batches > 0
+            else None
+        )
+        self._free_slots = list(range(self.max_batches))
         self._key_ids: dict[Hashable, int] = {}
         self._key_to_slot = torch.empty(0, dtype=torch.int64).share_memory_()
         self._slot_to_key = torch.full((self.max_batches,), -1, dtype=torch.int64).share_memory_()
@@ -190,9 +227,9 @@ class PCVRSharedBatchCache:
         if self._opt_active:
             with self._lock:
                 return int(load_native_opt_cache().size(self._slot_to_key))
-        if self._lru_key_to_slot is not None:
-            return len(self._lru_key_to_slot)
-        return int((self._slot_to_key >= 0).sum().item())
+        if self._slot_cache is not None:
+            return len(self._slot_cache)
+        return 0
 
     @property
     def _opt_enabled(self) -> bool:
@@ -239,6 +276,7 @@ class PCVRSharedBatchCache:
             self._access_count.zero_()
             self._trace_length = trace_length
             self._trace_cyclic = bool(cyclic)
+            self._reset_slot_cache()
 
     def get(self, key: Hashable) -> PCVRBatch | None:
         if not self.enabled or self.max_batches <= 0:
@@ -278,18 +316,20 @@ class PCVRSharedBatchCache:
                 return None
             return slot_index
 
-        if self._lru_key_to_slot is not None:
-            slot = self._lru_key_to_slot.get(key)
-            if slot is not None:
-                return int(slot)
+        if self.policy == "opt" or self._slot_cache is None:
+            return None
 
-        victim_slot = self._select_lru_victim_slot()
-        if self._lru_key_to_slot is not None and self._lru_slot_to_key is not None:
-            victim_key = self._lru_slot_to_key[victim_slot]
-            if victim_key is not None:
-                self._lru_key_to_slot.pop(victim_key, None)
-            self._lru_slot_to_key[victim_slot] = None
-        return victim_slot
+        try:
+            return int(self._slot_cache[key])
+        except KeyError:
+            pass
+
+        if self._free_slots:
+            slot_index = self._free_slots.pop(0)
+        else:
+            _victim_key, slot_index = self._slot_cache.popitem()
+        self._slot_cache[key] = int(slot_index)
+        return int(slot_index)
 
     def _write_slot(self, slot_index: int, key: Hashable, batch: PCVRBatch) -> None:
         row_count = pcvr_batch_row_count(batch)
@@ -302,21 +342,12 @@ class PCVRSharedBatchCache:
             if row_count > 0:
                 target[:row_count].copy_(value)
         self._row_counts[slot_index] = row_count
-        if not self._opt_active:
-            if self._lru_key_to_slot is not None and self._lru_slot_to_key is not None:
-                self._lru_slot_to_key[slot_index] = key
-                self._lru_key_to_slot[key] = slot_index
-            self._touch_slot(slot_index)
 
     def _materialize_slot(self, slot_index: int, row_count: int) -> PCVRBatch:
         batch: PCVRBatch = dict(self.static_values)
         for tensor_key, storage in self._storage.items():
             batch[tensor_key] = storage[slot_index][:row_count].clone()
         return batch
-
-    def _touch_slot(self, slot_index: int) -> None:
-        self._touch_counter[0] += 1
-        self._last_access[slot_index] = self._touch_counter[0]
 
     def _key_id_for(self, key: Hashable) -> int:
         try:
@@ -339,29 +370,17 @@ class PCVRSharedBatchCache:
                 )
             )
 
-        if self._lru_key_to_slot is not None:
-            slot = self._lru_key_to_slot.get(key)
-            if slot is not None:
-                slot_index = int(slot)
-                self._touch_slot(slot_index)
-                return slot_index
+        if self._slot_cache is not None:
+            try:
+                return int(self._slot_cache[key])
+            except KeyError:
+                return -1
         return -1
 
-    def _select_lru_victim_slot(self) -> int:
-        victim_slot = -1
-        oldest = None
-        if self._lru_slot_to_key is None:
-            raise RuntimeError("shared cache LRU eviction requested without LRU slot state")
-        for slot_index, key in enumerate(list(self._lru_slot_to_key)):
-            if key is None:
-                return slot_index
-            slot_access = int(self._last_access[slot_index].item())
-            if oldest is None or slot_access < oldest:
-                oldest = slot_access
-                victim_slot = slot_index
-        if victim_slot < 0:
-            raise RuntimeError("shared cache LRU eviction requested for empty cache")
-        return victim_slot
+    def _reset_slot_cache(self) -> None:
+        if self._slot_cache is not None:
+            self._slot_cache.clear()
+        self._free_slots = list(range(self.max_batches))
 
 
 __all__ = ["PCVRMemoryBatchCache", "PCVRSharedBatchCache", "PCVRSharedTensorSpec"]

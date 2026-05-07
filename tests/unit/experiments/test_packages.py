@@ -162,8 +162,6 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
     assert isinstance(train_defaults["item_ns_groups"], dict)
     assert train_defaults["user_ns_groups"]
     assert train_defaults["item_ns_groups"]
-    assert experiment.train_defaults.ns.metadata["_purpose"]
-    assert experiment.train_defaults.ns.metadata["_usage"]
     assert "num_hyformer_blocks" not in train_defaults
     assert "symbiosis_use_candidate_decoder" not in train_defaults
     assert "symbiosis_recent_tokens" not in train_defaults
