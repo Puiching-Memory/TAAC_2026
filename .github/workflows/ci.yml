@@ -1,6 +1,7 @@
+---
 name: CI
 
-on:
+"on":
   pull_request:
     paths:
       - ".github/workflows/ci.yml"
@@ -26,19 +27,20 @@ permissions:
 
 env:
   CI_CANONICAL_PYTHON_VERSION: "3.13"
+  COVERAGE_DOMAIN: "src/taac2026/domain/*"
+  COVERAGE_TRAINING_INIT: "src/taac2026/application/training/__init__.py"
+  COVERAGE_TRAINING_ARGS: "src/taac2026/application/training/args.py"
+  COVERAGE_TRAINING_CLI: "src/taac2026/application/training/cli.py"
+  COVERAGE_TRAINING_WORKFLOW: "src/taac2026/application/training/workflow.py"
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  style:
-    name: 代码风格与策略 (Python ${{ matrix.python-version }})
+  lint:
+    name: 代码风格与策略
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - name: 检出仓库
@@ -47,10 +49,10 @@ jobs:
       - name: 设置 Python
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.CI_CANONICAL_PYTHON_VERSION }}
 
       - name: 设置 uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
 
       - name: 同步开发工具环境
         run: uv sync --locked --extra dev
@@ -59,7 +61,6 @@ jobs:
         run: uv run ruff check .
 
       - name: 运行 Vulture 死代码检查（仅警告）
-        if: matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
         continue-on-error: true
         run: uv run vulture --config pyproject.toml
 
@@ -81,13 +82,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: 设置 uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
 
       - name: 同步项目环境
         run: uv sync --locked --extra dev
 
+      - name: 运行单元测试
+        if: matrix.python-version != env.CI_CANONICAL_PYTHON_VERSION
+        run: uv run --with torch==2.7.1 pytest -m unit -v
+
       - name: 运行带有覆盖率的单元测试
-        run: uv run --with torch==2.7.1 --with coverage coverage run --data-file=.coverage.cpu -m pytest -m unit -v
+        if: matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
+        run: >
+          uv run --with torch==2.7.1 --with coverage coverage run
+          --data-file=.coverage.cpu -m pytest -m unit -v
 
       - name: 上传 CPU 覆盖率数据
         if: always() && matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
@@ -103,8 +111,6 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - test
-    env:
-      CPU_COVERAGE_INCLUDE: src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/args.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/workflow.py
 
     steps:
       - name: 检出仓库
@@ -116,7 +122,10 @@ jobs:
           python-version: ${{ env.CI_CANONICAL_PYTHON_VERSION }}
 
       - name: 设置 uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+
+      - name: 同步覆盖率工具环境
+        run: uv sync --locked --extra dev
 
       - name: 下载 CPU 覆盖率数据
         uses: actions/download-artifact@v8
@@ -125,8 +134,17 @@ jobs:
           path: .coverage-artifacts/cpu
 
       - name: 恢复覆盖率数据
+        run: cp .coverage-artifacts/cpu/.coverage.cpu .coverage
+
+      - name: 汇总覆盖率路径
+        id: coverage-include
         run: |
-          cp .coverage-artifacts/cpu/.coverage.cpu .coverage
+          coverage_include="${COVERAGE_DOMAIN}"
+          coverage_include="${coverage_include},${COVERAGE_TRAINING_INIT}"
+          coverage_include="${coverage_include},${COVERAGE_TRAINING_ARGS}"
+          coverage_include="${coverage_include},${COVERAGE_TRAINING_CLI}"
+          coverage_include="${coverage_include},${COVERAGE_TRAINING_WORKFLOW}"
+          echo "value=$coverage_include" >> "$GITHUB_OUTPUT"
 
       - name: 总结覆盖率范围
         run: |
@@ -134,18 +152,28 @@ jobs:
             echo "## 覆盖率范围"
             echo
             echo "- 兼容性检查在 Python 3.10, 3.11, 3.12, 和 3.13 上运行"
-            echo "- 覆盖率门控从规范的 Python ${CI_CANONICAL_PYTHON_VERSION} 单元测试通道执行，仅使用 CPU 安全的模块"
-            echo "- 包含: src/taac2026/domain/*, src/taac2026/application/training/__init__.py, src/taac2026/application/training/args.py, src/taac2026/application/training/cli.py, src/taac2026/application/training/workflow.py"
+            echo "- 覆盖率门控从 Python ${CI_CANONICAL_PYTHON_VERSION} 执行"
+            echo "- 只统计 CPU 安全模块:"
+            echo "  - ${COVERAGE_DOMAIN}"
+            echo "  - ${COVERAGE_TRAINING_INIT}"
+            echo "  - ${COVERAGE_TRAINING_ARGS}"
+            echo "  - ${COVERAGE_TRAINING_CLI}"
+            echo "  - ${COVERAGE_TRAINING_WORKFLOW}"
             echo "- 集成和 GPU 覆盖率在需要时从本地 CUDA CLI 运行中收集"
             echo "- 仅 GPU 的基准测试位于 tests/benchmarks/gpu 下，通过本地 CUDA CLI 运行"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 执行 CPU 覆盖率门控
-        run: uv run --with coverage coverage report --fail-under=70 --include="$CPU_COVERAGE_INCLUDE"
+        run: >
+          uv run coverage report --fail-under=70
+          --include="${{ steps.coverage-include.outputs.value }}"
 
       - name: 导出 CPU 覆盖率 XML
         if: always()
-        run: uv run --with coverage coverage xml --fail-under=0 --include="$CPU_COVERAGE_INCLUDE" -o coverage.xml
+        run: >
+          uv run coverage xml --fail-under=0
+          --include="${{ steps.coverage-include.outputs.value }}"
+          -o coverage.xml
 
       - name: 上传覆盖率制品
         if: always()
