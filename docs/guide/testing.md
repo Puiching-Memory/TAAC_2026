@@ -73,8 +73,8 @@ uv run zensical build --strict
 
 以 `.github/workflows/ci.yml` 为准，当前 CI 主要做三件事：
 
-- Python 3.10 到 3.13 的 Ruff 检查。
-- Python 3.10 到 3.13 的 CPU 测试：`unit`、`contract`、`integration` 和 `benchmark_cpu`，排除 `gpu` / `benchmark_gpu`。
+- Python 3.10 到 3.14 的 Ruff 检查。
+- Python 3.10 到 3.14 的 CPU 测试：`unit`、`contract`、`integration` 和 `benchmark_cpu`，排除 `gpu` / `benchmark_gpu`。
 - 在规范 Python 版本上采集全 `src/taac2026` 覆盖率，并对指定核心模块做覆盖率门控。
 
 CI 只会被这些路径触发：

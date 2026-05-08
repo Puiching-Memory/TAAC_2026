@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 env:
-  DOCS_PYTHON_VERSION: "3.13"
+  DOCS_PYTHON_VERSION: "3.14"
 
 concurrency:
   group: deploy-docs-${{ github.ref }}
