@@ -88,6 +88,34 @@ def get_bundle_definition(kind: BundleKind) -> BundleDefinition:
     return _BUNDLE_DEFINITIONS[kind]
 
 
+def _format_expected_experiment_path_error(*, relative_path: str, experiment_path: Path, root: Path) -> str:
+    return (
+        "bundle experiment path must be inside the repository experiments/ directory; "
+        f"got {relative_path!r} from resolved experiment path {experiment_path} "
+        f"relative to workspace root {root}. "
+        "Pass an experiment package such as 'experiments/baseline'."
+    )
+
+
+def _bundled_experiment_path(experiment_path: Path, root: Path) -> str:
+    try:
+        relative_path = experiment_path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError(
+            "bundle experiment path must be inside the workspace root; "
+            f"got resolved experiment path {experiment_path} outside workspace root {root}."
+        ) from exc
+    if not relative_path.startswith("experiments/"):
+        raise ValueError(
+            _format_expected_experiment_path_error(
+                relative_path=relative_path,
+                experiment_path=experiment_path,
+                root=root,
+            )
+        )
+    return relative_path
+
+
 class FrameworkMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -119,7 +147,7 @@ def build_bundle_manifest(*, kind: BundleKind, experiment_path: Path, root: Path
         bundle_format=definition.bundle_format,
         bundle_format_version=definition.bundle_format_version,
         framework=FrameworkMetadata(version=__version__),
-        bundled_experiment_path=str(experiment_path.relative_to(root)),
+        bundled_experiment_path=_bundled_experiment_path(experiment_path, root),
         entrypoint=definition.entrypoint,
         code_package="code_package.zip",
         runtime_env=definition.runtime_env_dict(),
@@ -144,7 +172,10 @@ def validate_bundle_manifest(manifest: Mapping[str, Any], *, kind: BundleKind | 
         raise ValueError(f"unsupported {manifest_kind} bundle format version: {model.bundle_format_version}")
 
     if not model.bundled_experiment_path.startswith("experiments/"):
-        raise ValueError("bundle manifest must contain an experiments/... bundled_experiment_path")
+        raise ValueError(
+            "bundle manifest must contain a bundled_experiment_path under 'experiments/'; "
+            f"got {model.bundled_experiment_path!r}"
+        )
     if model.entrypoint != definition.entrypoint:
         raise ValueError(f"invalid {manifest_kind} bundle entrypoint: {model.entrypoint}")
     if model.code_package != "code_package.zip":
