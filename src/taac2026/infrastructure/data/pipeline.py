@@ -45,8 +45,17 @@ class PCVRDataPipeline:
     def requires_generator(self) -> bool:
         return bool(self.transforms)
 
-    def configure_access_trace(self, trace: Iterable[Hashable], *, cyclic: bool = True) -> None:
-        self.cache.configure_access_trace(trace, cyclic=cyclic)
+    def configure_access_trace(
+        self,
+        trace: Iterable[Hashable],
+        *,
+        cyclic: bool = True,
+        key_universe: Iterable[Hashable] = (),
+    ) -> None:
+        self.cache.configure_access_trace(trace, cyclic=cyclic, key_universe=key_universe)
+
+    def configure_key_universe(self, keys: Iterable[Hashable]) -> None:
+        self.cache.configure_key_universe(keys)
 
     def read_base_batch(self, key: Hashable, factory: PCVRBatchFactory) -> PCVRBatch:
         cached = self.cache.get(key)

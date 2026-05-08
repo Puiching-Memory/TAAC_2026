@@ -46,15 +46,15 @@ bash run.sh infer \
 
 核心默认值在 `TRAIN_DEFAULTS`：
 
-| 配置块 | 当前默认 |
-| ------ | -------- |
-| data | `batch_size=256`，`num_workers=8`，`train_ratio=1.0`，`valid_ratio=0.1` |
-| seq length | `seq_a:256,seq_b:256,seq_c:512,seq_d:512` |
-| optimizer | `lr=1e-4`，`dense_optimizer_type="adamw"`，scheduler 关闭 |
-| runtime | AMP 关闭，`torch.compile` 关闭 |
-| sparse optimizer | Adagrad sparse lr `0.05` |
-| model | `d_model=64`，`emb_dim=64`，`num_queries=2`，`num_blocks=2`，`num_heads=4` |
-| loss | BCE，focal 参数保留但 `loss_type="bce"` |
+| 配置块           | 当前默认                                                                   |
+| ---------------- | -------------------------------------------------------------------------- |
+| data             | `batch_size=256`，`num_workers=8`，`train_ratio=1.0`，`valid_ratio=0.1`    |
+| seq length       | `seq_a:256,seq_b:256,seq_c:512,seq_d:512`                                  |
+| optimizer        | `lr=1e-4`，`dense_optimizer_type="adamw"`，scheduler 关闭                  |
+| runtime          | AMP 关闭，`torch.compile` 关闭                                             |
+| sparse optimizer | Adagrad sparse lr `0.05`                                                   |
+| model            | `d_model=64`，`emb_dim=64`，`num_queries=2`，`num_blocks=2`，`num_heads=4` |
+| loss             | BCE，focal 参数保留但 `loss_type="bce"`                                    |
 
 NS 分组直接写在 `PCVRNSConfig` 的 `user_groups` 和 `item_groups` 中。不要再为当前实验补一个独立 `ns_groups.json`。
 
@@ -89,7 +89,7 @@ ModelInput(
 
 `get_sparse_params()` 会收集所有 `nn.Embedding` 权重，交给 sparse optimizer。其他参数由 `get_dense_params()` 返回。
 
-`reinit_high_cardinality_params()` 只重初始化词表超过阈值的 embedding，并保留低基数和 time embedding。这个行为会影响 sparse optimizer 重建，改 embedding 结构时要看 `tests/unit/experiments/test_packages.py` 和 runtime contract matrix。
+`reinit_high_cardinality_params()` 只重初始化词表超过阈值的 embedding，并保留低基数和 time embedding。这个行为会影响 sparse optimizer 重建，改 embedding 结构时要看 `tests/contract/experiments/test_packages.py` 和 runtime contract matrix。
 
 训练 checkpoint 目录需要包含：
 
@@ -132,8 +132,8 @@ uv run taac-package-infer \
 ## 最小复核
 
 ```bash
-uv run pytest tests/unit/experiments/test_packages.py -q
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/contract/experiments/test_packages.py -q
+uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
 ```
 
 模型结构对应 HyFormer 路线；论文解读页是 [HyFormer](../papers/hyformer.md)。

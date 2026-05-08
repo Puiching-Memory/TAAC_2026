@@ -4,6 +4,7 @@ from argparse import Namespace
 
 from taac2026.application.benchmarking.pcvr_data_pipeline_benchmark import (
     _build_pipeline_config,
+    _consume_measured_batches,
     _estimated_batches_per_pass,
 )
 
@@ -90,3 +91,28 @@ def test_estimated_batches_per_pass_accounts_for_sequence_crop_views() -> None:
         batch_size=128,
         pipeline_config=config,
     ) == 24
+
+
+def test_max_batches_consumes_single_continuous_iterator() -> None:
+    class Loader:
+        def __init__(self) -> None:
+            self.iterator_count = 0
+
+        def __iter__(self):
+            self.iterator_count += 1
+            for _ in range(10):
+                yield {"label": type("Label", (), {"shape": (3,)})()}
+
+    loader = Loader()
+
+    rows, batches, measured_passes = _consume_measured_batches(
+        loader,
+        batches_per_pass=2,
+        passes=3,
+        max_batches=5,
+    )
+
+    assert rows == 15
+    assert batches == 5
+    assert measured_passes == 3
+    assert loader.iterator_count == 1

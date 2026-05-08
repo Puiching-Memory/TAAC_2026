@@ -4,7 +4,7 @@ icon: lucide/gauge
 
 # Baseline+
 
-Baseline+ 是在 Baseline 上加了“更接近实战训练”的默认组合：OPT cache、轻量数据增强，以及 TileLang attention / RMSNorm backend。
+Baseline+ 是在 Baseline 上加了“更接近实战训练”的默认组合：OPT cache、轻量数据增强、Muon dense optimizer，以及 RMSNorm TileLang backend。
 
 它适合拿来做性能和鲁棒性方向的起点，但不适合当最小参照。做消融时，先明确你要比较的是模型结构、数据管道，还是 backend。
 
@@ -26,7 +26,8 @@ bash run.sh train \
 - 模型类：`PCVRBaselinePlus`
 - 数据 cache：`mode="opt"`，`max_batches=512`
 - 数据增强：序列随机尾窗、特征 mask、domain dropout
-- 加速 backend：`flash_attention_backend="tilelang"`，`rms_norm_backend="tilelang"`
+- Dense optimizer：`dense_optimizer_type="muon"`，矩阵 dense 参数走 Muon，非矩阵 dense 参数走 AdamW fallback
+- 加速 backend：`flash_attention_backend="torch"`，`rms_norm_backend="tilelang"`
 - RMSNorm TileLang 行块：`rms_norm_block_rows=8`
 
 这些默认值都在 `experiments/baseline_plus/__init__.py`。
@@ -46,11 +47,11 @@ configure_flash_attention_runtime(flash_attention_backend="torch" | "tilelang")
 configure_rms_norm_runtime(rms_norm_backend="torch" | "tilelang", rms_norm_block_rows=...)
 ```
 
-默认配置把 attention 和 RMSNorm 都切到 TileLang：
+默认配置保留 attention 的 torch backend，并把 RMSNorm 切到 TileLang：
 
 ```python
 PCVRModelConfig(
-    flash_attention_backend="tilelang",
+    flash_attention_backend="torch",
     rms_norm_backend="tilelang",
     rms_norm_block_rows=8,
 )
@@ -79,7 +80,7 @@ PCVRDataPipelineConfig(
 )
 ```
 
-这意味着 Baseline+ 的吞吐和指标变化可能来自三类因素：模型实现、数据增强/cache、TileLang backend。做消融时应一次只关掉一个维度。
+这意味着 Baseline+ 的吞吐和指标变化可能来自四类因素：模型实现、数据增强/cache、dense optimizer、backend。做消融时应一次只关掉一个维度。
 
 ## 模型结构
 
@@ -96,9 +97,9 @@ PCVRDataPipelineConfig(
 ## 修改建议
 
 - 只想调增强概率：改 `experiments/baseline_plus/__init__.py` 的 `data_pipeline`。
-- 只想切回 torch backend：改 `PCVRModelConfig.flash_attention_backend` 和 `rms_norm_backend`。
+- 只想切 backend：改 `PCVRModelConfig.flash_attention_backend` 和 `rms_norm_backend`。
 - 要改 TileLang kernel：改 `src/taac2026/infrastructure/accelerators/`，不要在实验包里直接写 kernel。
-- 要比较 Baseline vs Baseline+：同时记录数据管道配置和 backend 配置。
+- 要比较 Baseline vs Baseline+：同时记录数据管道、optimizer 和 backend 配置。
 
 ## 打包
 
@@ -118,7 +119,7 @@ uv run taac-package-infer \
 
 ## 常见误判
 
-- Baseline+ 的指标变化不一定来自模型本身，也可能来自数据增强或 backend。
+- Baseline+ 的指标变化不一定来自模型本身，也可能来自数据增强、optimizer 或 backend。
 - TileLang 相关问题先看 accelerator 单测和本地 GPU 环境，不要直接归因到实验包发现机制。
 - 如果只是要新增一个模型变体，先复制更接近你目标的实验包，不必从 Baseline+ 全量继承默认增强。
 
@@ -131,7 +132,7 @@ uv run taac-package-infer \
 ## 最小复核
 
 ```bash
-uv run pytest tests/unit/experiments/test_packages.py -q
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/contract/experiments/test_packages.py -q
+uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
 uv run pytest tests/unit/infrastructure/accelerators/test_tilelang_ops.py -q
 ```

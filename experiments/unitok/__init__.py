@@ -48,7 +48,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     ),
     optimizer=PCVROptimizerConfig(
         lr=1e-4,
-        max_steps=0,
+        max_steps=100_000,
         patience=5,
         seed=42,
         device=None,

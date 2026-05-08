@@ -150,16 +150,16 @@ bash run.sh train \
 最后跑契约测试：
 
 ```bash
-uv run pytest tests/unit/experiments/test_packages.py -q
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/contract/experiments/test_packages.py -q
+uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
 uv run pytest tests/unit/application/experiments -q
 ```
 
 涉及 bundle 时再加：
 
 ```bash
-uv run pytest tests/unit/application/packaging -q
-uv run pytest tests/unit/application/bootstrap -q
+uv run pytest tests/integration/application/packaging -q
+uv run pytest tests/unit/application/bootstrap tests/integration/application/bootstrap -q
 ```
 
 如果要确认打包内容，直接看 zip：

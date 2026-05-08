@@ -67,6 +67,47 @@ def _consume_batches(iterator: Any, batch_count: int) -> int:
     return rows
 
 
+def _consume_measured_batches(
+    train_loader: Any,
+    *,
+    batches_per_pass: int,
+    passes: int,
+    max_batches: int,
+) -> tuple[int, int, int]:
+    measured_rows = 0
+    measured_batches = 0
+    measured_passes = 0
+
+    if max_batches > 0:
+        iterator = iter(train_loader)
+        while measured_batches < max_batches:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            measured_rows += int(batch["label"].shape[0])
+            measured_batches += 1
+        if measured_batches > 0:
+            measured_passes = math.ceil(measured_batches / max(1, batches_per_pass))
+        return measured_rows, measured_batches, measured_passes
+
+    for _ in range(max(1, passes)):
+        iterator = iter(train_loader)
+        pass_batches = 0
+        while pass_batches < batches_per_pass:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            measured_rows += int(batch["label"].shape[0])
+            measured_batches += 1
+            pass_batches += 1
+        if pass_batches == 0:
+            break
+        measured_passes += 1
+    return measured_rows, measured_batches, measured_passes
+
+
 def _estimated_batches_per_pass(
     *,
     train_rows: int,
@@ -97,11 +138,14 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         seed=args.seed,
         seq_max_lens=parse_seq_max_lens(args.seq_max_lens),
         data_pipeline_config=pipeline_config,
+        max_steps=(args.max_batches + args.warmup_batches if args.max_batches > 0 else 0),
     )
 
     warmup_rows = 0
+    iterator_after_warmup: Any | None = None
     try:
-        warmup_rows = _consume_batches(iter(train_loader), args.warmup_batches)
+        iterator_after_warmup = iter(train_loader)
+        warmup_rows = _consume_batches(iterator_after_warmup, args.warmup_batches)
     except StopIteration:
         return {
             "dataset_path": str(args.dataset_path),
@@ -118,34 +162,22 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
             "batches_per_sec": 0.0,
         }
 
-    measured_rows = 0
-    measured_batches = 0
-    measured_passes = 0
     batches_per_pass = _estimated_batches_per_pass(
         train_rows=train_dataset.num_rows,
         batch_size=args.batch_size,
         pipeline_config=pipeline_config,
     )
     started = time.perf_counter()
-    for _ in range(max(1, args.passes)):
-        iterator = iter(train_loader)
-        pass_batches = 0
-        while pass_batches < batches_per_pass and (
-            args.max_batches <= 0 or measured_batches < args.max_batches
-        ):
-            try:
-                batch = next(iterator)
-            except StopIteration:
-                break
-            measured_rows += int(batch["label"].shape[0])
-            measured_batches += 1
-            pass_batches += 1
-        if pass_batches == 0:
-            break
-        measured_passes += 1
-        if args.max_batches > 0 and measured_batches >= args.max_batches:
-            break
+    measured_rows, measured_batches, measured_passes = _consume_measured_batches(
+        iterator_after_warmup if args.max_batches > 0 else train_loader,
+        batches_per_pass=batches_per_pass,
+        passes=args.passes,
+        max_batches=args.max_batches,
+    )
     elapsed = time.perf_counter() - started
+    cache = getattr(train_dataset.pipeline, "cache", None)
+    cache_stats_fn = getattr(cache, "stats", None)
+    cache_stats = cache_stats_fn() if callable(cache_stats_fn) else {}
 
     return {
         "dataset_path": str(args.dataset_path),
@@ -153,7 +185,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "pipeline_preset": args.pipeline_preset,
         "cache_mode": pipeline_config.cache.mode,
         "cache_impl": train_dataset.pipeline.cache.__class__.__name__,
-        "shared_cache": bool(getattr(train_dataset.pipeline.cache, "uses_global_access_trace", False)),
+        "shared_cache": train_dataset.pipeline.cache.__class__.__name__ == "PCVRSharedBatchCache",
+        "data_cache_stats": cache_stats,
         "train_rows": train_dataset.num_rows,
         "train_row_groups": len(train_dataset._rg_list),
         "batch_size": args.batch_size,

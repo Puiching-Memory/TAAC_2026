@@ -65,5 +65,15 @@ def pytest_collection_modifyitems(config, items):
         parts = path.parts
         if "unit" in parts:
             item.add_marker("unit")
+        elif "contract" in parts:
+            item.add_marker("contract")
         elif "integration" in parts:
             item.add_marker("integration")
+        elif "benchmarks" in parts:
+            if "gpu" in parts:
+                item.add_marker("benchmark_gpu")
+                item.add_marker("gpu")
+            else:
+                item.add_marker("benchmark_cpu")
+        elif "gpu" in parts:
+            item.add_marker("gpu")

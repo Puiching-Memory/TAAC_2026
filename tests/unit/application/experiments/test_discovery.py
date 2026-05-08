@@ -4,7 +4,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from taac2026.application.experiments.discovery import discover_experiment_paths
-from tests.unit.experiments._experiment_matrix import build_pcvr_experiment_cases
+from tests.support.experiment_matrix import build_pcvr_experiment_cases
 
 
 def _write_minimal_pcvr_experiment(package_dir: Path, *, experiment_name: str, model_class_name: str) -> None:

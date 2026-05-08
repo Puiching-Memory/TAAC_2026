@@ -79,6 +79,6 @@ uv run taac-package-infer \
 ## 最小复核
 
 ```bash
-uv run pytest tests/unit/experiments/test_packages.py -q
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/contract/experiments/test_packages.py -q
+uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
 ```

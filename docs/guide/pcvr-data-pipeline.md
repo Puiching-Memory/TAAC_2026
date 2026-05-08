@@ -119,9 +119,9 @@ PCVRDomainDropoutConfig(
 
 cache 存的是增强前的基础 batch。
 
-`lru`、`fifo`、`lfu` 和 `rr` 使用 `cachetools` 实现。适合小数据或重复访问明显的场景。
+`lru`、`fifo`、`lfu`、`rr` 和 `opt` 都使用项目内 native C++ policy index。Python 层负责 batch 对象或 shared tensor 槽位存储，C++ 层负责 key/slot 索引、访问计数和驱逐选择。
 
-`opt` 模式保留项目内实现，因为它需要已知访问 trace。trace 满足预期时按下一次使用距离淘汰；如果发现重复 key 或访问顺序不符合预期，会退回安全行为。多 worker 场景下可能使用 shared-memory cache，具体实现见：
+`opt` 模式需要已知访问 trace。trace 满足预期时按下一次使用距离淘汰；没有 trace 时按 `lru` 安全行为运行。多 worker 场景下所有 cache 策略都使用 shared-memory cache，具体实现见：
 
 - `PCVRMemoryBatchCache`
 - `PCVRSharedBatchCache`
@@ -191,7 +191,7 @@ uv run taac-benchmark-pcvr-data-pipeline \
 ```bash
 uv run pytest tests/unit/infrastructure/data/test_augmentation.py -q
 uv run pytest tests/unit/infrastructure/data/test_split.py -q
-uv run pytest tests/unit/experiments/test_runtime_contract_matrix.py -q
+uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
 ```
 
 如果改了 cache 或 dataloader 行为，再跑：

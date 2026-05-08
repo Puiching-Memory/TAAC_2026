@@ -12,7 +12,6 @@ classifiers = [
 	"Operating System :: POSIX :: Linux",
 ]
 dependencies = [
-	"cachetools==7.1.1",
 	"datasets==2.14.7",
 	"loguru==0.7.3",
 	"matplotlib==3.10.8",
@@ -100,6 +99,7 @@ python_files = ["test_*.py", "bench_*.py"]
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
 	"unit: fast unit tests for pure logic and local contracts",
+	"contract: stable module and experiment package interface tests",
 	"integration: higher-level workflow tests across module boundaries",
 	"gpu: tests that require a CUDA GPU (skipped automatically when unavailable)",
 	"benchmark_cpu: CPU-safe benchmark tests that run in automatic CI",

@@ -143,7 +143,7 @@ for block in self.blocks:
 - API 导出：`src/taac2026/api.py`
 - 实验模型调用点：`experiments/*/model.py`
 - CLI 覆盖测试：`tests/unit/application/training/test_cli.py`
-- backward 覆盖测试：`tests/unit/experiments/test_packages.py`
+- backward 覆盖测试：`tests/contract/experiments/test_packages.py`
 
 ## 常见问题
 

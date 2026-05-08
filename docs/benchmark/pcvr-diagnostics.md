@@ -28,7 +28,6 @@ PY
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0
-export TAAC_EMBEDDING_BAG_MEAN_BACKEND=torch
 SCHEMA="outputs/perf/pcvr_synthetic_300x/schema.json"
 
 for exp in baseline baseline_plus interformer onetrans symbiosis unitok; do

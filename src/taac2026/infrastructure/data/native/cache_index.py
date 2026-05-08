@@ -1,4 +1,4 @@
-"""JIT loader for the native PCVR OPT cache index."""
+"""JIT loader for the native PCVR cache policy index."""
 
 from __future__ import annotations
 
@@ -11,17 +11,17 @@ from torch.utils.cpp_extension import load
 
 
 @lru_cache(maxsize=1)
-def load_native_opt_cache() -> ModuleType:
-    source_path = Path(__file__).with_name("opt_cache.cpp")
+def load_native_cache_index() -> ModuleType:
+    source_path = Path(__file__).with_name("cache_index.cpp")
     build_root_env = os.environ.get("TAAC_TORCH_EXTENSIONS_DIR", "")
     build_directory = None
     if build_root_env:
         build_root = Path(build_root_env)
-        extension_build_dir = (build_root / "taac_opt_cache_index").resolve()
+        extension_build_dir = (build_root / "taac_cache_index").resolve()
         extension_build_dir.mkdir(parents=True, exist_ok=True)
         build_directory = str(extension_build_dir)
     return load(
-        name="taac_opt_cache_index",
+        name="taac_cache_index",
         sources=[str(source_path)],
         extra_cflags=["-O3", "-std=c++17"],
         build_directory=build_directory,
@@ -30,4 +30,4 @@ def load_native_opt_cache() -> ModuleType:
     )
 
 
-__all__ = ["load_native_opt_cache"]
+__all__ = ["load_native_cache_index"]

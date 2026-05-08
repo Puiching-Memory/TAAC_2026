@@ -10,7 +10,7 @@ icon: lucide/table-properties
 - Torch reference：`F.embedding(values, weight, padding_idx=0)` 后忽略 id `0` 做 mean pooling。
 - TileLang forward 支持 CUDA 上 `float16`、`bfloat16`、`float32` weight，以及 `int32` / `int64` values。
 - backward 使用 `T.atomic_add` 累加到 `grad_weight`，训练态性能对 `embedding_dim` 和 `bag_size` 敏感。
-- 默认 `backend="auto"` 只在无梯度推理/评估路径自动启用 TileLang；训练有梯度时默认回 torch。要测训练 TileLang backward，显式传 `backend="tilelang"` 或用专项脚本。
+- 默认 `backend="torch"`；只有显式传 `backend="tilelang"` 才启用 TileLang。训练态 TileLang backward 仍建议单独 benchmark 后再接入。
 - 主要源码：`src/taac2026/infrastructure/accelerators/embedding/embedding_bag.py`。
 
 ## 推荐命令

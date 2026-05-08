@@ -101,5 +101,5 @@ uv run taac-package-train \
 ## 最小复核
 
 ```bash
-uv run pytest tests/unit/experiments/test_maintenance_experiments.py -q
+uv run pytest tests/contract/experiments/test_maintenance_experiments.py -q
 ```

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,17 +8,23 @@ import pytest
 
 from taac2026.application.packaging.cli import build_inference_bundle
 from taac2026.infrastructure.io.json import loads
-from tests.unit.application.packaging._bundle_test_support import (
+from tests.support.bundle_test_support import (
     assert_pip_install_args,
     code_package_manifest,
     code_package_names,
     write_minimal_inference_runtime_package,
     write_fake_pip_package,
 )
-from tests.unit.experiments._experiment_matrix import discover_nonbaseline_pcvr_experiment_paths
+from tests.support.env import clean_subprocess_env
+from tests.support.experiment_matrix import discover_nonbaseline_pcvr_experiment_paths
 
 
 NON_BASELINE_EXPERIMENTS = discover_nonbaseline_pcvr_experiment_paths()
+
+
+def _inference_bundle_env(updates: dict[str, str] | None = None) -> dict[str, str]:
+    return clean_subprocess_env(updates, include_platform_paths=True)
+
 
 def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline_bundle"
@@ -104,20 +109,7 @@ def test_generated_infer_script_requires_user_cache_path_without_workdir_overrid
     result = build_inference_bundle("experiments/baseline", output_dir=output_dir)
     write_minimal_inference_runtime_package(result.code_package_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_SKIP_PIP_INSTALL",
-        "USER_CACHE_PATH",
-    ):
-        env.pop(variable, None)
+    env = _inference_bundle_env()
     completed = subprocess.run(
         [sys.executable, str(result.run_script_path)],
         check=False,
@@ -137,21 +129,7 @@ def test_generated_infer_script_prefers_user_cache_path_when_available(tmp_path:
     result = build_inference_bundle("experiments/baseline", output_dir=output_dir)
     write_minimal_inference_runtime_package(result.code_package_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env["USER_CACHE_PATH"] = str(user_cache_path)
-    env["TAAC_SKIP_PIP_INSTALL"] = "1"
+    env = _inference_bundle_env({"USER_CACHE_PATH": str(user_cache_path), "TAAC_SKIP_PIP_INSTALL": "1"})
     completed = subprocess.run(
         [sys.executable, str(result.run_script_path)],
         check=True,
@@ -177,20 +155,7 @@ def test_generated_infer_script_installs_project_dependencies_before_entrypoint(
     pip_args_path = tmp_path / "pip_args.json"
     fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _inference_bundle_env(
         {
             "TAAC_PIP_EXTRAS": "dev",
             "TAAC_PIP_EXTRA_ARGS": "-q",
@@ -224,20 +189,7 @@ def test_generated_infer_script_accepts_explicit_bundle_pip_extras(tmp_path: Pat
     pip_args_path = tmp_path / "pip_args.json"
     fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _inference_bundle_env(
         {
             "TAAC_BUNDLE_PIP_EXTRAS": "dev",
             "TAAC_PIP_EXTRA_ARGS": "-q",

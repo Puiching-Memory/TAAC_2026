@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +8,7 @@ import pytest
 
 from taac2026.application.packaging.cli import build_training_bundle
 from taac2026.infrastructure.io.json import loads
-from tests.unit.application.packaging._bundle_test_support import (
+from tests.support.bundle_test_support import (
     assert_pip_install_args,
     code_package_manifest,
     code_package_names,
@@ -17,10 +16,23 @@ from tests.unit.application.packaging._bundle_test_support import (
     write_minimal_training_runtime_package,
     write_fake_pip_package,
 )
-from tests.unit.experiments._experiment_matrix import discover_nonbaseline_pcvr_experiment_paths
+from tests.support.env import clean_subprocess_env
+from tests.support.experiment_matrix import discover_nonbaseline_pcvr_experiment_paths
 
 
 NON_BASELINE_EXPERIMENTS = discover_nonbaseline_pcvr_experiment_paths()
+
+
+def _training_bundle_env(tmp_path: Path, updates: dict[str, str] | None = None) -> dict[str, str]:
+    base = {
+        "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
+        "TAAC_PYTHON": sys.executable,
+        "TAAC_RUNNER": "python",
+    }
+    if updates:
+        base.update(updates)
+    return clean_subprocess_env(base, include_platform_paths=True)
+
 
 def test_build_training_bundle_contains_runtime_sources(tmp_path: Path) -> None:
     output_dir = tmp_path / "baseline_bundle"
@@ -59,8 +71,10 @@ def test_build_training_bundle_contains_runtime_sources(tmp_path: Path) -> None:
     assert "project/src/taac2026/application/training/cli.py" in names
     assert "project/src/taac2026/application/training/args.py" in names
     assert "project/src/taac2026/application/training/workflow.py" in names
-    assert "project/src/taac2026/infrastructure/data/native/opt_cache.cpp" in names
-    assert "project/src/taac2026/infrastructure/data/native/opt_cache.py" in names
+    assert "project/src/taac2026/infrastructure/data/native/cache_index.cpp" in names
+    assert "project/src/taac2026/infrastructure/data/native/cache_index.py" in names
+    assert "project/src/taac2026/infrastructure/data/native/opt_cache.cpp" not in names
+    assert "project/src/taac2026/infrastructure/data/native/opt_cache.py" not in names
     assert "project/src/taac2026/infrastructure/runtime/trainer.py" in names
     assert "project/experiments/baseline/__init__.py" in names
     assert "project/experiments/baseline/model.py" in names
@@ -125,31 +139,14 @@ def test_training_run_script_installs_project_dependencies_before_entrypoint(tmp
     pip_args_path = tmp_path / "pip_args.json"
     fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_PYTHON",
-        "TAAC_RUNNER",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _training_bundle_env(
+        tmp_path,
         {
-            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
             "TAAC_PIP_EXTRAS": "dev",
             "TAAC_PIP_EXTRA_ARGS": "-q",
             "TAAC_PIP_INDEX_URL": "",
-            "TAAC_PYTHON": sys.executable,
-            "TAAC_RUNNER": "python",
             "PYTHONPATH": str(fake_pip),
-        }
+        },
     )
     completed = subprocess.run(
         ["bash", str(result.run_script_path), "--device", "cpu"],
@@ -176,31 +173,14 @@ def test_training_run_script_accepts_explicit_bundle_pip_extras(tmp_path: Path) 
     pip_args_path = tmp_path / "pip_args.json"
     fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_PYTHON",
-        "TAAC_RUNNER",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _training_bundle_env(
+        tmp_path,
         {
-            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
             "TAAC_BUNDLE_PIP_EXTRAS": "dev",
             "TAAC_PIP_EXTRA_ARGS": "-q",
             "TAAC_PIP_INDEX_URL": "",
-            "TAAC_PYTHON": sys.executable,
-            "TAAC_RUNNER": "python",
             "PYTHONPATH": str(fake_pip),
-        }
+        },
     )
 
     subprocess.run(
@@ -221,29 +201,7 @@ def test_training_run_script_reextracts_when_code_package_changes(tmp_path: Path
     result = build_training_bundle("experiments/baseline", output_dir=output_dir)
     write_minimal_training_runtime_package(result.code_package_path, bundled_experiment_path="experiments/first")
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_PYTHON",
-        "TAAC_RUNNER",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env.update(
-        {
-            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
-            "TAAC_PYTHON": sys.executable,
-            "TAAC_RUNNER": "python",
-            "TAAC_SKIP_PIP_INSTALL": "1",
-        }
-    )
+    env = _training_bundle_env(tmp_path, {"TAAC_SKIP_PIP_INSTALL": "1"})
 
     first = subprocess.run(
         ["bash", str(result.run_script_path), "--device", "cpu"],
@@ -273,30 +231,13 @@ def test_training_run_script_does_not_inject_default_experiment(tmp_path: Path) 
     pip_args_path = tmp_path / "pip_args.json"
     fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_PYTHON",
-        "TAAC_RUNNER",
-        "TAAC_SKIP_PIP_INSTALL",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _training_bundle_env(
+        tmp_path,
         {
-            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
             "TAAC_PIP_EXTRA_ARGS": "-q",
             "TAAC_PIP_INDEX_URL": "",
-            "TAAC_PYTHON": sys.executable,
-            "TAAC_RUNNER": "python",
             "PYTHONPATH": str(fake_pip),
-        }
+        },
     )
     completed = subprocess.run(
         ["bash", str(result.run_script_path), "--device", "cpu"],
@@ -319,35 +260,16 @@ def test_training_run_script_uses_platform_train_env_paths(tmp_path: Path) -> No
     pip_args_path = tmp_path / "pip_args.json"
     fake_pip = write_fake_pip_package(tmp_path, pip_args_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_PYTHON",
-        "TAAC_RUNNER",
-        "TAAC_SKIP_PIP_INSTALL",
-        "TRAIN_DATA_PATH",
-        "TRAIN_CKPT_PATH",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _training_bundle_env(
+        tmp_path,
         {
-            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
             "TAAC_PIP_EXTRA_ARGS": "-q",
             "TAAC_PIP_INDEX_URL": "",
-            "TAAC_PYTHON": sys.executable,
-            "TAAC_RUNNER": "python",
             "TRAIN_DATA_PATH": "/platform/train.parquet",
             "TAAC_SCHEMA_PATH": "/platform/schema.json",
             "TRAIN_CKPT_PATH": "/platform/output",
             "PYTHONPATH": str(fake_pip),
-        }
+        },
     )
     completed = subprocess.run(
         ["bash", str(result.run_script_path), "--device", "cpu"],
@@ -376,35 +298,15 @@ def test_training_run_script_infer_uses_platform_eval_env_paths(tmp_path: Path) 
     result = build_training_bundle("experiments/baseline", output_dir=output_dir)
     write_minimal_eval_runtime_package(result.code_package_path)
 
-    env = os.environ.copy()
-    for variable in (
-        "TAAC_BUNDLE_WORKDIR",
-        "TAAC_CODE_PACKAGE",
-        "TAAC_EXPERIMENT",
-        "TAAC_INSTALL_PROJECT_DEPS",
-        "TAAC_BUNDLE_PIP_EXTRAS",
-        "TAAC_PIP_EXTRA_ARGS",
-        "TAAC_PIP_EXTRAS",
-        "TAAC_PIP_INDEX_URL",
-        "TAAC_PYTHON",
-        "TAAC_RUNNER",
-        "TAAC_SKIP_PIP_INSTALL",
-        "EVAL_DATA_PATH",
-        "EVAL_RESULT_PATH",
-        "MODEL_OUTPUT_PATH",
-    ):
-        env.pop(variable, None)
-    env.update(
+    env = _training_bundle_env(
+        tmp_path,
         {
-            "TAAC_BUNDLE_WORKDIR": str(tmp_path / "bundle_workdir"),
-            "TAAC_PYTHON": sys.executable,
-            "TAAC_RUNNER": "python",
             "TAAC_SKIP_PIP_INSTALL": "1",
             "EVAL_DATA_PATH": "/platform/eval.parquet",
             "TAAC_SCHEMA_PATH": "/platform/schema.json",
             "EVAL_RESULT_PATH": "/platform/results",
             "MODEL_OUTPUT_PATH": "/platform/model.safetensors",
-        }
+        },
     )
     completed = subprocess.run(
         ["bash", str(result.run_script_path), "infer"],

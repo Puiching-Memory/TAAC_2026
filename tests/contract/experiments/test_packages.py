@@ -12,7 +12,7 @@ from taac2026.application.experiments.registry import load_experiment_package
 from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.modeling import safe_key_padding_mask
-from tests.unit.experiments._experiment_matrix import discover_pcvr_experiment_cases, get_experiment_case, load_model_module
+from tests.support.experiment_matrix import discover_pcvr_experiment_cases, get_experiment_case, load_model_module
 
 
 EXPERIMENT_CASES = discover_pcvr_experiment_cases()
@@ -128,6 +128,7 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
     assert experiment.metadata["runtime_write_observed_schema_report"] == "default_write_observed_schema_report"
     assert experiment.metadata["runtime_write_train_split_observed_schema_reports"] == "default_write_train_split_observed_schema_reports"
     assert train_defaults["ns_grouping_strategy"] == "explicit"
+    assert train_defaults["max_steps"] > 0
     if experiment_case.path == "experiments/baseline_plus":
         assert train_defaults["data_pipeline"]["cache"] == {"mode": "opt", "max_batches": 512}
         assert train_defaults["data_pipeline"]["seed"] == 42
@@ -151,7 +152,8 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
             "enabled": True,
             "probability": 0.03,
         }
-        assert train_defaults["flash_attention_backend"] == "tilelang"
+        assert train_defaults["dense_optimizer_type"] == "muon"
+        assert train_defaults["flash_attention_backend"] == "torch"
         assert train_defaults["rms_norm_backend"] == "tilelang"
         assert train_defaults["rms_norm_block_rows"] == 8
     elif experiment_case.path == "experiments/symbiosis":

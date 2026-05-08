@@ -11,6 +11,7 @@ Optimizations:
   when using many DataLoader workers.
 """
 
+import bisect
 import gc
 import random
 import zlib
@@ -75,6 +76,8 @@ class PCVRParquetDataset(IterableDataset):
         data_pipeline_config: PCVRDataPipelineConfig | None = None,
         transforms: Sequence[PCVRBatchTransform] | None = None,
         dataset_role: str = "dataset",
+        sampling_seed: int = 0,
+        planned_steps: int = 0,
     ) -> None:
         """
         Args:
@@ -95,6 +98,8 @@ class PCVRParquetDataset(IterableDataset):
             data_pipeline_config: optional cache and transform pipeline settings.
             transforms: optional additional batch transforms applied after
                 conversion and before shuffle buffering.
+            sampling_seed: base seed for stochastic step-level batch sampling.
+            planned_steps: finite training step horizon used for OPT cache traces.
         """
         super().__init__()
 
@@ -117,6 +122,8 @@ class PCVRParquetDataset(IterableDataset):
         self.row_group_range = row_group_range
         self.schema_path = Path(schema_path).expanduser().resolve()
         self.data_pipeline_config = data_pipeline_config or PCVRDataPipelineConfig()
+        self.sampling_seed = int(sampling_seed)
+        self.planned_steps = max(0, int(planned_steps))
         self._strict_time_filter = bool(
             self.is_training
             and self.data_pipeline_config.enabled
@@ -139,6 +146,7 @@ class PCVRParquetDataset(IterableDataset):
 
         self.num_rows = sum(r[2] for r in self._rg_list)
         self._global_batch_keys: tuple[tuple[str, int, int], ...] | None = None
+        self._global_batch_cumulative_rows: tuple[int, ...] | None = None
         self._scheduled_num_workers: int | None = None
         self._scheduled_cyclic = False
 
@@ -310,6 +318,15 @@ class PCVRParquetDataset(IterableDataset):
             (n + self.batch_size - 1) // self.batch_size for _, _, n in self._rg_list
         )
 
+    @property
+    def uses_step_random_sampling(self) -> bool:
+        return bool(self.is_training and self.shuffle)
+
+    def _base_random_seed(self) -> int:
+        if self.data_pipeline_config.seed is not None:
+            return int(self.data_pipeline_config.seed)
+        return self.sampling_seed
+
     def _iter_base_batch_keys(
         self, rg_list: Sequence[tuple[str, int, int]]
     ) -> Iterator[tuple[str, int, int]]:
@@ -322,6 +339,65 @@ class PCVRParquetDataset(IterableDataset):
         if self._global_batch_keys is None:
             self._global_batch_keys = tuple(self._iter_base_batch_keys(self._rg_list))
         return self._global_batch_keys
+
+    def _resolved_global_batch_cumulative_rows(self) -> tuple[int, ...]:
+        if self._global_batch_cumulative_rows is None:
+            cumulative_rows: list[int] = []
+            running_rows = 0
+            for _file_path, _rg_idx, row_count in self._rg_list:
+                rows_left = int(row_count)
+                while rows_left > 0:
+                    batch_rows = min(self.batch_size, rows_left)
+                    running_rows += batch_rows
+                    cumulative_rows.append(running_rows)
+                    rows_left -= batch_rows
+            self._global_batch_cumulative_rows = tuple(cumulative_rows)
+        return self._global_batch_cumulative_rows
+
+    def _iter_step_random_batch_keys(
+        self,
+        *,
+        worker_id: int,
+        num_workers: int,
+    ) -> Iterator[tuple[int, tuple[str, int, int]]]:
+        global_batch_keys = self._resolved_global_batch_keys()
+        if not global_batch_keys:
+            return
+        worker_count = max(1, int(num_workers))
+        cumulative_rows = self._resolved_global_batch_cumulative_rows()
+        total_rows = cumulative_rows[-1] if cumulative_rows else 0
+        if total_rows <= 0:
+            return
+        rng_seed = (
+            self._base_random_seed()
+            + int(worker_id) * 1_000_003
+            + worker_count * 10_007
+            + len(global_batch_keys) * 101
+        ) % (2**63 - 1)
+        rng = random.Random(rng_seed)
+        local_step = 0
+        while True:
+            row_position = rng.randrange(total_rows)
+            batch_position = bisect.bisect_right(cumulative_rows, row_position)
+            global_draw_position = local_step * worker_count + int(worker_id)
+            yield global_draw_position, global_batch_keys[batch_position]
+            local_step += 1
+
+    def _iter_step_random_global_access_trace(self, *, num_workers: int, steps: int) -> Iterator[tuple[str, int, int]]:
+        iterators = [
+            self._iter_step_random_batch_keys(worker_id=worker_id, num_workers=num_workers)
+            for worker_id in range(max(1, int(num_workers)))
+        ]
+        for step_index in range(max(0, int(steps))):
+            worker_id = step_index % len(iterators)
+            _draw_position, batch_key = next(iterators[worker_id])
+            yield batch_key
+
+    def _opt_trace_steps(self) -> int:
+        return self.planned_steps if self.planned_steps > 0 else self._logical_train_sweep_steps()
+
+    def _logical_train_sweep_steps(self) -> int:
+        return max(1, len(self))
 
     def configure_global_batch_schedule(
         self, *, num_workers: int, cyclic: bool = True
@@ -429,7 +505,7 @@ class PCVRParquetDataset(IterableDataset):
 
         raise RuntimeError("failed to materialize requested parquet batch")
 
-    def build_shared_opt_cache(self, num_workers: int) -> PCVRSharedBatchCache:
+    def _shared_cache_tensor_specs(self) -> dict[str, PCVRSharedTensorSpec]:
         tensor_specs: dict[str, PCVRSharedTensorSpec] = {
             "user_int_feats": PCVRSharedTensorSpec(
                 shape=(self.batch_size, self.user_int_schema.total_dim),
@@ -469,25 +545,58 @@ class PCVRParquetDataset(IterableDataset):
                 shape=(self.batch_size, self._seq_maxlen[domain]),
                 dtype=torch.long,
             )
+        return tensor_specs
+
+    def build_shared_batch_cache(self, num_workers: int) -> PCVRSharedBatchCache:
+        tensor_specs = self._shared_cache_tensor_specs()
+        policy = "lru" if self.data_pipeline_config.cache.mode == "none" else self.data_pipeline_config.cache.mode
 
         cache = PCVRSharedBatchCache(
             enabled=self.data_pipeline_config.cache.enabled,
             max_batches=self.data_pipeline_config.cache.max_batches,
-            policy="opt",
+            policy=policy,
             tensor_specs=tensor_specs,
             static_values={"_seq_domains": list(self.seq_domains)},
         )
-        cache.configure_access_trace(
-            self._iter_scheduled_global_access_trace(num_workers=num_workers),
-            cyclic=True,
+        if policy == "opt":
+            if self.uses_step_random_sampling:
+                cache.configure_access_trace(
+                    self._iter_step_random_global_access_trace(num_workers=num_workers, steps=self._opt_trace_steps()),
+                    cyclic=False,
+                    key_universe=self._resolved_global_batch_keys(),
+                )
+            else:
+                cache.configure_access_trace(
+                    self._iter_scheduled_global_access_trace(num_workers=num_workers),
+                    cyclic=True,
+                    key_universe=self._resolved_global_batch_keys(),
+                )
+        else:
+            cache.configure_key_universe(self._resolved_global_batch_keys())
+        return cache
+
+    def build_shared_lru_cache(self) -> PCVRSharedBatchCache:
+        cache = PCVRSharedBatchCache(
+            enabled=self.data_pipeline_config.cache.enabled,
+            max_batches=self.data_pipeline_config.cache.max_batches,
+            policy="lru",
+            tensor_specs=self._shared_cache_tensor_specs(),
+            static_values={"_seq_domains": list(self.seq_domains)},
         )
+        cache.configure_key_universe(self._resolved_global_batch_keys())
         return cache
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         worker_info = torch.utils.data.get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
+        worker_count = worker_info.num_workers if worker_info is not None else 1
         scheduled_batch_keys: Iterator[tuple[int, tuple[str, int, int]]] | None = None
-        if (
+        if self.uses_step_random_sampling:
+            scheduled_batch_keys = self._iter_step_random_batch_keys(
+                worker_id=worker_id,
+                num_workers=worker_count,
+            )
+        elif (
             worker_info is not None
             and self._scheduled_num_workers is not None
             and worker_info.num_workers == self._scheduled_num_workers
@@ -506,11 +615,22 @@ class PCVRParquetDataset(IterableDataset):
                 if i % worker_info.num_workers == worker_info.id
             ]
 
-        if not getattr(self.pipeline.cache, "uses_global_access_trace", False):
-            self.pipeline.configure_access_trace(
-                self._iter_base_batch_keys(rg_list),
-                cyclic=True,
-            )
+        if not isinstance(self.pipeline.cache, PCVRSharedBatchCache):
+            cache_policy = getattr(self.pipeline.cache, "policy", "lru")
+            if cache_policy == "opt" and self.uses_step_random_sampling:
+                self.pipeline.configure_access_trace(
+                    self._iter_step_random_global_access_trace(num_workers=worker_count, steps=self._opt_trace_steps()),
+                    cyclic=False,
+                    key_universe=self._resolved_global_batch_keys(),
+                )
+            elif cache_policy == "opt":
+                self.pipeline.configure_access_trace(
+                    self._iter_base_batch_keys(rg_list),
+                    cyclic=True,
+                    key_universe=self._resolved_global_batch_keys(),
+                )
+            else:
+                self.pipeline.configure_key_universe(self._resolved_global_batch_keys())
 
         shuffle_buffer = PCVRShuffleBuffer(
             batch_size=self.batch_size,
@@ -1032,16 +1152,19 @@ def get_pcvr_data(
         data_pipeline_config=train_pipeline_config,
         is_training=True,
         dataset_role="train",
+        sampling_seed=seed,
+        planned_steps=int(kwargs.get("max_steps", 0) or 0),
     )
 
-    if num_workers > 1 and train_pipeline_config.cache.mode == "opt":
-        train_dataset.pipeline.cache = train_dataset.build_shared_opt_cache(
+    if num_workers > 1 and train_pipeline_config.cache.enabled:
+        train_dataset.pipeline.cache = train_dataset.build_shared_batch_cache(
             num_workers=num_workers,
         )
-        train_dataset.configure_global_batch_schedule(
-            num_workers=num_workers,
-            cyclic=True,
-        )
+        if train_pipeline_config.cache.mode == "opt" and not train_dataset.uses_step_random_sampling:
+            train_dataset.configure_global_batch_schedule(
+                num_workers=num_workers,
+                cyclic=True,
+            )
 
     use_cuda = torch.cuda.is_available()
     _train_kw = {}
@@ -1069,6 +1192,8 @@ def get_pcvr_data(
         data_pipeline_config=valid_pipeline_config,
         is_training=True,
         dataset_role="valid",
+        sampling_seed=seed,
+        planned_steps=0,
     )
     valid_loader = DataLoader(
         valid_dataset,

@@ -204,6 +204,46 @@ def test_fifo_batch_cache_uses_configured_eviction_policy() -> None:
     assert cache.get(("file", 0, 2)) is not None
 
 
+def test_lfu_batch_cache_uses_configured_eviction_policy() -> None:
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="lfu", max_batches=2)
+    )
+    cache.configure_key_universe(
+        [("file", 0, 0), ("file", 0, 1), ("file", 0, 2)]
+    )
+
+    cache.put(("file", 0, 0), _make_batch())
+    cache.put(("file", 0, 1), _make_batch())
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 0)) is not None
+    cache.put(("file", 0, 2), _make_batch())
+
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 1)) is None
+    assert cache.get(("file", 0, 2)) is not None
+    stats = cache.stats()
+    assert stats["native_cache_active"] is True
+    assert stats["effective_policy"] == "lfu"
+
+
+def test_rr_batch_cache_uses_native_index() -> None:
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="rr", max_batches=2)
+    )
+    cache.configure_key_universe(
+        [("file", 0, 0), ("file", 0, 1), ("file", 0, 2)]
+    )
+
+    cache.put(("file", 0, 0), _make_batch())
+    cache.put(("file", 0, 1), _make_batch())
+    cache.put(("file", 0, 2), _make_batch())
+
+    assert len(cache) == 2
+    stats = cache.stats()
+    assert stats["native_cache_active"] is True
+    assert stats["effective_policy"] == "rr"
+
+
 def test_data_pipeline_keeps_explicit_empty_cache_instance() -> None:
     cache = PCVRMemoryBatchCache.from_config(
         PCVRDataCacheConfig(mode="opt", max_batches=2)
@@ -235,6 +275,42 @@ def test_opt_batch_cache_evicts_farthest_future_key() -> None:
     assert cache.get(("file", 0, 0)) is not None
     assert cache.get(("file", 0, 1)) is not None
     assert cache.get(("file", 0, 2)) is None
+    stats = cache.stats()
+    assert stats["opt_active"] is True
+    assert stats["native_cache_active"] is True
+    assert stats["native_opt_active"] is True
+    assert stats["trace_length"] == 4
+
+
+def test_opt_batch_cache_supports_repeated_step_trace() -> None:
+    cache = PCVRMemoryBatchCache.from_config(
+        PCVRDataCacheConfig(mode="opt", max_batches=2)
+    )
+    trace = [
+        ("file", 0, 0),
+        ("file", 0, 1),
+        ("file", 0, 0),
+        ("file", 0, 2),
+        ("file", 0, 0),
+    ]
+    cache.configure_access_trace(trace, cyclic=False)
+
+    assert cache.get(("file", 0, 0)) is None
+    cache.put(("file", 0, 0), _make_batch())
+    assert cache.get(("file", 0, 1)) is None
+    cache.put(("file", 0, 1), _make_batch())
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 2)) is None
+    cache.put(("file", 0, 2), _make_batch())
+
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 1)) is not None
+    assert cache.get(("file", 0, 2)) is None
+    stats = cache.stats()
+    assert stats["opt_active"] is True
+    assert stats["native_cache_active"] is True
+    assert stats["native_opt_active"] is True
+    assert stats["trace_length"] == 5
 
 
 def test_opt_batch_cache_skips_clone_for_rejected_candidate(monkeypatch) -> None:
@@ -271,7 +347,7 @@ def test_opt_batch_cache_skips_clone_for_rejected_candidate(monkeypatch) -> None
     assert len(cache) == 2
 
 
-def test_opt_batch_cache_rejects_last_miss_without_victim_scan(monkeypatch) -> None:
+def test_opt_batch_cache_rejects_candidate_without_future_use() -> None:
     cache = PCVRMemoryBatchCache.from_config(
         PCVRDataCacheConfig(mode="opt", max_batches=2)
     )
@@ -288,18 +364,14 @@ def test_opt_batch_cache_rejects_last_miss_without_victim_scan(monkeypatch) -> N
         assert cache.get(key) is None
         cache.put(key, _make_batch())
 
-    def fail_select_victim():
-        raise AssertionError("last-miss rejection should not scan cached victims")
-
-    monkeypatch.setattr(cache, "_select_opt_victim", fail_select_victim)
-
     assert cache.get(("file", 0, 2)) is None
     cache.put(("file", 0, 2), _make_batch())
 
     assert len(cache) == 2
+    assert cache.get(("file", 0, 2)) is None
 
 
-def test_opt_batch_cache_reconfigures_same_trace_without_fallback() -> None:
+def test_opt_batch_cache_reconfigures_same_trace() -> None:
     trace = [
         ("file", 0, 0),
         ("file", 0, 1),
@@ -316,7 +388,6 @@ def test_opt_batch_cache_reconfigures_same_trace_without_fallback() -> None:
     cache.configure_access_trace(trace)
 
     assert cache.get(("file", 0, 0)) is not None
-    assert cache._opt_fallback is False
     assert cache._access_count == 1
 
 
@@ -358,6 +429,44 @@ def test_shared_opt_batch_cache_evicts_farthest_future_key() -> None:
     assert cached_2 is None
 
 
+def test_shared_opt_batch_cache_supports_repeated_step_trace() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=2,
+        policy="opt",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_access_trace(
+        [
+            ("file", 0, 0),
+            ("file", 0, 1),
+            ("file", 0, 0),
+            ("file", 0, 2),
+            ("file", 0, 0),
+        ],
+        cyclic=False,
+        key_universe=[("file", 0, 0), ("file", 0, 1), ("file", 0, 2)],
+    )
+
+    assert cache.get(("file", 0, 0)) is None
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    assert cache.get(("file", 0, 1)) is None
+    cache.put(("file", 0, 1), {"label": torch.tensor([2, 12], dtype=torch.long)})
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 2)) is None
+    cache.put(("file", 0, 2), {"label": torch.tensor([3, 13], dtype=torch.long)})
+
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 1)) is not None
+    assert cache.get(("file", 0, 2)) is None
+    stats = cache.stats()
+    assert stats["native_opt_active"] is True
+    assert stats["trace_length"] == 5
+
+
 def test_shared_opt_batch_cache_requires_trace_keys() -> None:
     cache = PCVRSharedBatchCache(
         enabled=True,
@@ -389,6 +498,7 @@ def test_shared_lru_batch_cache_reuses_slot_for_existing_key() -> None:
         },
         static_values={"_seq_domains": []},
     )
+    cache.configure_key_universe([("file", 0, 0)])
 
     cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
     cache.put(("file", 0, 0), {"label": torch.tensor([2, 12], dtype=torch.long)})
@@ -398,6 +508,169 @@ def test_shared_lru_batch_cache_reuses_slot_for_existing_key() -> None:
     assert len(cache) == 1
     assert cached is not None
     assert cached["label"].tolist() == [2, 12]
+
+
+def test_shared_batch_cache_treats_busy_slot_as_miss() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=1,
+        policy="lru",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_key_universe([("file", 0, 0)])
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+
+    cache._slot_versions[0] += 1
+    cached = cache.get(("file", 0, 0))
+
+    assert cached is None
+    stats = cache.stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 1
+
+
+def test_shared_batch_cache_discards_payload_when_version_changes(monkeypatch) -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=1,
+        policy="lru",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_key_universe([("file", 0, 0)])
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    original_materialize = cache._materialize_slot
+
+    def materialize_and_invalidate(slot_index: int, row_count: int):
+        batch = original_materialize(slot_index, row_count)
+        cache._slot_versions[slot_index] += 2
+        return batch
+
+    monkeypatch.setattr(cache, "_materialize_slot", materialize_and_invalidate)
+
+    cached = cache.get(("file", 0, 0))
+
+    assert cached is None
+    stats = cache.stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 1
+
+
+def test_shared_fifo_batch_cache_uses_native_index() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=2,
+        policy="fifo",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_key_universe(
+        [("file", 0, 0), ("file", 0, 1), ("file", 0, 2)]
+    )
+
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    cache.put(("file", 0, 1), {"label": torch.tensor([2, 12], dtype=torch.long)})
+    assert cache.get(("file", 0, 0)) is not None
+    cache.put(("file", 0, 2), {"label": torch.tensor([3, 13], dtype=torch.long)})
+
+    assert cache.get(("file", 0, 0)) is None
+    assert cache.get(("file", 0, 1)) is not None
+    assert cache.get(("file", 0, 2)) is not None
+    assert cache.stats()["native_cache_active"] is True
+
+
+def test_shared_lfu_batch_cache_uses_native_index() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=2,
+        policy="lfu",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_key_universe(
+        [("file", 0, 0), ("file", 0, 1), ("file", 0, 2)]
+    )
+
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    cache.put(("file", 0, 1), {"label": torch.tensor([2, 12], dtype=torch.long)})
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 0)) is not None
+    cache.put(("file", 0, 2), {"label": torch.tensor([3, 13], dtype=torch.long)})
+
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 1)) is None
+    assert cache.get(("file", 0, 2)) is not None
+    assert cache.stats()["native_cache_active"] is True
+
+
+def test_shared_rr_batch_cache_uses_native_index() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=2,
+        policy="rr",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_key_universe(
+        [("file", 0, 0), ("file", 0, 1), ("file", 0, 2)]
+    )
+
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    cache.put(("file", 0, 1), {"label": torch.tensor([2, 12], dtype=torch.long)})
+    cache.put(("file", 0, 2), {"label": torch.tensor([3, 13], dtype=torch.long)})
+
+    assert len(cache) == 2
+    assert cache.stats()["native_cache_active"] is True
+
+
+def test_shared_lru_batch_cache_uses_key_universe_and_tracks_hits() -> None:
+    cache = PCVRSharedBatchCache(
+        enabled=True,
+        max_batches=2,
+        policy="lru",
+        tensor_specs={
+            "label": PCVRSharedTensorSpec(shape=(2,), dtype=torch.long),
+        },
+        static_values={"_seq_domains": []},
+    )
+    cache.configure_key_universe(
+        [
+            ("file", 0, 0),
+            ("file", 0, 1),
+            ("file", 0, 2),
+        ]
+    )
+
+    assert cache.get(("file", 0, 0)) is None
+    cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
+    cache.put(("file", 0, 1), {"label": torch.tensor([2, 12], dtype=torch.long)})
+
+    cached = cache.get(("file", 0, 0))
+    assert cached is not None
+    assert cached["label"].tolist() == [1, 11]
+
+    cache.put(("file", 0, 2), {"label": torch.tensor([3, 13], dtype=torch.long)})
+
+    assert cache.get(("file", 0, 0)) is not None
+    assert cache.get(("file", 0, 1)) is None
+    assert cache.get(("file", 0, 2)) is not None
+
+    stats = cache.stats()
+    assert stats["shared_lru_active"] is True
+    assert stats["hits"] == 3
+    assert stats["misses"] == 2
+    assert stats["hit_rate"] == 0.6
 
 
 def test_shared_batch_cache_overwrites_partial_slot_without_stale_rows() -> None:
@@ -410,6 +683,7 @@ def test_shared_batch_cache_overwrites_partial_slot_without_stale_rows() -> None
         },
         static_values={"_seq_domains": []},
     )
+    cache.configure_key_universe([("file", 0, 0)])
 
     cache.put(("file", 0, 0), {"label": torch.tensor([1, 11], dtype=torch.long)})
     cache.put(("file", 0, 0), {"label": torch.tensor([2], dtype=torch.long)})

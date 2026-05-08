@@ -380,11 +380,11 @@ zip 内部只带 `src/taac2026`、当前实验包、`pyproject.toml` 和 manifes
 
 | 改动                    | 重点测试                                                                                        |
 | ----------------------- | ----------------------------------------------------------------------------------------------- |
-| 实验包入口 / 默认配置   | `tests/unit/experiments/test_packages.py`，`test_runtime_contract_matrix.py`                    |
+| 实验包入口 / 默认配置   | `tests/contract/experiments/test_packages.py`，`tests/contract/experiments/test_runtime_contract_matrix.py` |
 | model contract / schema | `tests/unit/domain/test_model_contract.py`                                                      |
 | 训练 CLI / workflow     | `tests/unit/application/training/`                                                              |
 | 评估 / 推理             | `tests/unit/application/evaluation/`，`tests/unit/application/experiments/test_pcvr_runtime.py` |
-| bundle                  | `tests/unit/application/packaging/`，`tests/unit/application/bootstrap/`                        |
+| bundle                  | `tests/integration/application/packaging/`，`tests/unit/application/bootstrap/`，`tests/integration/application/bootstrap/`                        |
 | 数据管道                | `tests/unit/infrastructure/data/`                                                               |
 | accelerator             | `tests/unit/infrastructure/accelerators/`                                                       |
 

@@ -27,6 +27,8 @@ permissions:
 
 env:
   CI_CANONICAL_PYTHON_VERSION: "3.13"
+  CPU_TEST_MARKERS: "(unit or contract or integration or benchmark_cpu) and not gpu and not benchmark_gpu"
+  COVERAGE_SOURCE: "src/taac2026"
   COVERAGE_DOMAIN: "src/taac2026/domain/*"
   COVERAGE_TRAINING_INIT: "src/taac2026/application/training/__init__.py"
   COVERAGE_TRAINING_ARGS: "src/taac2026/application/training/args.py"
@@ -65,7 +67,7 @@ jobs:
         run: uv run vulture --config pyproject.toml
 
   test:
-    name: CPU 单元测试 (Python ${{ matrix.python-version }})
+    name: CPU 测试 (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -89,13 +91,14 @@ jobs:
 
       - name: 运行单元测试
         if: matrix.python-version != env.CI_CANONICAL_PYTHON_VERSION
-        run: uv run --with torch==2.7.1 pytest -m unit -v
+        run: uv run --with torch==2.7.1 pytest -m "${CPU_TEST_MARKERS}" -v
 
       - name: 运行带有覆盖率的单元测试
         if: matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
         run: >
           uv run --with torch==2.7.1 --with coverage coverage run
-          --data-file=.coverage.cpu -m pytest -m unit -v
+          --data-file=.coverage.cpu --source="${COVERAGE_SOURCE}"
+          -m pytest -m "${CPU_TEST_MARKERS}" -v
 
       - name: 上传 CPU 覆盖率数据
         if: always() && matrix.python-version == env.CI_CANONICAL_PYTHON_VERSION
@@ -153,6 +156,8 @@ jobs:
             echo
             echo "- 兼容性检查在 Python 3.10, 3.11, 3.12, 和 3.13 上运行"
             echo "- 覆盖率门控从 Python ${CI_CANONICAL_PYTHON_VERSION} 执行"
+            echo "- CPU 测试 marker: ${CPU_TEST_MARKERS}"
+            echo "- 覆盖率采集 source: ${COVERAGE_SOURCE}"
             echo "- 只统计 CPU 安全模块:"
             echo "  - ${COVERAGE_DOMAIN}"
             echo "  - ${COVERAGE_TRAINING_INIT}"
@@ -160,7 +165,7 @@ jobs:
             echo "  - ${COVERAGE_TRAINING_CLI}"
             echo "  - ${COVERAGE_TRAINING_WORKFLOW}"
             echo "- 集成和 GPU 覆盖率在需要时从本地 CUDA CLI 运行中收集"
-            echo "- 仅 GPU 的基准测试位于 tests/benchmarks/gpu 下，通过本地 CUDA CLI 运行"
+            echo "- GPU 测试用 pytest -m gpu 在本地 CUDA 环境运行"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 执行 CPU 覆盖率门控
@@ -168,11 +173,16 @@ jobs:
           uv run coverage report --fail-under=70
           --include="${{ steps.coverage-include.outputs.value }}"
 
+      - name: 导出全 src 覆盖率摘要（非门禁）
+        if: always()
+        run: >
+          uv run coverage report --fail-under=0
+          --include="src/taac2026/*"
+
       - name: 导出 CPU 覆盖率 XML
         if: always()
         run: >
           uv run coverage xml --fail-under=0
-          --include="${{ steps.coverage-include.outputs.value }}"
           -o coverage.xml
 
       - name: 上传覆盖率制品

@@ -153,11 +153,11 @@ export ONLINE_EDA_SAMPLE_PERCENT=5
 
 - 实验入口：`experiments/online_dataset_eda/__init__.py`
 - 分析逻辑：`experiments/online_dataset_eda/runner.py`
-- 维护实验测试：`tests/unit/experiments/test_online_dataset_eda_runner.py`
+- 维护实验测试：`tests/contract/experiments/test_online_dataset_eda_runner.py`
 
 ## 最小复核
 
 ```bash
-uv run pytest tests/unit/experiments/test_maintenance_experiments.py -q
-uv run pytest tests/unit/experiments/test_online_dataset_eda_runner.py -q
+uv run pytest tests/contract/experiments/test_maintenance_experiments.py -q
+uv run pytest tests/contract/experiments/test_online_dataset_eda_runner.py -q
 ```

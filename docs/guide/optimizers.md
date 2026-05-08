@@ -16,7 +16,7 @@ icon: lucide/settings-2
 | Muon                  | `muon`             | 使用仓库内 `Muon` 实现；矩阵参数走 Muon 更新，非矩阵参数回退到 AdamW 风格更新     |
 | Sparse embedding 优化 | 不由此字段控制     | `get_sparse_params()` 返回的 embedding 参数走 `torch.optim.Adagrad`               |
 
-目前各实验包默认值如下：`baseline`、`baseline_plus`、`interformer`、`onetrans`、`unitok` 默认使用 `adamw`；`symbiosis` 默认使用 `orthogonal_adamw`。Muon 已接入，但当前没有实验包默认启用它。
+目前各实验包默认值如下：`baseline_plus` 默认使用 `muon`；`baseline`、`interformer`、`onetrans`、`unitok` 默认使用 `adamw`；`symbiosis` 默认使用 `orthogonal_adamw`。
 
 ## 快速启用 Muon
 
@@ -114,7 +114,7 @@ CPU 可以用来做通路检查，但不要用 CPU 数字推断线上 GPU 训练
 - benchmark CLI：`src/taac2026/application/benchmarking/pcvr_optimizer_benchmark.py`
 - runtime 覆盖测试：`tests/unit/infrastructure/runtime/test_trainer.py`
 - CLI 覆盖测试：`tests/unit/application/training/test_cli.py`
-- benchmark 覆盖测试：`tests/unit/application/benchmarking/test_pcvr_optimizer_benchmark.py`
+- benchmark 覆盖测试：`tests/benchmarks/cpu/application/benchmarking/test_pcvr_optimizer_benchmark.py`
 
 ## 常见问题
 

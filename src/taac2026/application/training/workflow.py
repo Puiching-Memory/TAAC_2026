@@ -67,6 +67,7 @@ def default_build_train_data(context: PCVRTrainContext) -> PCVRTrainDataBundle:
         seed=context.args.seed,
         seq_max_lens=seq_max_lens,
         data_pipeline_config=context.data_pipeline_config,
+        max_steps=context.args.max_steps,
     )
     return PCVRTrainDataBundle(
         train_loader=train_loader,
@@ -171,14 +172,21 @@ def default_build_train_summary(
     context: PCVRTrainContext,
     trainer: Any,
 ) -> dict[str, Any]:
-    del trainer
-    return {
+    summary = {
         "run_dir": str(context.ckpt_dir),
         "checkpoint_root": str(context.ckpt_dir),
         "schema_path": str(context.schema_path),
         "train_ratio": float(context.args.train_ratio),
         "valid_ratio": float(context.args.valid_ratio),
     }
+    train_loader = getattr(trainer, "train_loader", None)
+    train_dataset = getattr(train_loader, "dataset", None)
+    pipeline = getattr(train_dataset, "pipeline", None)
+    cache = getattr(pipeline, "cache", None)
+    stats_fn = getattr(cache, "stats", None)
+    if callable(stats_fn):
+        summary["data_cache_stats"] = stats_fn()
+    return summary
 
 
 @dataclass(frozen=True, slots=True)

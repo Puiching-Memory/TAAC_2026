@@ -205,7 +205,7 @@ def test_get_pcvr_data_applies_augmentation_only_to_train_dataset(
     assert valid_loader.dataset.data_pipeline_config.cache == data_pipeline_config.cache
 
 
-def test_get_pcvr_data_uses_shared_opt_cache_for_multi_worker_training(
+def test_get_pcvr_data_uses_shared_opt_cache_for_step_random_training(
     tmp_path: Path,
 ) -> None:
     schema_path = tmp_path / "schema.json"
@@ -223,11 +223,74 @@ def test_get_pcvr_data_uses_shared_opt_cache_for_multi_worker_training(
         num_workers=2,
         buffer_batches=1,
         data_pipeline_config=data_pipeline_config,
+        max_steps=12,
     )
 
     assert train_loader.dataset is train_dataset
+    assert train_dataset.uses_step_random_sampling is True
     assert train_dataset.pipeline.cache.__class__.__name__ == "PCVRSharedBatchCache"
     assert getattr(train_dataset.pipeline.cache, "uses_global_access_trace", False) is True
+    stats = train_dataset.pipeline.cache.stats()
+    assert stats["opt_active"] is True
+    assert stats["native_opt_active"] is True
+    assert stats["trace_length"] == 12
+
+
+def test_get_pcvr_data_uses_shared_native_cache_for_all_policies(tmp_path: Path) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_observed_schema_fixture(schema_path, parquet_path)
+
+    for mode in ("lru", "fifo", "lfu", "rr"):
+        data_pipeline_config = PCVRDataPipelineConfig(
+            cache=PCVRDataCacheConfig(mode=mode, max_batches=4),
+        )
+
+        train_loader, _valid_loader, train_dataset = pcvr_data.get_pcvr_data(
+            data_dir=str(parquet_path),
+            schema_path=str(schema_path),
+            batch_size=1,
+            valid_ratio=0.5,
+            num_workers=2,
+            buffer_batches=1,
+            data_pipeline_config=data_pipeline_config,
+            max_steps=12,
+        )
+
+        assert train_loader.dataset is train_dataset
+        assert train_dataset.pipeline.cache.__class__.__name__ == "PCVRSharedBatchCache"
+        assert getattr(train_dataset.pipeline.cache, "uses_global_access_trace", True) is False
+        stats = train_dataset.pipeline.cache.stats()
+        assert stats["policy"] == mode
+        assert stats["effective_policy"] == mode
+        assert stats["native_cache_active"] is True
+        assert stats["opt_active"] is False
+        assert stats["trace_length"] == 0
+
+
+def test_step_random_sampler_draws_batches_with_replacement(tmp_path: Path) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
+    dataset = pcvr_data.PCVRParquetDataset(
+        parquet_path=str(parquet_path),
+        schema_path=str(schema_path),
+        batch_size=1,
+        shuffle=True,
+        buffer_batches=0,
+        data_pipeline_config=PCVRDataPipelineConfig(),
+        is_training=True,
+        dataset_role="train",
+        sampling_seed=42,
+    )
+
+    sampler = dataset._iter_step_random_batch_keys(worker_id=0, num_workers=1)
+    draws = [next(sampler)[1] for _ in range(8)]
+
+    assert len(dataset) == 4
+    assert len(draws) == 8
+    assert len(set(draws)) < len(draws)
+    assert len(set(draws[: len(dataset)])) < len(dataset)
 
 
 def test_global_batch_schedule_keeps_worker_batches_contiguous(tmp_path: Path) -> None:

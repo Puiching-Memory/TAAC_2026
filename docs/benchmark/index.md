@@ -17,11 +17,11 @@ icon: lucide/gauge
 
 ## 算子索引
 
-| 算子               | CLI `--operator`     | 当前用途                                      | 自动启用策略                                                    | 页面                                        |
-| ------------------ | -------------------- | --------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------- |
-| RMSNorm            | `rms_norm`           | normalization forward/backward microbenchmark | 由模型 runtime 的 RMSNorm backend 配置决定                      | [RMSNorm](rms-norm.md)                      |
-| Flash Attention    | `flash_attention`    | attention forward/backward 和 mask 约束验证   | 由 sequence runtime 的 flash attention backend 配置决定         | [Flash Attention](flash-attention.md)       |
-| Embedding bag mean | `embedding_bag_mean` | non-sequential sparse feature mean pooling    | `auto` 只在无梯度推理/评估路径启用 TileLang；训练路径默认 torch | [Embedding Bag Mean](embedding-bag-mean.md) |
+| 算子               | CLI `--operator`     | 当前用途                                      | Backend 策略                                            | 页面                                        |
+| ------------------ | -------------------- | --------------------------------------------- | ------------------------------------------------------- | ------------------------------------------- |
+| RMSNorm            | `rms_norm`           | normalization forward/backward microbenchmark | 由模型 runtime 的 RMSNorm backend 配置决定              | [RMSNorm](rms-norm.md)                      |
+| Flash Attention    | `flash_attention`    | attention forward/backward 和 mask 约束验证   | 由 sequence runtime 的 flash attention backend 配置决定 | [Flash Attention](flash-attention.md)       |
+| Embedding bag mean | `embedding_bag_mean` | non-sequential sparse feature mean pooling    | 默认 `torch`；只有显式传 `tilelang` 才启用 TileLang     | [Embedding Bag Mean](embedding-bag-mean.md) |
 
 通用命令入口：
 

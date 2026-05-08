@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-import os
 from typing import Literal
 
 import torch
@@ -24,8 +23,7 @@ from taac2026.infrastructure.accelerators.tensor_validation import require_cuda_
 
 
 EmbeddingBagMeanKernel = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-EmbeddingBagMeanBackend = Literal["auto", "torch", "tilelang"]
-_EMBEDDING_BAG_MEAN_BACKEND_ENV = "TAAC_EMBEDDING_BAG_MEAN_BACKEND"
+EmbeddingBagMeanBackend = Literal["torch", "tilelang"]
 
 _embedding_bag_mean_kernel: EmbeddingBagMeanKernel | None = None
 
@@ -102,23 +100,10 @@ def _resolve_embedding_bag_mean_backend(
 	values: torch.Tensor,
 	backend: EmbeddingBagMeanBackend,
 ) -> Literal["torch", "tilelang"]:
-	backend = _configured_embedding_bag_mean_backend(backend)
-	if backend == "auto":
-		if _embedding_bag_mean_kernel is not None:
-			return "torch"
-		# Backward uses atomics and is shape-sensitive; keep automatic TileLang for inference paths.
-		if torch.is_grad_enabled() and embedding_weight.requires_grad:
-			return "torch"
-		if (
-			tilelang_available()
-			and embedding_weight.device.type == "cuda"
-			and embedding_weight.dtype in {torch.float16, torch.bfloat16, torch.float32}
-			and values.dtype in {torch.int32, torch.int64}
-		):
-			return "tilelang"
-		return "torch"
 	if backend == "torch":
 		return "torch"
+	if backend != "tilelang":
+		raise ValueError(f"unsupported embedding_bag_mean backend: {backend}")
 	if not tilelang_available():
 		raise RuntimeError("tilelang backend requested but tilelang is not installed")
 	require_cuda_tensors("tilelang embedding_bag_mean", embedding_weight)
@@ -127,24 +112,10 @@ def _resolve_embedding_bag_mean_backend(
 	return "tilelang"
 
 
-def _configured_embedding_bag_mean_backend(backend: EmbeddingBagMeanBackend) -> EmbeddingBagMeanBackend:
-	if backend != "auto":
-		return backend
-	configured = os.environ.get(_EMBEDDING_BAG_MEAN_BACKEND_ENV, "").strip().lower()
-	if not configured:
-		return backend
-	if configured not in {"auto", "torch", "tilelang"}:
-		raise ValueError(
-			f"unsupported {_EMBEDDING_BAG_MEAN_BACKEND_ENV}: {configured}; "
-			"expected auto, torch, or tilelang"
-		)
-	return configured  # type: ignore[return-value]
-
-
 def resolved_embedding_bag_mean_backend(
 	embedding_weight: torch.Tensor,
 	values: torch.Tensor,
-	backend: EmbeddingBagMeanBackend = "auto",
+	backend: EmbeddingBagMeanBackend = "torch",
 	*,
 	block_rows: int | None = None,
 	block_cols: int | None = None,
@@ -302,7 +273,7 @@ def embedding_bag_mean(
 	embedding_weight: torch.Tensor,
 	values: torch.Tensor,
 	*,
-	backend: EmbeddingBagMeanBackend = "auto",
+	backend: EmbeddingBagMeanBackend = "torch",
 	block_rows: int | None = None,
 	block_cols: int | None = None,
 ) -> torch.Tensor:
@@ -320,7 +291,6 @@ def embedding_bag_mean(
 
 
 __all__ = [
-	"_EMBEDDING_BAG_MEAN_BACKEND_ENV",
 	"EmbeddingBagMeanBackend",
 	"EmbeddingBagMeanKernel",
 	"EmbeddingBagMeanKernelKey",

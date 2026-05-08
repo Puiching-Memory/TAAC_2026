@@ -35,7 +35,7 @@ from taac2026.domain.model_contract import (
 from taac2026.application.evaluation.runtime import default_load_train_config
 from taac2026.infrastructure.io.json import dumps, loads
 from taac2026.infrastructure.modeling import configure_flash_attention_runtime, flash_attention_runtime_state
-from tests.unit.experiments._experiment_matrix import ExperimentCase, REPO_ROOT, discover_pcvr_experiment_cases, load_model_module
+from tests.support.experiment_matrix import ExperimentCase, REPO_ROOT, discover_pcvr_experiment_cases, load_model_module
 
 
 EXPERIMENT_CASES = discover_pcvr_experiment_cases()
