@@ -133,6 +133,10 @@ class PCVRTrainerSupportMixin:
                 raise RuntimeError("train_loader produced no batches")
 
     def _logical_train_sweep_steps(self) -> int:
+        dataset = getattr(self.train_loader, "dataset", None)
+        dataset_sweep_steps = getattr(dataset, "logical_sweep_steps", None)
+        if callable(dataset_sweep_steps):
+            return max(1, int(dataset_sweep_steps()))
         try:
             return max(1, len(self.train_loader))
         except TypeError:

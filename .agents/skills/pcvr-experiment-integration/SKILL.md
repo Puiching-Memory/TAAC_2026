@@ -40,6 +40,7 @@ For bundle behavior, also use `$taac-competition-environment`.
 - Experiment packages should stay thin: package-local model code and truly experiment-specific helpers only. Shared training/evaluation/inference/packaging behavior belongs under `src/taac2026`.
 - Checkpoint sidecars are a runtime contract. When model construction, schema conversion, or config defaults change, inspect the training-to-evaluation/inference path rather than only the training path.
 - Do not infer current contracts from archived official snapshots. Treat `docs/archive/files/...` as historical reference and verify against active source/tests.
+- Archived schema fixtures are stored at `docs/archive/files/schema/`. They are useful for explicit local `--schema-path` smoke runs when repository sample data is absent, but they remain reference fixtures rather than the live model/input contract.
 - When refactoring shared infrastructure, assume generated online bundles import the packaged `src/taac2026` tree without repo-only helpers.
 
 ## Validation

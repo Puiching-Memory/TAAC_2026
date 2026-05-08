@@ -144,6 +144,7 @@ uv run zensical serve
 | InterFormer    | [experiments/interformer](experiments/interformer)                 | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
 | OneTrans       | [experiments/onetrans](experiments/onetrans)                       | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
 | UniTok         | [experiments/unitok](experiments/unitok)                           | 统一 token-stream 实验包，将 field-level token、dense packet、行为事件和候选 token 放入同一 backbone                                         |
+| UniRec         | [experiments/unirec](experiments/unirec)                           | UniRec 融合实验包，将 Hybrid SiLU attention、MoT、target-aware interest 和 BlockAttnRes 接入共享 PCVR runtime                                 |
 
 更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/testing.md](docs/guide/testing.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。官方平台规则和赛题说明可再参考 [docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)。
 

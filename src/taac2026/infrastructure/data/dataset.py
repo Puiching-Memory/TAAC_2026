@@ -318,6 +318,9 @@ class PCVRParquetDataset(IterableDataset):
             (n + self.batch_size - 1) // self.batch_size for _, _, n in self._rg_list
         )
 
+    def logical_sweep_steps(self) -> int:
+        return max(1, len(self))
+
     @property
     def uses_step_random_sampling(self) -> bool:
         return bool(self.is_training and self.shuffle)
@@ -397,7 +400,7 @@ class PCVRParquetDataset(IterableDataset):
         return self.planned_steps if self.planned_steps > 0 else self._logical_train_sweep_steps()
 
     def _logical_train_sweep_steps(self) -> int:
-        return max(1, len(self))
+        return self.logical_sweep_steps()
 
     def configure_global_batch_schedule(
         self, *, num_workers: int, cyclic: bool = True

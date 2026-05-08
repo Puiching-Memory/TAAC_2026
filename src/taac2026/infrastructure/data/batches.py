@@ -93,10 +93,12 @@ def concat_pcvr_batches(batches: list[PCVRBatch]) -> PCVRBatch:
             merged[key] = list(first_value)
         elif isinstance(first_value, torch.Tensor):
             merged[key] = torch.cat([batch[key] for batch in batches], dim=0)
-        elif isinstance(first_value, list) and all(
-            len(batch[key]) == row_count for batch, row_count in zip(batches, row_counts, strict=True)
-        ):
-            merged[key] = [item for batch in batches for item in batch[key]]
+        elif isinstance(first_value, list):
+            if all(
+                key in batch and isinstance(batch[key], list) and len(batch[key]) == row_count
+                for batch, row_count in zip(batches, row_counts, strict=True)
+            ):
+                merged[key] = [item for batch in batches for item in batch[key]]
         else:
             merged[key] = clone_pcvr_batch({key: first_value})[key]
     return merged

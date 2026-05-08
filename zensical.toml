@@ -27,6 +27,7 @@ nav = [
         { "InterFormer" = "experiments/interformer.md" },
         { "OneTrans" = "experiments/onetrans.md" },
         { "UniTok" = "experiments/unitok.md" },
+        { "UniRec" = "experiments/unirec.md" },
         { "Host Device Info" = "experiments/host-device-info.md" },
         { "Online Dataset EDA" = "experiments/online-dataset-eda.md" },
     ] },

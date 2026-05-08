@@ -44,6 +44,7 @@ For dependencies:
 - Bundle validation must inspect what gets zipped, not just whether local imports work from the repository root.
 - The online platform may provide its own Python/CUDA stack. Avoid changes that make bundle mode depend on dev extras, repo-local files, or `uv.lock`.
 - `docs/archive/files/...` are historical competition references, not active runtime code.
+- Archived schema fixtures live under `docs/archive/files/schema/`, including `sample_1000_raw.schema.json` and `online_schema.schema.json`. If a local smoke command fails because `data/sample_1000_raw/schema.json` is absent and the command supports it, pass `--schema-path docs/archive/files/schema/sample_1000_raw.schema.json` explicitly.
 
 ## Validation
 

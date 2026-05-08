@@ -125,9 +125,7 @@ bash run.sh train \
 | `baseline_plus` | `scheduler_type="none"`，`warmup_steps=0`                          |
 | `interformer`   | `scheduler_type="none"`，`warmup_steps=0`                          |
 | `onetrans`      | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `symbiosis`     | `scheduler_type="cosine"`，`warmup_steps=2000`，`min_lr_ratio=0.1` |
-
-注意：`symbiosis` 默认声明了 cosine schedule，但它的默认 `max_steps=0`。如果运行时不额外指定 `--max_steps`，实际效果是先 warmup，之后保持 base lr，不会进入 cosine decay。
+| `symbiosis`     | `scheduler_type="none"`，`warmup_steps=0`                          |
 
 ## 源码入口
 

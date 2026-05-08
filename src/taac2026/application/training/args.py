@@ -209,7 +209,11 @@ def build_pcvr_train_arg_parser(
         choices=["full", "ffn_only", "none"],
     )
     parser.add_argument(
-        "--use_rope", action="store_true", default=default_values["use_rope"]
+        "--use_rope",
+        "--use-rope",
+        dest="use_rope",
+        action=argparse.BooleanOptionalAction,
+        default=default_values["use_rope"],
     )
     parser.add_argument("--rope_base", type=float, default=default_values["rope_base"])
     parser.add_argument(
