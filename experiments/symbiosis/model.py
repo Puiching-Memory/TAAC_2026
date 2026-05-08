@@ -24,6 +24,7 @@ from taac2026.api import (
     make_padding_mask,
     masked_mean,
     maybe_gradient_checkpoint,
+    safe_key_padding_mask,
     scaled_dot_product_attention,
     sinusoidal_positions,
 )
@@ -232,6 +233,42 @@ class SparseBlockIndexer(nn.Module):
         return blocks.gather(1, gather_index), block_mask.gather(1, indices)
 
 
+class TargetAwareLatentPooler(nn.Module):
+    """Pools bounded sequence memory into fixed-budget candidate-aware latents."""
+
+    def __init__(self, d_model: int, latent_tokens: int) -> None:
+        super().__init__()
+        self.latent_tokens = max(1, int(latent_tokens))
+        self.score_scale = float(d_model) ** -0.5
+        self.latents = nn.Parameter(torch.randn(self.latent_tokens, d_model) * 0.02)
+        self.query_projection = nn.Linear(d_model, d_model)
+        self.key_projection = nn.Linear(d_model, d_model)
+        self.value_projection = nn.Linear(d_model, d_model)
+        self.output_norm = RMSNorm(d_model)
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        tokens: torch.Tensor,
+        padding_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        valid = (~padding_mask).to(tokens.dtype).unsqueeze(-1)
+        masked_tokens = tokens * valid
+        latent_query = self.latents.unsqueeze(0) + self.query_projection(query).unsqueeze(1)
+        keys = self.key_projection(masked_tokens)
+        values = self.value_projection(masked_tokens) * valid
+        scores = torch.einsum("bld,bnd->bln", latent_query, keys) * self.score_scale
+        safe_mask = safe_key_padding_mask(padding_mask).unsqueeze(1)
+        scores = scores.masked_fill(safe_mask, torch.finfo(scores.dtype).min)
+        weights = torch.softmax(scores.float(), dim=-1).to(values.dtype)
+        latents = torch.einsum("bln,bnd->bld", weights, values)
+        all_padded = padding_mask.all(dim=1, keepdim=True)
+        latents = self.output_norm(latents)
+        latents = latents * (~all_padded).to(latents.dtype).unsqueeze(-1)
+        latent_mask = all_padded.expand(-1, self.latent_tokens)
+        return latents, latent_mask
+
+
 class SequenceMemoryEncoder(nn.Module):
     """Builds bounded sequence memory tokens from long, repetitive domains."""
 
@@ -248,6 +285,7 @@ class SequenceMemoryEncoder(nn.Module):
         memory_block_size: int,
         memory_top_k: int,
         use_compressed_memory: bool,
+        latent_tokens_per_domain: int,
     ) -> None:
         super().__init__()
         self.seq_domains = sorted(seq_vocab_sizes)
@@ -256,6 +294,7 @@ class SequenceMemoryEncoder(nn.Module):
         self.memory_block_size = max(1, int(memory_block_size))
         self.memory_top_k = max(0, int(memory_top_k))
         self.use_compressed_memory = bool(use_compressed_memory)
+        self.latent_tokens_per_domain = max(0, int(latent_tokens_per_domain))
         self.sequence_tokenizers = nn.ModuleDict(
             {
                 domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model, num_time_buckets, emb_skip_threshold)
@@ -266,6 +305,14 @@ class SequenceMemoryEncoder(nn.Module):
             {domain: LearnedBlockCompressor(d_model, self.memory_block_size) for domain in self.seq_domains}
         )
         self.block_indexers = nn.ModuleDict({domain: SparseBlockIndexer(d_model, num_index_heads) for domain in self.seq_domains})
+        self.latent_poolers = nn.ModuleDict(
+            {
+                domain: TargetAwareLatentPooler(d_model, self.latent_tokens_per_domain)
+                for domain in self.seq_domains
+            }
+            if self.latent_tokens_per_domain > 0
+            else {}
+        )
 
     def _recent_window(
         self,
@@ -303,6 +350,116 @@ class SequenceMemoryEncoder(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         return self.block_indexers[domain](query, blocks, block_mask, self.memory_top_k)
 
+    def _add_recent_positions(self, tokens: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
+        if tokens.shape[1] == 0:
+            return tokens
+        positions = sinusoidal_positions(tokens.shape[1], self.d_model, tokens.device).unsqueeze(0)
+        tokens = tokens + positions
+        return tokens * (~padding_mask).to(tokens.dtype).unsqueeze(-1)
+
+    def _latent_memory_tokens(
+        self,
+        query: torch.Tensor,
+        domain: str,
+        tokens: torch.Tensor,
+        padding_mask: torch.Tensor,
+        seq_len: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        source_pieces: list[torch.Tensor] = []
+        source_masks: list[torch.Tensor] = []
+
+        recent_tokens, recent_mask = self._recent_window(tokens, seq_len)
+        if recent_tokens.shape[1] > 0:
+            source_pieces.append(self._add_recent_positions(recent_tokens, recent_mask))
+            source_masks.append(recent_mask)
+
+        if self.use_compressed_memory:
+            blocks, block_mask = self._compressed_blocks(domain, tokens, padding_mask)
+            blocks, block_mask = self._select_topk_blocks(query, domain, blocks, block_mask)
+            if blocks.shape[1] > 0:
+                source_pieces.append(blocks)
+                source_masks.append(block_mask)
+
+        global_token = masked_mean(tokens, padding_mask).unsqueeze(1)
+        global_mask = padding_mask.all(dim=1, keepdim=True)
+        source_pieces.append(global_token)
+        source_masks.append(global_mask)
+
+        source_tokens = torch.cat(source_pieces, dim=1)
+        source_mask = torch.cat(source_masks, dim=1)
+        return self.latent_poolers[domain](query, source_tokens, source_mask)
+
+    def _compact_raw_sequence(
+        self,
+        sequence: torch.Tensor,
+        time_buckets: torch.Tensor | None,
+        lengths: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+        batch_size, feature_count, max_len = sequence.shape
+        if max_len <= 0:
+            empty_sequence = sequence.new_zeros(batch_size, feature_count, 0)
+            empty_mask = torch.ones(batch_size, 0, dtype=torch.bool, device=sequence.device)
+            return empty_sequence, None, empty_mask
+
+        clamped_lengths = lengths.clamp(min=0, max=max_len).to(torch.long)
+        positions: list[torch.Tensor] = []
+        masks: list[torch.Tensor] = []
+
+        recent_keep = min(self.recent_tokens, max_len)
+        prefix_capacity = max(0, max_len - recent_keep)
+        memory_keep = min(self.memory_top_k if self.use_compressed_memory else 0, prefix_capacity)
+        if memory_keep > 0:
+            offsets = torch.arange(memory_keep, device=sequence.device)
+            prefix_lengths = (clamped_lengths - recent_keep).clamp_min(0)
+            memory_positions = (prefix_lengths.unsqueeze(1) * (offsets + 1) // (memory_keep + 1)).clamp_max(max_len - 1)
+            memory_lengths = prefix_lengths.clamp_max(memory_keep)
+            positions.append(memory_positions)
+            masks.append(offsets.unsqueeze(0) >= memory_lengths.unsqueeze(1))
+
+        if recent_keep > 0:
+            offsets = torch.arange(recent_keep, device=sequence.device)
+            start = (clamped_lengths - recent_keep).clamp_min(0)
+            recent_positions = (start.unsqueeze(1) + offsets).clamp_max(max_len - 1)
+            recent_lengths = clamped_lengths.clamp_max(recent_keep)
+            positions.append(recent_positions)
+            masks.append(offsets.unsqueeze(0) >= recent_lengths.unsqueeze(1))
+
+        if not positions:
+            empty_sequence = sequence.new_zeros(batch_size, feature_count, 0)
+            empty_mask = torch.ones(batch_size, 0, dtype=torch.bool, device=sequence.device)
+            return empty_sequence, None, empty_mask
+
+        gather_positions = torch.cat(positions, dim=1)
+        padding_mask = torch.cat(masks, dim=1)
+        gather_index = gather_positions.unsqueeze(1).expand(-1, feature_count, -1)
+        compact_sequence = sequence.gather(2, gather_index)
+        compact_time_buckets = None
+        if time_buckets is not None:
+            if time_buckets.shape[1] <= 0:
+                compact_time_buckets = torch.zeros_like(gather_positions)
+            else:
+                time_positions = gather_positions.clamp_max(time_buckets.shape[1] - 1)
+                compact_time_buckets = time_buckets.gather(1, time_positions)
+        return compact_sequence, compact_time_buckets, padding_mask
+
+    def _latent_memory_tokens_from_raw(
+        self,
+        query: torch.Tensor,
+        domain: str,
+        sequence: torch.Tensor,
+        time_buckets: torch.Tensor | None,
+        seq_len: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        compact_sequence, compact_time_buckets, compact_mask = self._compact_raw_sequence(sequence, time_buckets, seq_len)
+        if compact_sequence.shape[2] == 0:
+            pooler = self.latent_poolers[domain]
+            empty_tokens = query.new_zeros(query.shape[0], pooler.latent_tokens, self.d_model)
+            empty_mask = torch.ones(query.shape[0], pooler.latent_tokens, dtype=torch.bool, device=query.device)
+            return empty_tokens, empty_mask
+        tokens = self.sequence_tokenizers[domain](compact_sequence, compact_time_buckets)
+        tokens = self._add_recent_positions(tokens, compact_mask)
+        return self.latent_poolers[domain](query, tokens, compact_mask)
+
     def forward(
         self,
         inputs: ModelInput,
@@ -314,14 +471,25 @@ class SequenceMemoryEncoder(nn.Module):
         for domain_index, domain in enumerate(self.seq_domains):
             raw_sequence = inputs.seq_data[domain]
             seq_len = inputs.seq_lens[domain].to(raw_sequence.device).clamp_max(raw_sequence.shape[2])
+            if self.latent_tokens_per_domain > 0:
+                latent_tokens, latent_mask = self._latent_memory_tokens_from_raw(
+                    query,
+                    domain,
+                    raw_sequence,
+                    inputs.seq_time_buckets.get(domain),
+                    seq_len,
+                )
+                pieces.append(latent_tokens)
+                masks.append(latent_mask)
+                domain_indices.append(domain_index)
+                continue
+
             tokens = self.sequence_tokenizers[domain](raw_sequence, inputs.seq_time_buckets.get(domain))
             padding_mask = make_padding_mask(seq_len, tokens.shape[1])
 
             recent_tokens, recent_mask = self._recent_window(tokens, seq_len)
             if recent_tokens.shape[1] > 0:
-                positions = sinusoidal_positions(recent_tokens.shape[1], self.d_model, recent_tokens.device).unsqueeze(0)
-                recent_tokens = recent_tokens + positions
-                recent_tokens = recent_tokens * (~recent_mask).to(recent_tokens.dtype).unsqueeze(-1)
+                recent_tokens = self._add_recent_positions(recent_tokens, recent_mask)
                 masks.append(recent_mask)
                 pieces.append(recent_tokens)
                 domain_indices.append(domain_index)
@@ -375,7 +543,7 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         ns_tokenizer_type: str = "rankmixer",
         user_ns_tokens: int = 5,
         item_ns_tokens: int = 2,
-        symbiosis_use_field_tokens: bool = True,
+        symbiosis_use_field_tokens: bool = False,
         symbiosis_use_dense_packets: bool = True,
         symbiosis_use_sequence_memory: bool = True,
         symbiosis_use_compressed_memory: bool = True,
@@ -385,6 +553,8 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         symbiosis_memory_block_size: int = 32,
         symbiosis_memory_top_k: int = 8,
         symbiosis_recent_tokens: int = 32,
+        symbiosis_sequence_latent_tokens: int = 3,
+        symbiosis_compile_fusion_core: bool = True,
     ) -> None:
         super().__init__()
         del num_queries, seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, use_rope, rope_base, seq_id_threshold
@@ -403,6 +573,8 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         self.symbiosis_memory_block_size = max(1, int(symbiosis_memory_block_size))
         self.symbiosis_memory_top_k = max(0, int(symbiosis_memory_top_k))
         self.symbiosis_recent_tokens = max(0, int(symbiosis_recent_tokens))
+        self.symbiosis_sequence_latent_tokens = max(0, int(symbiosis_sequence_latent_tokens))
+        self.symbiosis_compile_fusion_core = bool(symbiosis_compile_fusion_core)
 
         if self.symbiosis_use_field_tokens:
             self.user_sparse = FieldTokenProjector(user_int_feature_specs, emb_dim, d_model, emb_skip_threshold)
@@ -454,6 +626,7 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
                 memory_block_size=self.symbiosis_memory_block_size,
                 memory_top_k=self.symbiosis_memory_top_k,
                 use_compressed_memory=self.symbiosis_use_compressed_memory,
+                latent_tokens_per_domain=self.symbiosis_sequence_latent_tokens,
             )
             if self.symbiosis_use_sequence_memory
             else None
@@ -473,6 +646,8 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
             nn.Dropout(dropout_rate),
             nn.Linear(d_model, action_num),
         )
+        self._fusion_core_compiled = False
+        self._compiled_fusion_core = None
 
     def _type_ids(self, batch_size: int, token_count: int, type_id: int, device: torch.device) -> torch.Tensor:
         return torch.full((batch_size, token_count), int(type_id), dtype=torch.long, device=device)
@@ -552,8 +727,7 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         item_start = tokens.shape[1] - item_sparse.shape[1] - item_dense.shape[1]
         return tokens, padding_mask, candidate_count, context_start, item_start
 
-    def _embed(self, inputs: ModelInput) -> torch.Tensor:
-        tokens, padding_mask, candidate_count, context_start, item_start = self._encode_tokens(inputs)
+    def _run_fusion_core(self, tokens: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
         for block in self.blocks:
             tokens = maybe_gradient_checkpoint(
                 block,
@@ -561,7 +735,12 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
                 padding_mask,
                 enabled=self.gradient_checkpointing,
             )
-        tokens = self.final_norm(tokens)
+        return self.final_norm(tokens)
+
+    def _embed(self, inputs: ModelInput) -> torch.Tensor:
+        tokens, padding_mask, candidate_count, context_start, item_start = self._encode_tokens(inputs)
+        fusion_core = self._compiled_fusion_core if self._compiled_fusion_core is not None else self._run_fusion_core
+        tokens = fusion_core(tokens, padding_mask)
         if candidate_count:
             candidate_summary = tokens[:, 0, :]
         else:
@@ -571,6 +750,16 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         if not self.symbiosis_use_item_prior:
             item_summary = torch.zeros_like(item_summary)
         return torch.cat([candidate_summary, context_summary, item_summary], dim=-1)
+
+    @property
+    def uses_internal_compile(self) -> bool:
+        return self.symbiosis_compile_fusion_core
+
+    def prepare_for_runtime_compile(self) -> None:
+        if not self.symbiosis_compile_fusion_core or self._fusion_core_compiled:
+            return
+        self._compiled_fusion_core = torch.compile(self._run_fusion_core)
+        self._fusion_core_compiled = True
 
     def forward(self, inputs: ModelInput) -> torch.Tensor:
         return self.classifier(self._embed(inputs))

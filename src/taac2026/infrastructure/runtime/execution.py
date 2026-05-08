@@ -303,6 +303,19 @@ def maybe_compile_callable(callable_obj, *, enabled: bool, label: str):
         return callable_obj
 
 
+def maybe_prepare_internal_compile(model: nn.Module, *, enabled: bool, label: str) -> bool:
+    if not enabled or not bool(getattr(model, "uses_internal_compile", False)):
+        return False
+    prepare = getattr(model, "prepare_for_runtime_compile", None)
+    if not callable(prepare):
+        return False
+    try:
+        prepare()
+    except Exception as error:  # pragma: no cover - exercised via monkeypatched tests.
+        logger.warning("Failed to prepare internal compile for {}; falling back to eager execution: {}", label, error)
+    return True
+
+
 def create_logger(filepath: str | Path):
     """Configure shared loguru sinks for a training or evaluation process."""
 

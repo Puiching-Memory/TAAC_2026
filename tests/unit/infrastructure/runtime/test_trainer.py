@@ -18,6 +18,7 @@ from taac2026.infrastructure.runtime.execution import (
     RuntimeExecutionConfig,
     compute_pcvr_loss,
     maybe_compile_callable,
+    maybe_prepare_internal_compile,
 )
 
 
@@ -33,6 +34,17 @@ class _DummyModel(torch.nn.Module):
     def predict(self, model_input):
         logits = self.forward(model_input)
         return logits, torch.empty(0)
+
+
+class _InternalCompileDummyModel(_DummyModel):
+    uses_internal_compile = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prepare_calls = 0
+
+    def prepare_for_runtime_compile(self) -> None:
+        self.prepare_calls += 1
 
 
 class _MatrixDummyModel(torch.nn.Module):
@@ -127,6 +139,47 @@ def test_maybe_compile_callable_falls_back_to_eager_on_compile_error(
     assert compiled is sample_callable
     assert "Failed to compile sample callable" in log_capture.text
     assert "falling back to eager execution" in log_capture.text
+
+
+def test_maybe_prepare_internal_compile_uses_model_boundary() -> None:
+    model = _InternalCompileDummyModel()
+
+    handled = maybe_prepare_internal_compile(model, enabled=True, label="sample model")
+
+    assert handled is True
+    assert model.prepare_calls == 1
+
+
+def test_trainer_skips_whole_model_compile_when_model_handles_internal_compile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    compile_calls = 0
+
+    def recording_compile(callable_obj):
+        nonlocal compile_calls
+        compile_calls += 1
+        return callable_obj
+
+    model = _InternalCompileDummyModel()
+    monkeypatch.setattr(torch, "compile", recording_compile)
+
+    trainer = PCVRPointwiseTrainer(
+        model=model,
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        runtime_execution=RuntimeExecutionConfig(compile=True),
+    )
+
+    assert model.prepare_calls == 1
+    assert compile_calls == 0
+    assert trainer.forward_model is model
 
 
 def test_logical_train_sweep_steps_uses_dataset_without_calling_dataloader_len() -> None:

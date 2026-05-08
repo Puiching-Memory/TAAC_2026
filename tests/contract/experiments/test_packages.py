@@ -246,6 +246,66 @@ def test_symbiosis_sequence_memory_ignores_fully_padded_domains() -> None:
         assert torch.equal(mask_a, mask_b)
 
 
+def test_symbiosis_sequence_memory_defaults_to_fixed_latent_budget() -> None:
+    experiment_case = get_experiment_case("experiments/symbiosis")
+    model_module = load_model_module(experiment_case)
+    model = _make_model(experiment_case, model_module)
+    model_input = _sample_model_input(model_module)
+    user_sparse, _user_mask, item_sparse, _item_mask = model._sparse_tokens(model_input)
+    query = model.sequence_query_projection(torch.cat([user_sparse.mean(dim=1), item_sparse.mean(dim=1)], dim=-1))
+
+    pieces, masks, domain_indices = model.sequence_memory(model_input, query)
+
+    assert len(pieces) == len(model.sequence_memory.seq_domains)
+    assert len(masks) == len(pieces)
+    assert domain_indices == list(range(len(model.sequence_memory.seq_domains)))
+    assert [tensor.shape[1] for tensor in pieces] == [model.symbiosis_sequence_latent_tokens] * len(pieces)
+    assert [mask.shape[1] for mask in masks] == [model.symbiosis_sequence_latent_tokens] * len(masks)
+
+
+def test_symbiosis_latent_sequence_reader_tokenizes_compact_raw_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment_case = get_experiment_case("experiments/symbiosis")
+    model_module = load_model_module(experiment_case)
+    model = _make_model(
+        experiment_case,
+        model_module,
+        overrides={"symbiosis_recent_tokens": 4, "symbiosis_memory_top_k": 2},
+    )
+    model_input = _sample_model_input(model_module)._replace(
+        seq_data={
+            "seq_a": torch.ones(2, 2, 64, dtype=torch.long),
+            "seq_b": torch.ones(2, 1, 48, dtype=torch.long),
+        },
+        seq_lens={
+            "seq_a": torch.tensor([64, 32], dtype=torch.long),
+            "seq_b": torch.tensor([48, 24], dtype=torch.long),
+        },
+        seq_time_buckets={
+            "seq_a": torch.zeros(2, 64, dtype=torch.long),
+            "seq_b": torch.zeros(2, 48, dtype=torch.long),
+        },
+    )
+    observed_lengths: list[int] = []
+
+    for tokenizer in model.sequence_memory.sequence_tokenizers.values():
+        original_forward = tokenizer.forward
+
+        def recording_forward(sequence, time_buckets=None, *, _original_forward=original_forward):
+            observed_lengths.append(int(sequence.shape[2]))
+            return _original_forward(sequence, time_buckets)
+
+        monkeypatch.setattr(tokenizer, "forward", recording_forward)
+
+    user_sparse, _user_mask, item_sparse, _item_mask = model._sparse_tokens(model_input)
+    query = model.sequence_query_projection(torch.cat([user_sparse.mean(dim=1), item_sparse.mean(dim=1)], dim=-1))
+
+    model.sequence_memory(model_input, query)
+
+    assert observed_lengths == [6, 6]
+
+
 def test_symbiosis_sequence_memory_uses_learned_compression_and_sparse_indexer() -> None:
     experiment_case = get_experiment_case("experiments/symbiosis")
     model_module = load_model_module(experiment_case)
@@ -260,6 +320,7 @@ def test_symbiosis_sequence_memory_uses_learned_compression_and_sparse_indexer()
         indexer = model.sequence_memory.block_indexers[domain]
         assert compressor.position_bias.shape[0] == model.symbiosis_memory_block_size
         assert indexer.num_heads == resolved_heads
+        assert domain in model.sequence_memory.latent_poolers
 
 
 def test_symbiosis_attention_aligns_qk_dtype_for_amp(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,7 +361,7 @@ def test_discovered_experiment_models_backward_with_gradient_checkpointing(exper
 def test_symbiosis_keeps_sequence_width_stable_for_compile() -> None:
     experiment_case = get_experiment_case("experiments/symbiosis")
     model_module = load_model_module(experiment_case)
-    model = _make_model(experiment_case, model_module)
+    model = _make_model(experiment_case, model_module, overrides={"symbiosis_sequence_latent_tokens": 0})
     model_input = model_module.ModelInput(
         user_int_feats=torch.tensor([[1, 2, 3], [4, 0, 1]], dtype=torch.long),
         item_int_feats=torch.tensor([[1], [2]], dtype=torch.long),
@@ -409,7 +470,7 @@ def test_symbiosis_unified_stage_uses_compact_context_tokens(monkeypatch: pytest
 
     assert logits.shape == (2, 1)
     assert observed_unified_token_counts == [context_token_count]
-    assert context_token_count < context_token_count + sequence_token_count
+    assert context_token_count < sequence_token_count + model.num_ns
 
 
 def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
@@ -426,6 +487,7 @@ def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
             "symbiosis_use_candidate_token": False,
             "symbiosis_use_item_prior": False,
             "symbiosis_use_domain_type": False,
+            "symbiosis_compile_fusion_core": False,
         },
     )
     model_input = _sample_model_input(model_module)
@@ -437,6 +499,7 @@ def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
     assert model.symbiosis_use_candidate_token is False
     assert model.symbiosis_use_item_prior is False
     assert model.symbiosis_use_domain_type is False
+    assert model.symbiosis_compile_fusion_core is False
 
     logits = model(model_input)
     predicted_logits, embeddings = model.predict(model_input)

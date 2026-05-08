@@ -30,6 +30,7 @@ from taac2026.infrastructure.runtime.execution import (
     compute_pcvr_loss,
     create_grad_scaler,
     maybe_compile_callable,
+    maybe_prepare_internal_compile,
 )
 
 
@@ -148,14 +149,19 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         self.save_dir = Path(save_dir).expanduser().resolve()
         self.early_stopping = early_stopping
         self.runtime_execution = runtime_execution or RuntimeExecutionConfig()
-        self.forward_model = maybe_compile_callable(
+        uses_internal_compile = maybe_prepare_internal_compile(
             self.model,
             enabled=self.runtime_execution.compile,
+            label="PCVR training model",
+        )
+        self.forward_model = maybe_compile_callable(
+            self.model,
+            enabled=self.runtime_execution.compile and not uses_internal_compile,
             label="PCVR training forward",
         )
         self.predict_fn = maybe_compile_callable(
             self.model.predict,
-            enabled=self.runtime_execution.compile,
+            enabled=self.runtime_execution.compile and not uses_internal_compile,
             label="PCVR trainer predict",
         )
         self.grad_scaler = create_grad_scaler(self.runtime_execution, self.device)

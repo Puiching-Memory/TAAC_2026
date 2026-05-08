@@ -38,6 +38,12 @@ def _causal_valid_mask(lengths: torch.Tensor, num_heads: int) -> torch.Tensor:
     return mask.unsqueeze(1).expand(padding_mask.shape[0], num_heads, token_count, token_count)
 
 
+def _assert_error_mentions(exc_info: pytest.ExceptionInfo[BaseException], *parts: str) -> None:
+    message = str(exc_info.value)
+    for part in parts:
+        assert part in message
+
+
 def test_tilelang_runtime_does_not_export_domain_kernel_builders() -> None:
     assert "build_flash_attention_forward_kernel" not in tilelang_runtime.__all__
     assert "build_embedding_bag_mean_forward_kernel" not in tilelang_runtime.__all__
@@ -179,20 +185,52 @@ def test_resolved_embedding_bag_mean_backend_rejects_unknown_backend() -> None:
         resolved_embedding_bag_mean_backend(weight, values, "invalid")  # type: ignore[arg-type]
 
 
-def test_resolved_embedding_bag_mean_backend_rejects_tilelang_on_cpu() -> None:
-	weight = torch.randn(8, 5, dtype=torch.float32)
-	values = torch.ones(3, 4, dtype=torch.long)
+def test_resolved_embedding_bag_mean_backend_rejects_tilelang_when_unavailable(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
 
-	with pytest.raises(RuntimeError, match="requires CUDA tensors"):
-		resolved_embedding_bag_mean_backend(weight, values, "tilelang")
+    monkeypatch.setattr(embedding_bag_ops, "tilelang_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_embedding_bag_mean_backend(weight, values, "tilelang")
+
+    _assert_error_mentions(exc_info, "tilelang", "not installed")
 
 
-def test_resolved_embedding_bag_mean_backend_rejects_cuembed_on_cpu() -> None:
-	weight = torch.randn(8, 5, dtype=torch.float32)
-	values = torch.ones(3, 4, dtype=torch.long)
+def test_resolved_embedding_bag_mean_backend_rejects_tilelang_on_cpu(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
 
-	with pytest.raises(RuntimeError, match=r"CUDA is not available|requires CUDA tensors"):
-		resolved_embedding_bag_mean_backend(weight, values, "cuembed")
+    monkeypatch.setattr(embedding_bag_ops, "tilelang_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_embedding_bag_mean_backend(weight, values, "tilelang")
+
+    _assert_error_mentions(exc_info, "requires CUDA tensors")
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_cuembed_when_unavailable(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setattr(embedding_bag_ops, "cuembed_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_embedding_bag_mean_backend(weight, values, "cuembed")
+
+    _assert_error_mentions(exc_info, "cuembed", "CUDA", "not available")
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_cuembed_on_cpu(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setattr(embedding_bag_ops, "cuembed_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_embedding_bag_mean_backend(weight, values, "cuembed")
+
+    _assert_error_mentions(exc_info, "requires CUDA tensors")
 
 
 def test_resolved_embedding_bag_mean_backend_rejects_cuembed_training_path(monkeypatch) -> None:
@@ -236,13 +274,30 @@ def test_resolved_flash_attention_backend_falls_back_to_torch_on_cpu() -> None:
     assert resolved_flash_attention_backend(q, k, v, "torch") == "torch"
 
 
-def test_resolved_flash_attention_backend_rejects_tilelang_on_cpu() -> None:
+def test_resolved_flash_attention_backend_rejects_tilelang_when_unavailable(monkeypatch) -> None:
     q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
     k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
     v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
 
-    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+    monkeypatch.setattr(flash_attention_ops, "tilelang_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
         resolved_flash_attention_backend(q, k, v, "tilelang")
+
+    _assert_error_mentions(exc_info, "tilelang", "not installed")
+
+
+def test_resolved_flash_attention_backend_rejects_tilelang_on_cpu(monkeypatch) -> None:
+    q = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    k = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+    v = torch.randn(2, 3, 5, 8, dtype=torch.float32)
+
+    monkeypatch.setattr(flash_attention_ops, "tilelang_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_flash_attention_backend(q, k, v, "tilelang")
+
+    _assert_error_mentions(exc_info, "requires CUDA tensors")
 
 
 def test_resolved_flash_attention_backend_rejects_unstructured_attention_mask() -> None:
@@ -433,11 +488,26 @@ def test_resolved_rms_norm_backend_falls_back_to_torch_on_cpu() -> None:
     assert resolved_rms_norm_backend(x, "torch") == "torch"
 
 
-def test_resolved_rms_norm_backend_rejects_tilelang_on_cpu() -> None:
+def test_resolved_rms_norm_backend_rejects_tilelang_when_unavailable(monkeypatch) -> None:
     x = torch.randn(16, 64, dtype=torch.float32)
 
-    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+    monkeypatch.setattr(rms_norm_ops, "tilelang_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
         resolved_rms_norm_backend(x, "tilelang")
+
+    _assert_error_mentions(exc_info, "tilelang", "not installed")
+
+
+def test_resolved_rms_norm_backend_rejects_tilelang_on_cpu(monkeypatch) -> None:
+    x = torch.randn(16, 64, dtype=torch.float32)
+
+    monkeypatch.setattr(rms_norm_ops, "tilelang_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_rms_norm_backend(x, "tilelang")
+
+    _assert_error_mentions(exc_info, "requires CUDA tensors")
 
 
 def test_ensure_tilelang_cuda_fp8_compatibility_patches_guard_when_cuda_lacks_e8m0(tmp_path) -> None:

@@ -16,7 +16,11 @@ from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.checkpoints import load_checkpoint_state_dict
 from taac2026.domain.model_contract import batch_to_model_input, build_pcvr_model, parse_seq_max_lens
 from taac2026.infrastructure.modeling.tensors import sigmoid_probabilities_numpy
-from taac2026.infrastructure.runtime.execution import RuntimeExecutionConfig, maybe_compile_callable
+from taac2026.infrastructure.runtime.execution import (
+    RuntimeExecutionConfig,
+    maybe_compile_callable,
+    maybe_prepare_internal_compile,
+)
 
 
 _PREDICTION_PROGRESS_LOG_EVERY_ROWS = 50_000
@@ -135,9 +139,14 @@ def default_prepare_prediction_runner(
     )
     model.load_state_dict(state_dict)
     model.eval()
+    uses_internal_compile = maybe_prepare_internal_compile(
+        model,
+        enabled=context.runtime_execution.compile,
+        label=f"PCVR {context.mode} model",
+    )
     predict_fn = maybe_compile_callable(
         model.predict,
-        enabled=context.runtime_execution.compile,
+        enabled=context.runtime_execution.compile and not uses_internal_compile,
         label=f"PCVR {context.mode} predict",
     )
     return PCVRPredictionRunner(model=model, predict_fn=predict_fn)

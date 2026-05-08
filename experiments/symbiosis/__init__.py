@@ -51,7 +51,7 @@ from taac2026.api import RuntimeExecutionConfig
 
 @dataclass(frozen=True, slots=True)
 class SymbiosisModelDefaults:
-    use_field_tokens: bool = True
+    use_field_tokens: bool = False
     use_dense_packets: bool = True
     use_sequence_memory: bool = True
     use_compressed_memory: bool = True
@@ -61,6 +61,8 @@ class SymbiosisModelDefaults:
     memory_block_size: int = 32
     memory_top_k: int = 8
     recent_tokens: int = 32
+    sequence_latent_tokens: int = 3
+    compile_fusion_core: bool = True
 
     def to_flat_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,8 @@ class SymbiosisModelDefaults:
             "symbiosis_memory_block_size": self.memory_block_size,
             "symbiosis_memory_top_k": self.memory_top_k,
             "symbiosis_recent_tokens": self.recent_tokens,
+            "symbiosis_sequence_latent_tokens": self.sequence_latent_tokens,
+            "symbiosis_compile_fusion_core": self.compile_fusion_core,
         }
 
 
@@ -152,11 +156,13 @@ def build_symbiosis_train_model(
 
     num_sequences = len(data_bundle.dataset.seq_domains)
     num_ns = model.num_ns
-    token_count = context.args.num_queries * num_sequences + num_ns
+    sequence_tokens = int(getattr(model, "symbiosis_sequence_latent_tokens", 0)) * num_sequences
+    token_count = num_ns + sequence_tokens
     logger.info(
-        "PCVR model created: class={}, num_ns={}, T={}, d_model={}, rank_mixer_mode={}",
+        "PCVR model created: class={}, num_ns={}, sequence_tokens={}, T={}, d_model={}, rank_mixer_mode={}",
         context.model_class_name,
         num_ns,
+        sequence_tokens,
         token_count,
         context.args.d_model,
         context.args.rank_mixer_mode,
