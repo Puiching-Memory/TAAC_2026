@@ -85,6 +85,93 @@ bash run.sh
 
 完整报告打印到 stdout。
 
+## 2026-05-08 线上全量数据结论
+
+这次线上平台运行成功，用户脚本退出码为 `0`。平台初始化阶段出现的 `cp: cannot stat` 和 `touch /data/initCmdCompletedFile` 属于平台启动噪声，主 EDA 任务已完整跑完。
+
+扫描对象是线上训练集 `/data_ams/academic_training_data`，共 `1,010,000` 行，未采样，`batch_rows=128`。字段布局为 `scalar=5`、`user_int=46`、`user_dense=10`、`item_int=14`、`sequence=45`，序列域分布为 `seq_a=9`、`seq_b=14`、`seq_c=12`、`seq_d=10`。
+
+### 标签分布
+
+正样本 `96,876`，负样本 `913,124`，正样本率 `0.095917`，约为 `1:9.43`。后续模型的输出层 bias 可以按该先验初始化，BCE 类损失也可以参考 `pos_weight ~= 9.43`，但如果评估重视概率校准，需要在验证集上单独检查 calibration。
+
+### 缺失值
+
+高缺失特征集中在部分 user/item 离散列：
+
+- `user_int_feats_101` 缺失率 `0.920411`。
+- `user_int_feats_102` 缺失率 `0.895672`。
+- `user_int_feats_103` 缺失率 `0.882711`。
+- `item_int_feats_83/84/85` 缺失率均为 `0.879531`。
+- `user_int_feats_99/100/109` 缺失率也超过 `0.81`。
+
+缺失本身带有标签信号，不建议直接丢弃高缺失列。`item_int_feats_83/84/85` 的正样本缺失率约 `0.842`，负样本缺失率约 `0.884`，差异约 `-4.15pp`；`user_int_feats_104` 差异约 `-3.79pp`；`item_int_feats_11` 则是正样本缺失率更高，差异约 `+2.92pp`。离散特征应保留 missing/unknown token，稠密特征建议同时提供 presence mask。
+
+### 基数与 embedding
+
+最高基数来自序列 side-info token：
+
+- `domain_c_seq_47` 约 `71,619,665`。
+- `domain_b_seq_69` 约 `55,566,346`。
+- `domain_c_seq_29` 约 `5,392,434`。
+- `domain_c_seq_34`、`domain_c_seq_36` 接近 `0.9M`。
+
+静态 item 特征中，`item_int_feats_16` 基数约 `21,958`，`item_int_feats_11` 基数约 `20,044`，可以直接建常规 embedding。千万级序列字段不适合全量 vocabulary 化，优先使用 hash embedding、分域分字段 embedding、截断池化或离线聚合。
+
+### 特征标签信号
+
+Item 侧离散特征信号明显强于 user 侧：
+
+- `item_int_feats_16=20543`：support `444`，正样本率 `0.979730`，lift `10.214367`。
+- `item_int_feats_16=11833`：support `3360`，正样本率 `0.855357`，lift `8.917696`。
+- `item_int_feats_10=121`：support `4297`，正样本率 `0.675820`，lift `7.045899`。
+- `item_int_feats_5=267` 和 `item_int_feats_6=237`：support 均为 `4265`，正样本率约 `0.674795`。
+
+User 侧也有信号，但更稀疏、更弱。可优先关注 `user_int_feats_48`、`user_int_feats_57`、`user_int_feats_63`、`user_int_feats_86`。建模容量应优先给 item 侧强特征，再补 user 侧交互。
+
+### 序列分布
+
+线上数据每行序列很重，空序列比例接近 `0`：
+
+| 序列域  | mean          | median   | p95      | max      | empty_rate |
+| ------- | ------------- | -------- | -------- | -------- | ---------- |
+| `seq_a` | `751.332150`  | `558.0`  | `1969.0` | `2000.0` | `0.000740` |
+| `seq_b` | `722.638174`  | `488.0`  | `1969.0` | `2000.0` | `0.001132` |
+| `seq_c` | `512.818620`  | `379.0`  | `1438.0` | `4000.0` | `0.000493` |
+| `seq_d` | `2455.213142` | `2722.5` | `3910.0` | `4000.0` | `0.000975` |
+
+重复率也很高：`seq_a=0.252239`、`seq_b=0.945815`、`seq_c=0.975259`、`seq_d=0.994539`。直接对完整序列做 Python 级处理或全长 attention 都不现实。建议对 `seq_b/seq_c/seq_d` 做去重、计数截断、last-K、hash-bag pooling 或预聚合；`seq_a` 重复率较低，可以保留更多时序和最近行为信息。
+
+### 稠密特征
+
+`user_dense_feats_62-66` 数值尺度很大，均值在 `1e5` 量级，标准差可到 `1e6`，不应裸喂 MLP，建议 clip、log transform 或标准化。`user_dense_feats_89-91` 方差稳定在 `0.1` 左右，像是已标准化特征。`user_dense_feats_87` 零值比例 `0.620482`，zero 本身可能是有意义状态。
+
+### 建模优先级
+
+建议的起步顺序：
+
+1. 优先建好 `item_int_feats_16/11/10/5/6` 等强 item embedding。
+2. 为高缺失 user/item 特征保留 missing token，并为 dense 缺失添加 mask。
+3. 对四个序列域先做 hash-bag/去重池化，避免全长 attention。
+4. 加入序列长度、重复率或截断后 token 数等轻量统计特征。
+5. 对 `user_dense_feats_62-66` 做尺度处理后再进入 dense tower。
+
+### 运行性能
+
+这次全量 EDA 总耗时约 `12h21m`。第一遍扫描约 `11h50m`，第二遍约 `31m`。慢点主要在第一遍对长序列做基数、长度、重复率和标签缺失统计。日常迭代建议先限制扫描量：
+
+```bash
+export ONLINE_EDA_MAX_ROWS=100000
+```
+
+或使用比例采样：
+
+```bash
+export ONLINE_EDA_SAMPLE_PERCENT=5
+```
+
+完整全量扫描适合最终确认数据分布，不适合作为频繁迭代步骤。
+
 ## Runner 配置
 
 `OnlineDatasetEDAConfig` 字段：
