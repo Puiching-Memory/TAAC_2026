@@ -151,3 +151,20 @@ def test_package_main_prints_json_when_requested(
     assert payload["run_script_path"] == str(result.run_script_path)
     assert payload["code_package_path"] == str(result.code_package_path)
     assert payload["manifest"]["bundled_experiment_path"] == "experiments/baseline"
+
+
+def test_build_bundle_reports_site_experiment_path_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    site_collision = root / "site" / "experiments" / "baseline"
+    site_collision.mkdir(parents=True)
+    (root / "run.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    monkeypatch.chdir(root / "site")
+
+    with pytest.raises(ValueError, match="got 'site/experiments/baseline'") as exc_info:
+        bundle_packaging.build_training_bundle("experiments/baseline", output_dir=tmp_path / "bundle", root=root)
+
+    assert "resolved experiment path" in str(exc_info.value)
+    assert "Pass an experiment package such as 'experiments/baseline'" in str(exc_info.value)

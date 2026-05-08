@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+import json
+import math
 import os
 import random
 from pathlib import Path
@@ -20,7 +23,7 @@ from taac2026.infrastructure.checkpoints import save_checkpoint_state_dict
 
 
 AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
-BINARY_LOSS_TYPE_CHOICES: tuple[str, ...] = ("bce", "focal")
+PCVR_LOSS_TERM_KIND_CHOICES: tuple[str, ...] = ("bce", "focal", "pairwise_auc", "model")
 DENSE_OPTIMIZER_TYPE_CHOICES: tuple[str, ...] = (
     "adamw",
     "fused_adamw",
@@ -88,17 +91,26 @@ class RuntimeExecutionConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class BinaryClassificationLossConfig:
-    loss_type: str = "bce"
+class PCVRLossTermConfig:
+    name: str
+    kind: str = "bce"
+    weight: float = 1.0
     focal_alpha: float = 0.1
     focal_gamma: float = 2.0
-    pairwise_auc_weight: float = 0.0
-    pairwise_auc_temperature: float = 1.0
+    temperature: float = 1.0
 
     def __post_init__(self) -> None:
-        normalized_loss_type = str(self.loss_type).strip().lower()
-        if normalized_loss_type not in BINARY_LOSS_TYPE_CHOICES:
-            raise ValueError(f"unsupported loss_type: {self.loss_type}")
+        name = str(self.name).strip()
+        if not name:
+            raise ValueError("loss term name must be non-empty")
+
+        kind = str(self.kind).strip().lower()
+        if kind not in PCVR_LOSS_TERM_KIND_CHOICES:
+            raise ValueError(f"unsupported PCVR loss term kind: {self.kind}")
+
+        weight = float(self.weight)
+        if not math.isfinite(weight) or weight < 0.0:
+            raise ValueError(f"loss term weight must be finite and >= 0, got {self.weight}")
 
         focal_alpha = float(self.focal_alpha)
         if not 0.0 <= focal_alpha <= 1.0:
@@ -108,22 +120,168 @@ class BinaryClassificationLossConfig:
         if focal_gamma < 0.0:
             raise ValueError(f"focal_gamma must be >= 0, got {self.focal_gamma}")
 
-        pairwise_auc_weight = float(self.pairwise_auc_weight)
-        if pairwise_auc_weight < 0.0:
-            raise ValueError(f"pairwise_auc_weight must be >= 0, got {self.pairwise_auc_weight}")
+        temperature = float(self.temperature)
+        if temperature <= 0.0:
+            raise ValueError(f"loss term temperature must be > 0, got {self.temperature}")
 
-        pairwise_auc_temperature = float(self.pairwise_auc_temperature)
-        if pairwise_auc_temperature <= 0.0:
-            raise ValueError(f"pairwise_auc_temperature must be > 0, got {self.pairwise_auc_temperature}")
-
-        object.__setattr__(self, "loss_type", normalized_loss_type)
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "weight", weight)
         object.__setattr__(self, "focal_alpha", focal_alpha)
         object.__setattr__(self, "focal_gamma", focal_gamma)
-        object.__setattr__(self, "pairwise_auc_weight", pairwise_auc_weight)
-        object.__setattr__(self, "pairwise_auc_temperature", pairwise_auc_temperature)
+        object.__setattr__(self, "temperature", temperature)
+
+    @classmethod
+    def from_value(cls, value: PCVRLossTermConfig | Mapping[str, Any]) -> PCVRLossTermConfig:
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError(f"loss term must be a mapping, got {type(value).__name__}")
+        return cls(
+            name=str(value["name"]),
+            kind=str(value.get("kind", "bce")),
+            weight=float(value.get("weight", 1.0)),
+            focal_alpha=float(value.get("focal_alpha", 0.1)),
+            focal_gamma=float(value.get("focal_gamma", 2.0)),
+            temperature=float(value.get("temperature", value.get("pairwise_auc_temperature", 1.0))),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "weight": self.weight,
+            "focal_alpha": self.focal_alpha,
+            "focal_gamma": self.focal_gamma,
+            "temperature": self.temperature,
+        }
 
 
-DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG = BinaryClassificationLossConfig()
+def _default_pcvr_loss_terms() -> tuple[PCVRLossTermConfig, ...]:
+    return (PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),)
+
+
+@dataclass(frozen=True, slots=True)
+class PCVRLossConfig:
+    terms: tuple[PCVRLossTermConfig, ...] = _default_pcvr_loss_terms()
+
+    def __post_init__(self) -> None:
+        terms = tuple(PCVRLossTermConfig.from_value(term) for term in self.terms)
+        if not terms:
+            raise ValueError("PCVR loss config must define at least one loss term")
+        names = [term.name for term in terms]
+        duplicate_names = sorted({name for name in names if names.count(name) > 1})
+        if duplicate_names:
+            joined = ", ".join(duplicate_names)
+            raise ValueError(f"PCVR loss term names must be unique; duplicates: {joined}")
+        object.__setattr__(self, "terms", terms)
+
+    @classmethod
+    def from_value(cls, value: PCVRLossConfig | Mapping[str, Any] | Sequence[Any] | str | None) -> PCVRLossConfig:
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            value = _parse_loss_config_string(value)
+        if isinstance(value, Mapping):
+            value = value.get("terms", value.get("loss_terms"))
+            if value is None:
+                raise KeyError("PCVR loss config mapping must include 'terms' or 'loss_terms'")
+        if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+            return cls(terms=tuple(PCVRLossTermConfig.from_value(term) for term in value))
+        raise TypeError(f"unsupported PCVR loss config value: {type(value).__name__}")
+
+    def to_list(self) -> list[dict[str, Any]]:
+        return [term.to_dict() for term in self.terms]
+
+    def with_weight_overrides(self, raw_overrides: str | Mapping[str, float] | None) -> PCVRLossConfig:
+        if raw_overrides in (None, ""):
+            return self
+        overrides = _parse_loss_weight_overrides(raw_overrides)
+        known_names = {term.name for term in self.terms}
+        unknown_names = sorted(set(overrides) - known_names)
+        if unknown_names:
+            joined = ", ".join(unknown_names)
+            raise KeyError(f"loss weight override references unknown term(s): {joined}")
+        return PCVRLossConfig(
+            terms=tuple(
+                PCVRLossTermConfig(
+                    name=term.name,
+                    kind=term.kind,
+                    weight=overrides.get(term.name, term.weight),
+                    focal_alpha=term.focal_alpha,
+                    focal_gamma=term.focal_gamma,
+                    temperature=term.temperature,
+                )
+                for term in self.terms
+            )
+        )
+
+    def summary(self) -> str:
+        return ", ".join(f"{term.name}:{term.kind}*{term.weight:g}" for term in self.terms)
+
+
+DEFAULT_PCVR_LOSS_CONFIG = PCVRLossConfig()
+
+
+def _parse_loss_config_string(value: str) -> Any:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("loss config string must be non-empty")
+    if stripped[0] in "[{":
+        return json.loads(stripped)
+    terms: list[dict[str, Any]] = []
+    for chunk in stripped.split(","):
+        token = chunk.strip()
+        if not token:
+            continue
+        parts = [part.strip() for part in token.split(":")]
+        if len(parts) == 1:
+            name = parts[0]
+            kind = parts[0]
+            weight = 1.0
+        elif len(parts) == 2:
+            name, weight_raw = parts
+            kind = name
+            weight = float(weight_raw)
+        elif len(parts) == 3:
+            name, kind, weight_raw = parts
+            weight = float(weight_raw)
+        else:
+            raise ValueError(f"invalid loss term spec: {token!r}")
+        terms.append({"name": name, "kind": kind, "weight": weight})
+    return terms
+
+
+def _parse_loss_weight_overrides(raw_overrides: str | Mapping[str, float]) -> dict[str, float]:
+    if isinstance(raw_overrides, Mapping):
+        pairs = raw_overrides.items()
+    else:
+        pairs = []
+        for chunk in str(raw_overrides).split(","):
+            token = chunk.strip()
+            if not token:
+                continue
+            if "=" not in token:
+                raise ValueError(f"loss weight override must use name=weight syntax: {token!r}")
+            name, raw_weight = token.split("=", 1)
+            pairs.append((name.strip(), raw_weight.strip()))
+
+    overrides: dict[str, float] = {}
+    for name, raw_weight in pairs:
+        normalized_name = str(name).strip()
+        if not normalized_name:
+            raise ValueError("loss weight override name must be non-empty")
+        weight = float(raw_weight)
+        if not math.isfinite(weight) or weight < 0.0:
+            raise ValueError(f"loss weight override must be finite and >= 0, got {raw_weight}")
+        overrides[normalized_name] = weight
+    return overrides
+
+
+def parse_pcvr_loss_config_arg(value: str) -> list[dict[str, Any]]:
+    return PCVRLossConfig.from_value(value).to_list()
 
 
 def create_grad_scaler(
@@ -287,32 +445,76 @@ def sigmoid_focal_loss(
     return loss
 
 
-def compute_binary_classification_loss(
+def _zero_loss_like(logits: torch.Tensor) -> torch.Tensor:
+    return logits.reshape(-1).sum() * 0.0
+
+
+def _resolve_model_loss_terms(model: nn.Module | None) -> Mapping[str, torch.Tensor]:
+    if model is None:
+        return {}
+    loss_terms = getattr(model, "pcvr_loss_terms", None)
+    if not callable(loss_terms):
+        return {}
+    resolved = loss_terms()
+    if resolved is None:
+        return {}
+    if not isinstance(resolved, Mapping):
+        raise TypeError(f"pcvr_loss_terms() must return a mapping, got {type(resolved).__name__}")
+    return resolved
+
+
+def compute_pcvr_loss(
     logits: torch.Tensor,
     targets: torch.Tensor,
-    loss_config: BinaryClassificationLossConfig | None = None,
+    loss_config: PCVRLossConfig | None = None,
+    *,
+    model: nn.Module | None = None,
     reduction: str = "mean",
-) -> torch.Tensor:
-    """Compute the shared binary classification loss from raw logits."""
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute weighted PCVR loss terms from raw logits and optional model losses."""
 
-    resolved_loss_config = loss_config or DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG
-    if resolved_loss_config.loss_type == "focal":
-        loss = sigmoid_focal_loss(
-            logits,
-            targets,
-            alpha=resolved_loss_config.focal_alpha,
-            gamma=resolved_loss_config.focal_gamma,
-            reduction=reduction,
-        )
-    else:
-        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)
-    if reduction == "none" or resolved_loss_config.pairwise_auc_weight <= 0.0:
-        return loss
-    return loss + resolved_loss_config.pairwise_auc_weight * binary_pairwise_auc_loss(
-        logits,
-        targets,
-        temperature=resolved_loss_config.pairwise_auc_temperature,
-    )
+    resolved_loss_config = loss_config or DEFAULT_PCVR_LOSS_CONFIG
+    model_terms: Mapping[str, torch.Tensor] | None = None
+    total_loss = _zero_loss_like(logits)
+    components: dict[str, torch.Tensor] = {}
+
+    for term in resolved_loss_config.terms:
+        if term.weight == 0.0:
+            components[term.name] = _zero_loss_like(logits).detach()
+            continue
+        if term.kind == "bce":
+            raw_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)
+        elif term.kind == "focal":
+            raw_loss = sigmoid_focal_loss(
+                logits,
+                targets,
+                alpha=term.focal_alpha,
+                gamma=term.focal_gamma,
+                reduction=reduction,
+            )
+        elif term.kind == "pairwise_auc":
+            if reduction == "none":
+                raise ValueError("pairwise_auc loss does not support reduction='none'")
+            raw_loss = binary_pairwise_auc_loss(logits, targets, temperature=term.temperature)
+        elif term.kind == "model":
+            if model_terms is None:
+                model_terms = _resolve_model_loss_terms(model)
+            try:
+                raw_loss = model_terms[term.name]
+            except KeyError as error:
+                available = ", ".join(sorted(model_terms)) or "<none>"
+                message = f"model did not provide configured loss term {term.name!r}; available: {available}"
+                raise KeyError(message) from error
+            if not isinstance(raw_loss, torch.Tensor):
+                raw_loss = logits.new_tensor(float(raw_loss))
+        else:  # pragma: no cover - PCVRLossTermConfig validates this.
+            raise ValueError(f"unsupported PCVR loss term kind: {term.kind}")
+
+        weighted_loss = raw_loss * term.weight
+        total_loss = total_loss + weighted_loss
+        components[term.name] = raw_loss.detach()
+
+    return total_loss, components
 
 
 def binary_pairwise_auc_loss(

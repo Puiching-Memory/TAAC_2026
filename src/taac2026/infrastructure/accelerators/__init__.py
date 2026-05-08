@@ -1,4 +1,4 @@
-"""TileLang-backed operator boundary for PCVR kernels."""
+"""Accelerator-backed operator boundaries for PCVR kernels."""
 
 from __future__ import annotations
 
@@ -31,6 +31,11 @@ from taac2026.infrastructure.accelerators.embedding.embedding_bag import (
     embedding_bag_mean,
     register_embedding_bag_mean_kernel,
     resolved_embedding_bag_mean_backend,
+)
+from taac2026.infrastructure.accelerators.embedding.cuembed_runtime import (
+    CuEmbedEmbeddingBagMeanKernel,
+    compile_cuembed_embedding_bag_mean_kernel,
+    cuembed_available,
 )
 from taac2026.infrastructure.accelerators.normalization.rms_norm import (
     RMSNormBackend,
@@ -66,6 +71,7 @@ def clear_tilelang_kernel_cache() -> None:
 __all__ = [
     "_TILELANG_E8M0_COMPAT_GUARD",
     "_TILELANG_E8M0_ORIGINAL_GUARD",
+    "CuEmbedEmbeddingBagMeanKernel",
     "EmbeddingBagMeanBackend",
     "EmbeddingBagMeanKernel",
     "EmbeddingBagMeanKernelKey",
@@ -88,10 +94,12 @@ __all__ = [
     "clear_flash_attention_kernel_cache",
     "clear_rms_norm_kernel_cache",
     "clear_tilelang_kernel_cache",
+    "compile_cuembed_embedding_bag_mean_kernel",
     "compile_embedding_bag_mean_kernel",
     "compile_flash_attention_kernel",
     "compile_rms_norm_kernel",
     "cuda_multiprocessor_count",
+    "cuembed_available",
     "embedding_bag_mean",
     "flash_attention",
     "multi_latent_attention",

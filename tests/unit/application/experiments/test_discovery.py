@@ -18,6 +18,8 @@ def _write_minimal_pcvr_experiment(package_dir: Path, *, experiment_name: str, m
                 PCVRDataCacheConfig,
                 PCVRDataConfig,
                 PCVRDataPipelineConfig,
+                PCVRLossConfig,
+                PCVRLossTermConfig,
                 PCVRModelConfig,
                 PCVRNSConfig,
                 PCVROptimizerConfig,
@@ -51,7 +53,7 @@ def _write_minimal_pcvr_experiment(package_dir: Path, *, experiment_name: str, m
                 default_run_training,
             )
             from taac2026.application.training.args import parse_pcvr_train_args
-            from taac2026.infrastructure.runtime.execution import BinaryClassificationLossConfig, RuntimeExecutionConfig
+            from taac2026.infrastructure.runtime.execution import RuntimeExecutionConfig
 
             TRAIN_HOOKS = PCVRTrainHooks(
                 build_data=default_build_train_data,
@@ -106,13 +108,7 @@ def _write_minimal_pcvr_experiment(package_dir: Path, *, experiment_name: str, m
                     min_lr_ratio=0.0,
                 ),
                 runtime=RuntimeExecutionConfig(amp=False, amp_dtype="bfloat16", compile=False),
-                loss=BinaryClassificationLossConfig(
-                    loss_type="bce",
-                    focal_alpha=0.1,
-                    focal_gamma=2.0,
-                    pairwise_auc_weight=0.0,
-                    pairwise_auc_temperature=1.0,
-                ),
+                loss=PCVRLossConfig(terms=(PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),)),
                 sparse_optimizer=PCVRSparseOptimizerConfig(
                     sparse_lr=0.05,
                     sparse_weight_decay=0.0,

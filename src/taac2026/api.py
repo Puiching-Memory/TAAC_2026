@@ -37,7 +37,7 @@ from taac2026.infrastructure.modeling import (
     scaled_dot_product_attention,
     sinusoidal_positions,
 )
-from taac2026.infrastructure.runtime.execution import BinaryClassificationLossConfig, RuntimeExecutionConfig
+from taac2026.infrastructure.runtime.execution import PCVRLossConfig, PCVRLossTermConfig, RuntimeExecutionConfig
 
 RMS_NORM_BACKEND = _modeling.RMS_NORM_BACKEND
 RMS_NORM_BLOCK_ROWS = _modeling.RMS_NORM_BLOCK_ROWS
@@ -60,7 +60,6 @@ __all__ = [
     "FLASH_ATTENTION_BACKEND",
     "RMS_NORM_BACKEND",
     "RMS_NORM_BLOCK_ROWS",
-    "BinaryClassificationLossConfig",
     "DenseTokenProjector",
     "EmbeddingParameterMixin",
     "FeatureEmbeddingBank",
@@ -72,6 +71,8 @@ __all__ = [
     "PCVRDataPipelineConfig",
     "PCVRDomainDropoutConfig",
     "PCVRFeatureMaskConfig",
+    "PCVRLossConfig",
+    "PCVRLossTermConfig",
     "PCVRModelConfig",
     "PCVRNSConfig",
     "PCVROptimizerConfig",

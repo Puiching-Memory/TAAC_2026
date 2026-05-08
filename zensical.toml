@@ -19,6 +19,7 @@ nav = [
     { "首页" = "index.md" },
     { "快速开始" = "getting-started.md" },
     { "架构与概念" = "architecture.md" },
+    { "第三方声明" = "third-party-notices.md" },
     { "实验包" = [
         { "总览" = "experiments/index.md" },
         { "Baseline" = "experiments/baseline.md" },

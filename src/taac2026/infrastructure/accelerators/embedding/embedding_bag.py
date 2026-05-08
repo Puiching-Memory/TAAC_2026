@@ -13,6 +13,11 @@ from taac2026.infrastructure.accelerators.embedding.kernels.tilelang import (
 	build_embedding_bag_mean_backward_kernel,
 	build_embedding_bag_mean_forward_kernel,
 )
+from taac2026.infrastructure.accelerators.embedding.cuembed_runtime import (
+	clear_cuembed_embedding_bag_mean_kernel_cache,
+	compile_cuembed_embedding_bag_mean_kernel,
+	cuembed_available,
+)
 from taac2026.infrastructure.accelerators.tilelang_runtime import (
 	T,
 	_ensure_tilelang_cuda_fp8_compatibility,
@@ -23,7 +28,8 @@ from taac2026.infrastructure.accelerators.tensor_validation import require_cuda_
 
 
 EmbeddingBagMeanKernel = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-EmbeddingBagMeanBackend = Literal["torch", "tilelang"]
+EmbeddingBagMeanBackend = Literal["torch", "tilelang", "cuembed"]
+_TILELANG_FORWARD_BLOCK_ROWS = 8
 
 _embedding_bag_mean_kernel: EmbeddingBagMeanKernel | None = None
 
@@ -50,6 +56,7 @@ _embedding_bag_mean_backward_kernel_cache: dict[
 def clear_embedding_bag_mean_kernel_cache() -> None:
 	_embedding_bag_mean_forward_kernel_cache.clear()
 	_embedding_bag_mean_backward_kernel_cache.clear()
+	clear_cuembed_embedding_bag_mean_kernel_cache()
 
 
 def register_embedding_bag_mean_kernel(kernel: EmbeddingBagMeanKernel) -> None:
@@ -58,9 +65,7 @@ def register_embedding_bag_mean_kernel(kernel: EmbeddingBagMeanKernel) -> None:
 
 
 def _torch_embedding_bag_mean(embedding_weight: torch.Tensor, values: torch.Tensor) -> torch.Tensor:
-	embedded = F.embedding(values, embedding_weight, padding_idx=0)
-	valid = values.ne(0).to(embedded.dtype).unsqueeze(-1)
-	return (embedded * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+	return F.embedding_bag(values, embedding_weight, mode="mean", padding_idx=0)
 
 
 def _normalize_embedding_bag_mean_inputs(
@@ -90,7 +95,7 @@ def _embedding_bag_mean_cache_key(
 		num_embeddings=embedding_weight.shape[0],
 		emb_dim=embedding_weight.shape[1],
 		dtype=embedding_weight.dtype,
-		block_rows=max(1, int(block_rows or 1)),
+		block_rows=max(1, int(block_rows or _TILELANG_FORWARD_BLOCK_ROWS)),
 		block_cols=max(1, int(block_cols or min(64, embedding_weight.shape[1]))),
 	)
 
@@ -99,9 +104,20 @@ def _resolve_embedding_bag_mean_backend(
 	embedding_weight: torch.Tensor,
 	values: torch.Tensor,
 	backend: EmbeddingBagMeanBackend,
-) -> Literal["torch", "tilelang"]:
+) -> Literal["torch", "tilelang", "cuembed"]:
 	if backend == "torch":
 		return "torch"
+	if backend == "cuembed":
+		if not cuembed_available():
+			raise RuntimeError("cuembed backend requested but CUDA runtime or CUDA toolkit is not available")
+		require_cuda_tensors("cuembed embedding_bag_mean", embedding_weight)
+		if embedding_weight.dtype not in {torch.float16, torch.float32}:
+			raise RuntimeError(f"cuembed embedding_bag_mean does not support dtype {embedding_weight.dtype}")
+		if embedding_weight.requires_grad:
+			raise RuntimeError("cuembed embedding_bag_mean is currently forward-only; use torch or tilelang for training")
+		if values.dtype not in {torch.int32, torch.int64}:
+			raise RuntimeError(f"cuembed embedding_bag_mean requires int32 or int64 values, got {values.dtype}")
+		return "cuembed"
 	if backend != "tilelang":
 		raise ValueError(f"unsupported embedding_bag_mean backend: {backend}")
 	if not tilelang_available():
@@ -119,7 +135,7 @@ def resolved_embedding_bag_mean_backend(
 	*,
 	block_rows: int | None = None,
 	block_cols: int | None = None,
-) -> Literal["torch", "tilelang"]:
+) -> Literal["torch", "tilelang", "cuembed"]:
 	del block_rows, block_cols
 	normalized_weight, normalized_values, _original_shape = _normalize_embedding_bag_mean_inputs(embedding_weight, values)
 	return _resolve_embedding_bag_mean_backend(normalized_weight, normalized_values, backend)
@@ -251,7 +267,8 @@ def _run_tilelang_embedding_bag_mean(
 	block_rows: int | None,
 	block_cols: int | None,
 ) -> torch.Tensor:
-	resolved_block_rows = max(1, int(block_rows or 1))
+	default_block_rows = 1 if embedding_weight.requires_grad else _TILELANG_FORWARD_BLOCK_ROWS
+	resolved_block_rows = max(1, int(block_rows or default_block_rows))
 	resolved_block_cols = max(1, int(block_cols or min(64, embedding_weight.shape[1])))
 	if embedding_weight.requires_grad:
 		return _TilelangEmbeddingBagMeanFunction.apply(
@@ -269,6 +286,14 @@ def _run_tilelang_embedding_bag_mean(
 	return kernel(embedding_weight, values)
 
 
+def _run_cuembed_embedding_bag_mean(
+	embedding_weight: torch.Tensor,
+	values: torch.Tensor,
+) -> torch.Tensor:
+	kernel = compile_cuembed_embedding_bag_mean_kernel(embedding_weight, values)
+	return kernel(embedding_weight, values)
+
+
 def embedding_bag_mean(
 	embedding_weight: torch.Tensor,
 	values: torch.Tensor,
@@ -281,6 +306,8 @@ def embedding_bag_mean(
 	resolved_backend = _resolve_embedding_bag_mean_backend(normalized_weight, normalized_values, backend)
 	if resolved_backend == "torch":
 		return _run_torch_embedding_bag_mean(normalized_weight, normalized_values)
+	if resolved_backend == "cuembed":
+		return _run_cuembed_embedding_bag_mean(normalized_weight, normalized_values)
 	tilelang_values = _tilelang_embedding_bag_values(normalized_values)
 	return _run_tilelang_embedding_bag_mean(
 		normalized_weight,

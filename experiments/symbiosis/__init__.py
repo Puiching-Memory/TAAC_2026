@@ -14,9 +14,14 @@ from taac2026.api import (
     PCVRDataCacheConfig,
     PCVRDataConfig,
     PCVRDataPipelineConfig,
+    PCVRDomainDropoutConfig,
+    PCVRFeatureMaskConfig,
+    PCVRLossConfig,
+    PCVRLossTermConfig,
     PCVRModelConfig,
     PCVRNSConfig,
     PCVROptimizerConfig,
+    PCVRSequenceCropConfig,
     PCVRSparseOptimizerConfig,
     PCVRTrainConfig,
 )
@@ -41,39 +46,31 @@ from taac2026.application.training.args import (
     build_pcvr_train_arg_parser,
     resolve_flat_config_values,
 )
-from taac2026.api import BinaryClassificationLossConfig, RuntimeExecutionConfig
+from taac2026.api import RuntimeExecutionConfig
 
 
 @dataclass(frozen=True, slots=True)
 class SymbiosisModelDefaults:
-    use_user_item_graph: bool = True
-    use_fourier_time: bool = True
-    use_context_exchange: bool = True
-    use_multi_scale: bool = True
-    use_domain_gate: bool = True
-    use_candidate_decoder: bool = True
-    use_action_conditioning: bool = True
+    use_field_tokens: bool = True
+    use_dense_packets: bool = True
+    use_sequence_memory: bool = True
     use_compressed_memory: bool = True
-    use_attention_sink: bool = True
-    use_lane_mixing: bool = True
-    use_semantic_id: bool = True
-    memory_block_size: int = 16
+    use_candidate_token: bool = True
+    use_item_prior: bool = True
+    use_domain_type: bool = True
+    memory_block_size: int = 32
     memory_top_k: int = 8
-    recent_tokens: int = 64
+    recent_tokens: int = 32
 
     def to_flat_dict(self) -> dict[str, Any]:
         return {
-            "symbiosis_use_user_item_graph": self.use_user_item_graph,
-            "symbiosis_use_fourier_time": self.use_fourier_time,
-            "symbiosis_use_context_exchange": self.use_context_exchange,
-            "symbiosis_use_multi_scale": self.use_multi_scale,
-            "symbiosis_use_domain_gate": self.use_domain_gate,
-            "symbiosis_use_candidate_decoder": self.use_candidate_decoder,
-            "symbiosis_use_action_conditioning": self.use_action_conditioning,
+            "symbiosis_use_field_tokens": self.use_field_tokens,
+            "symbiosis_use_dense_packets": self.use_dense_packets,
+            "symbiosis_use_sequence_memory": self.use_sequence_memory,
             "symbiosis_use_compressed_memory": self.use_compressed_memory,
-            "symbiosis_use_attention_sink": self.use_attention_sink,
-            "symbiosis_use_lane_mixing": self.use_lane_mixing,
-            "symbiosis_use_semantic_id": self.use_semantic_id,
+            "symbiosis_use_candidate_token": self.use_candidate_token,
+            "symbiosis_use_item_prior": self.use_item_prior,
+            "symbiosis_use_domain_type": self.use_domain_type,
             "symbiosis_memory_block_size": self.memory_block_size,
             "symbiosis_memory_top_k": self.memory_top_k,
             "symbiosis_recent_tokens": self.recent_tokens,
@@ -192,7 +189,7 @@ def load_symbiosis_train_config(experiment: Any, checkpoint_dir: Path) -> dict[s
 
 TRAIN_DEFAULTS = PCVRTrainConfig(
     data=PCVRDataConfig(
-        batch_size=128,
+        batch_size=256,
         num_workers=8,
         buffer_batches=20,
         train_ratio=1.0,
@@ -202,8 +199,16 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     ),
     data_pipeline=PCVRDataPipelineConfig(
         cache=PCVRDataCacheConfig(mode="none", max_batches=0),
-        transforms=(),
-        seed=None,
+        transforms=(
+            PCVRSequenceCropConfig(
+                views_per_row=2,
+                seq_window_mode="random_tail",
+                seq_window_min_len=8,
+            ),
+            PCVRFeatureMaskConfig(probability=0.03),
+            PCVRDomainDropoutConfig(probability=0.03),
+        ),
+        seed=42,
         strict_time_filter=True,
     ),
     optimizer=PCVROptimizerConfig(
@@ -212,19 +217,13 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         patience=5,
         seed=42,
         device=None,
-        dense_optimizer_type="orthogonal_adamw",
-        scheduler_type="cosine",
-        warmup_steps=2000,
-        min_lr_ratio=0.1,
+        dense_optimizer_type="muon",
+        scheduler_type="none",
+        warmup_steps=0,
+        min_lr_ratio=0.0,
     ),
     runtime=RuntimeExecutionConfig(amp=True, amp_dtype="bfloat16", compile=True),
-    loss=BinaryClassificationLossConfig(
-        loss_type="bce",
-        focal_alpha=0.1,
-        focal_gamma=2.0,
-        pairwise_auc_weight=0.05,
-        pairwise_auc_temperature=1.0,
-    ),
+    loss=PCVRLossConfig(terms=(PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),)),
     sparse_optimizer=PCVRSparseOptimizerConfig(
         sparse_lr=0.05,
         sparse_weight_decay=0.0,
@@ -235,18 +234,18 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         d_model=64,
         emb_dim=64,
         num_queries=1,
-        num_blocks=3,
+        num_blocks=2,
         num_heads=4,
         seq_encoder_type="transformer",
         hidden_mult=4,
         dropout_rate=0.02,
-        seq_top_k=50,
+        seq_top_k=64,
         seq_causal=False,
         action_num=1,
         use_time_buckets=True,
         rank_mixer_mode="full",
-        use_rope=True,
-        rope_base=1_000_000.0,
+        use_rope=False,
+        rope_base=10000.0,
         emb_skip_threshold=1_000_000,
         seq_id_threshold=10000,
         gradient_checkpointing=False,

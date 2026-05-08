@@ -10,6 +10,8 @@ from taac2026.domain.config import (
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
+    PCVRLossConfig,
+    PCVRLossTermConfig,
     PCVRModelConfig,
     PCVROptimizerConfig,
     PCVRSequenceCropConfig,
@@ -253,6 +255,18 @@ def test_parse_pcvr_train_args_accepts_flash_attention_backend_flag(tmp_path: Pa
     assert args.flash_attention_backend == "tilelang"
 
 
+def test_parse_pcvr_train_args_can_disable_default_rope(tmp_path: Path) -> None:
+    defaults = PCVRTrainConfig(model=PCVRModelConfig(use_rope=True))
+
+    args = parse_pcvr_train_args(
+        ["--no-use-rope"],
+        package_dir=tmp_path,
+        defaults=defaults,
+    )
+
+    assert args.use_rope is False
+
+
 def test_parse_pcvr_train_args_honors_platform_path_env_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -276,17 +290,13 @@ def test_parse_pcvr_train_args_rejects_symbiosis_ablation_flags(tmp_path: Path) 
     with pytest.raises(SystemExit):
         parse_pcvr_train_args(
             [
-                "--no-symbiosis-use-user-item-graph",
-                "--no-symbiosis-use-fourier-time",
-                "--no-symbiosis-use-context-exchange",
-                "--no-symbiosis-use-multi-scale",
-                "--symbiosis-use-domain-gate",
-                "--no-symbiosis-use-candidate-decoder",
-                "--no-symbiosis-use-action-conditioning",
+                "--no-symbiosis-use-field-tokens",
+                "--no-symbiosis-use-dense-packets",
+                "--no-symbiosis-use-sequence-memory",
                 "--no-symbiosis-use-compressed-memory",
-                "--no-symbiosis-use-attention-sink",
-                "--no-symbiosis-use-lane-mixing",
-                "--no-symbiosis-use-semantic-id",
+                "--no-symbiosis-use-candidate-token",
+                "--no-symbiosis-use-item-prior",
+                "--no-symbiosis-use-domain-type",
                 "--symbiosis-memory-block-size",
                 "32",
                 "--symbiosis-memory-top-k",
@@ -304,19 +314,15 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
 
     args = symbiosis_module.parse_symbiosis_train_args(
         [
-            "--no-symbiosis-use-user-item-graph",
-            "--no-symbiosis-use-fourier-time",
-            "--no-symbiosis-use-context-exchange",
-            "--no-symbiosis-use-multi-scale",
-            "--symbiosis-use-domain-gate",
-            "--no-symbiosis-use-candidate-decoder",
-            "--no-symbiosis-use-action-conditioning",
+            "--no-symbiosis-use-field-tokens",
+            "--no-symbiosis-use-dense-packets",
+            "--no-symbiosis-use-sequence-memory",
             "--no-symbiosis-use-compressed-memory",
-            "--no-symbiosis-use-attention-sink",
-            "--no-symbiosis-use-lane-mixing",
-            "--no-symbiosis-use-semantic-id",
+            "--no-symbiosis-use-candidate-token",
+            "--no-symbiosis-use-item-prior",
+            "--no-symbiosis-use-domain-type",
             "--symbiosis-memory-block-size",
-            "32",
+            "64",
             "--symbiosis-memory-top-k",
             "4",
             "--symbiosis-recent-tokens",
@@ -326,30 +332,26 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
         defaults=symbiosis_module.TRAIN_DEFAULTS,
     )
 
-    assert args.symbiosis_use_user_item_graph is False
-    assert args.symbiosis_use_fourier_time is False
-    assert args.symbiosis_use_context_exchange is False
-    assert args.symbiosis_use_multi_scale is False
-    assert args.symbiosis_use_domain_gate is True
-    assert args.symbiosis_use_candidate_decoder is False
-    assert args.symbiosis_use_action_conditioning is False
+    assert args.symbiosis_use_field_tokens is False
+    assert args.symbiosis_use_dense_packets is False
+    assert args.symbiosis_use_sequence_memory is False
     assert args.symbiosis_use_compressed_memory is False
-    assert args.symbiosis_use_attention_sink is False
-    assert args.symbiosis_use_lane_mixing is False
-    assert args.symbiosis_use_semantic_id is False
-    assert args.symbiosis_memory_block_size == 32
+    assert args.symbiosis_use_candidate_token is False
+    assert args.symbiosis_use_item_prior is False
+    assert args.symbiosis_use_domain_type is False
+    assert args.symbiosis_memory_block_size == 64
     assert args.symbiosis_memory_top_k == 4
     assert args.symbiosis_recent_tokens == 16
 
 
 @pytest.mark.parametrize("dense_optimizer_type", ["orthogonal_adamw", "fused_adamw", "muon"])
-def test_parse_pcvr_train_args_accepts_auc_and_optimizer_flags(tmp_path: Path, dense_optimizer_type: str) -> None:
+def test_parse_pcvr_train_args_accepts_loss_terms_and_optimizer_flags(tmp_path: Path, dense_optimizer_type: str) -> None:
     args = parse_pcvr_train_args(
         [
-            "--pairwise-auc-weight",
-            "0.2",
-            "--pairwise-auc-temperature",
-            "0.5",
+            "--loss-terms",
+            "bce:1.0,pairwise_auc:pairwise_auc:0.2",
+            "--loss-weight-overrides",
+            "pairwise_auc=0.5",
             "--dense-optimizer-type",
             dense_optimizer_type,
             "--scheduler-type",
@@ -363,8 +365,24 @@ def test_parse_pcvr_train_args_accepts_auc_and_optimizer_flags(tmp_path: Path, d
         defaults=PCVRTrainConfig(),
     )
 
-    assert args.pairwise_auc_weight == pytest.approx(0.2)
-    assert args.pairwise_auc_temperature == pytest.approx(0.5)
+    assert args.loss_terms == [
+        {
+            "name": "bce",
+            "kind": "bce",
+            "weight": 1.0,
+            "focal_alpha": 0.1,
+            "focal_gamma": 2.0,
+            "temperature": 1.0,
+        },
+        {
+            "name": "pairwise_auc",
+            "kind": "pairwise_auc",
+            "weight": 0.5,
+            "focal_alpha": 0.1,
+            "focal_gamma": 2.0,
+            "temperature": 1.0,
+        },
+    ]
     assert args.dense_optimizer_type == dense_optimizer_type
     assert args.scheduler_type == "cosine"
     assert args.warmup_steps == 256
@@ -497,6 +515,36 @@ def test_pcvr_train_config_serializes_flash_attention_backend_field() -> None:
     ).to_flat_dict()
 
     assert flat_config["flash_attention_backend"] == "tilelang"
+
+
+def test_pcvr_train_config_serializes_loss_terms() -> None:
+    flat_config = PCVRTrainConfig(
+        loss=PCVRLossConfig(
+            terms=(
+                PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),
+                PCVRLossTermConfig(name="aux", kind="model", weight=0.05),
+            )
+        )
+    ).to_flat_dict()
+
+    assert flat_config["loss_terms"] == [
+        {
+            "name": "bce",
+            "kind": "bce",
+            "weight": 1.0,
+            "focal_alpha": 0.1,
+            "focal_gamma": 2.0,
+            "temperature": 1.0,
+        },
+        {
+            "name": "aux",
+            "kind": "model",
+            "weight": 0.05,
+            "focal_alpha": 0.1,
+            "focal_gamma": 2.0,
+            "temperature": 1.0,
+        },
+    ]
 
 
 def test_train_pcvr_model_uses_injected_train_hooks(tmp_path: Path) -> None:

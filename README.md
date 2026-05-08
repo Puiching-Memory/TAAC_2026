@@ -17,6 +17,8 @@
   <a href="https://oosmetrics.com/repo/Puiching-Memory/TAAC_2026"><img src="https://api.oosmetrics.com/api/v1/badge/achievement/477fdd09-66c5-46ad-af96-35542587200d.svg" alt="oosmetrics"></a>
 </p>
 
+
+
 <p align="center">
   <a href="https://algo.qq.com/#intro">Competition</a> ·
   <a href="docs/getting-started.md">Quick Start</a> ·
@@ -85,19 +87,22 @@ uv sync --locked --extra dev --extra cuda126
 ```bash
 # 训练 baseline
 bash run.sh train --experiment experiments/baseline \
-  --run-dir outputs/readme_baseline
+  --run-dir outputs/readme_baseline \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 
 # 评估训练输出目录中的 checkpoint
 bash run.sh val --experiment experiments/baseline \
-  --run-dir outputs/readme_baseline
+  --run-dir outputs/readme_baseline \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 
 # 生成 predictions.json
 bash run.sh infer --experiment experiments/baseline \
   --checkpoint outputs/readme_baseline/best_model/model.safetensors \
-  --result-dir outputs/readme_infer
+  --result-dir outputs/readme_infer \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
 
-PCVR 本地 smoke 会通过 `datasets` 从 Hugging Face 缓存 `TAAC2026/data_sample_1000` 的 `demo_1000.parquet`，不再接受显式 `--dataset-path`。默认 schema 会复用仓库内的 `data/sample_1000_raw/schema.json`；只有切换 schema 快照时，才需要显式传 `--schema-path`。线上 Bundle 仍由平台注入真实数据路径。
+PCVR 本地 smoke 会通过 `datasets` 从 Hugging Face 缓存 `TAAC2026/data_sample_1000` 的 `demo_1000.parquet`，不再接受显式 `--dataset-path`。仓库不提交 parquet 数据；公开样例数据的唯一来源是 Hugging Face。样例 schema 归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`，这是基于线上格式和线下 parquet 读取反推得到的参考快照。本地命令建议显式传 `--schema-path`；线上 Bundle 仍由平台注入真实数据路径和 schema 路径。
 
 ### 生成线上 Bundle
 
@@ -175,7 +180,29 @@ Academic Track
 > 
 > 本项目已经同步更新最新的数据格式
 
-下载链接: https://huggingface.co/datasets/TAAC2026/data_sample_1000
+样例数据唯一公开来源: https://huggingface.co/datasets/TAAC2026/data_sample_1000
+
+如需把样例 parquet 下载到本地目录，先安装环境后执行：
+
+```bash
+mkdir -p data/sample_1000_raw
+uv run huggingface-cli download TAAC2026/data_sample_1000 \
+  demo_1000.parquet \
+  --repo-type dataset \
+  --local-dir data/sample_1000_raw
+```
+
+本仓库没有提交 `demo_1000.parquet`。与样例数据对应的 schema 参考快照保存在：
+
+```text
+docs/archive/files/schema/sample_1000_raw.schema.json
+```
+
+如果某个旧脚本或 benchmark 需要 `data/sample_1000_raw/schema.json` 这种目录式布局，可以复制归档 schema：
+
+```bash
+cp docs/archive/files/schema/sample_1000_raw.schema.json data/sample_1000_raw/schema.json
+```
 
 官网披露的初赛数据集是一个基于真实广告日志构建的大规模工业级数据集，包含约 2 亿条用户序列。数据由两类核心信息组成：一类是用户与物品之间的行为序列，例如曝光、点击和转化，并附带时间戳、动作类型等上下文信息；另一类是非序列多字段特征，覆盖用户属性、物品属性、上下文信号和交叉特征。
 
@@ -225,12 +252,12 @@ print(df.shape)       # (1000, 120)
 print(df.columns)     # ['user_id', 'item_id', 'label_type', ...]
 ```
 
-仓库仍保留与 HF demo 对齐的快照布局，便于检查 schema 与维护脚本：
+下载后可以保留如下本地布局，便于检查 schema 与维护脚本：
 
 ```text
 data/sample_1000_raw/
 ├── demo_1000.parquet
-└── schema.json
+└── schema.json  # 可由 docs/archive/files/schema/sample_1000_raw.schema.json 复制得到
 ```
 
 补充说明：官方 `demo_1000.parquet` 当前只有 1 个 Row Group。本仓库支持这种样例文件，在 smoke 训练时会复用同一个 Row Group 做 train/valid 切分，仅用于通路验证，不代表有统计意义的离线验证。

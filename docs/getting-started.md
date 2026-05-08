@@ -40,7 +40,19 @@ uv sync --locked --extra dev --extra cuda126
 
 ## 数据从哪里来
 
-本地 PCVR smoke 默认使用 Hugging Face 上的 `TAAC2026/data_sample_1000` demo parquet，并使用仓库内的 `data/sample_1000_raw/schema.json`。
+本地 PCVR smoke 使用 Hugging Face 上的 `TAAC2026/data_sample_1000` demo parquet。仓库不提交 parquet 数据；公开样例数据的唯一来源是 Hugging Face。
+
+普通 PCVR 本地命令不接受显式 `--dataset-path`，运行时会通过 Hugging Face 缓存 `demo_1000.parquet`。如果你想把样例文件留在本地，或要做 bundle 模拟和 benchmark，可以这样下载：
+
+```bash
+mkdir -p data/sample_1000_raw
+uv run huggingface-cli download TAAC2026/data_sample_1000 \
+  demo_1000.parquet \
+  --repo-type dataset \
+  --local-dir data/sample_1000_raw
+```
+
+样例 schema 归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`。这是基于线上格式和线下 parquet 读取反推得到的参考快照；本地 smoke 命令建议显式传 `--schema-path` 使用它。
 
 本地 PCVR 训练、评估和推理不接受显式 `--dataset-path`；真实比赛数据只在 bundle 模式下由平台环境变量注入。维护类实验例外，例如 Online Dataset EDA 本身就需要指定数据路径。
 
@@ -53,7 +65,8 @@ bash run.sh train \
   --device cpu \
   --num_workers 0 \
   --batch_size 8 \
-  --max_steps 1
+  --max_steps 1 \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
 
 训练完成后，输出目录里会有 checkpoint 和 sidecar。当前 checkpoint 通常位于：
@@ -75,7 +88,8 @@ bash run.sh val \
   --experiment experiments/baseline \
   --run-dir outputs/quickstart_baseline \
   --device cpu \
-  --num-workers 0
+  --num-workers 0 \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
 
 传 `--run-dir` 时，运行时会在目录下自动寻找最新的 `global_step*.best_model/model.safetensors`。
@@ -99,7 +113,8 @@ bash run.sh infer \
   --checkpoint outputs/quickstart_baseline \
   --result-dir outputs/quickstart_infer \
   --device cpu \
-  --num-workers 0
+  --num-workers 0 \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
 
 输出文件：
@@ -130,7 +145,8 @@ bash run.sh train \
   --device cpu \
   --num_workers 0 \
   --batch_size 8 \
-  --max_steps 1
+  --max_steps 1 \
+  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
 
 实验选择见 [实验包总览](experiments/index.md)。
@@ -183,6 +199,7 @@ uv run taac-package-infer \
 | ---- | ---- |
 | `uv is required but not found` | 本地安装 `uv`，或显式设置 `TAAC_RUNNER=python` 并确认依赖已安装 |
 | `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地 smoke 不传数据路径；维护实验例外 |
+| 找不到默认 `schema.json` | 传 `--schema-path docs/archive/files/schema/sample_1000_raw.schema.json` |
 | 找不到 checkpoint | 确认 `--run-dir` 或 `--checkpoint` 指向包含 `global_step*.best_model/` 的目录 |
 | 推理缺 `train_config.json` 或 `schema.json` | checkpoint 目录不完整，需要使用训练产物目录而不是只拷贝权重 |
 | CUDA OOM | 降低 `--batch_size`、序列长度、模型宽度或改用 `--device cpu` 做链路检查 |

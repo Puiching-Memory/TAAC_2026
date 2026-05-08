@@ -21,10 +21,11 @@ from taac2026.application.training.workflow import (
 from taac2026.infrastructure.runtime.telemetry import RuntimeTelemetry
 from taac2026.infrastructure.runtime.execution import (
     AMP_DTYPE_CHOICES,
-    BINARY_LOSS_TYPE_CHOICES,
     DENSE_OPTIMIZER_TYPE_CHOICES,
+    PCVRLossConfig,
     RuntimeExecutionConfig,
     create_logger,
+    parse_pcvr_loss_config_arg,
     set_seed,
 )
 
@@ -244,29 +245,17 @@ def build_pcvr_train_arg_parser(
     )
 
     parser.add_argument(
-        "--loss_type",
-        default=default_values["loss_type"],
-        choices=BINARY_LOSS_TYPE_CHOICES,
+        "--loss_terms",
+        "--loss-terms",
+        dest="loss_terms",
+        type=parse_pcvr_loss_config_arg,
+        default=default_values["loss_terms"],
     )
     parser.add_argument(
-        "--focal_alpha", type=float, default=default_values["focal_alpha"]
-    )
-    parser.add_argument(
-        "--focal_gamma", type=float, default=default_values["focal_gamma"]
-    )
-    parser.add_argument(
-        "--pairwise_auc_weight",
-        "--pairwise-auc-weight",
-        dest="pairwise_auc_weight",
-        type=float,
-        default=default_values["pairwise_auc_weight"],
-    )
-    parser.add_argument(
-        "--pairwise_auc_temperature",
-        "--pairwise-auc-temperature",
-        dest="pairwise_auc_temperature",
-        type=float,
-        default=default_values["pairwise_auc_temperature"],
+        "--loss_weight_overrides",
+        "--loss-weight-overrides",
+        dest="loss_weight_overrides",
+        default="",
     )
 
     parser.add_argument("--sparse_lr", type=float, default=default_values["sparse_lr"])
@@ -326,6 +315,9 @@ def apply_pcvr_train_non_cli_defaults(
     args.ns_grouping_strategy = ns_defaults["ns_grouping_strategy"]
     args.user_ns_groups = ns_defaults["user_ns_groups"]
     args.item_ns_groups = ns_defaults["item_ns_groups"]
+    if hasattr(args, "loss_terms"):
+        loss_config = PCVRLossConfig.from_value(args.loss_terms).with_weight_overrides(args.loss_weight_overrides)
+        args.loss_terms = loss_config.to_list()
     return args
 
 

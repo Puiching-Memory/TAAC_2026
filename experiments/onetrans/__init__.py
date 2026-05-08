@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from taac2026.api import (
+    PCVRLossConfig,
+    PCVRLossTermConfig,
     PCVRDataCacheConfig,
     PCVRDataConfig,
     PCVRDataPipelineConfig,
@@ -14,7 +16,7 @@ from taac2026.api import (
     PCVRTrainConfig,
 )
 from taac2026.api import create_pcvr_experiment
-from taac2026.api import BinaryClassificationLossConfig, RuntimeExecutionConfig
+from taac2026.api import RuntimeExecutionConfig
 
 TRAIN_DEFAULTS = PCVRTrainConfig(
     data=PCVRDataConfig(
@@ -44,13 +46,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         min_lr_ratio=0.0,
     ),
     runtime=RuntimeExecutionConfig(amp=False, amp_dtype="bfloat16", compile=False),
-    loss=BinaryClassificationLossConfig(
-        loss_type="bce",
-        focal_alpha=0.1,
-        focal_gamma=2.0,
-        pairwise_auc_weight=0.0,
-        pairwise_auc_temperature=1.0,
-    ),
+    loss=PCVRLossConfig(terms=(PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),)),
     sparse_optimizer=PCVRSparseOptimizerConfig(
         sparse_lr=0.05,
         sparse_weight_decay=0.0,

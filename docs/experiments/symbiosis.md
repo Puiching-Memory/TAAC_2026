@@ -4,7 +4,7 @@ icon: lucide/zap
 
 # Symbiosis
 
-Symbiosis 是当前实验集中最复杂的 PCVR 模型包。它不是“最小可复制模板”，而是一个带额外模型开关、自定义 hooks 和消融空间的融合实验。
+Symbiosis 是基于线上 EDA 结果重做的统一 PCVR 消融实验。它不再把用户-物品图、上下文交换、多尺度汇总、attention sink、lane mixing、伪 semantic id 等旧模块并联在一起，而是围绕 UniTok 思想做统一 token-stream 建模：字段 token、dense packet、候选 token、长序列 memory token 和 item 侧强信号在同一个 backbone 里交互。当前序列 memory 吸收了 DeepSeek-V4 CSA/HCA 的轻量化思路：保留最近窗口，用可学习 block 权重做压缩，并用低秩多头 indexer 选择候选相关 block。
 
 ## 快速运行
 
@@ -14,31 +14,48 @@ bash run.sh train \
   --run-dir outputs/symbiosis_smoke
 ```
 
-消融时可以关闭单个组件，例如：
+消融时关闭单个结构，例如：
 
 ```bash
 bash run.sh train \
   --experiment experiments/symbiosis \
-  --run-dir outputs/symbiosis_no_context_exchange \
-  --no-symbiosis-use-context-exchange
+  --run-dir outputs/symbiosis_no_sequence_memory \
+  --no-symbiosis-use-sequence-memory
 ```
 
-Symbiosis 的参数名来自 `experiments/symbiosis/__init__.py` 中的 `SymbiosisModelDefaults`。布尔参数由 argparse 提供 `--foo` / `--no-foo` 两种形式。
+Symbiosis 的额外参数来自 `experiments/symbiosis/__init__.py` 中的 `SymbiosisModelDefaults`。布尔参数由 argparse 提供 `--foo` / `--no-foo` 两种形式。
+
+## 设计依据
+
+线上 EDA 显示：
+
+- item 侧离散特征信号明显强于 user 侧，模型容量应优先保护 item 表示。
+- 四个序列域都很长，且 `seq_b` / `seq_c` / `seq_d` 重复率很高，直接全长 attention 不现实。
+- 高基数序列 side-info 不适合全量 vocabulary 化，需要截断、压缩或聚合。
+- dense 特征存在大尺度列，进入模型前应做稳健变换。
+
+因此当前 Symbiosis 删除了旧版中不利于比赛的设计：
+
+- 删除伪 `semantic_id`：它只是 item token mean 后再投影，不是外部 semantic id。
+- 删除 `attention_sink`：当前任务不是自回归长上下文生成，sink token 只会引入额外噪声。
+- 删除单动作 `action_conditioning`：`action_num=1` 时它退化为可学习常量。
+- 删除 `lane_mixing` / `multi_scale` / `context_exchange`：这些路径和序列 reader 重叠，增加延迟和归因成本。
+- 默认关闭 RoPE、pairwise AUC、scheduler 和训练 batch cache；默认启用数据增强、Muon、AMP bf16 与 `torch.compile`。线上训练中 `torch.compile` 的 Inductor 首次编译会占用额外主机内存，Symbiosis 默认不再叠加 OPT/shared cache。
 
 ## 实验入口
 
 - 实验名：`pcvr_symbiosis`
 - 模型类：`PCVRSymbiosis`
-- NS tokenizer：`rankmixer`
-- 查询数：`num_queries=1`
-- 模型层数：`num_blocks=3`
-- 默认运行时：AMP 开启，`torch.compile` 开启
-- 优化器：`orthogonal_adamw` + cosine schedule
-- 额外 loss：`pairwise_auc_weight=0.05`
+- 默认 backbone：统一 token-stream self-attention
+- 默认层数：`num_blocks=2`
+- 默认序列 memory：recent window + learned compressed block top-k + global token
+- 默认 optimizer：`muon`
+- 默认 scheduler：关闭
+- 默认数据增强：`sequence_crop` + `feature_mask` + `domain_dropout`，训练 batch cache 默认关闭
+- 默认运行时：AMP bf16 开启，`torch.compile` 开启
+- 默认 loss：单个 BCE loss term，`loss_terms=[{"name": "bce", "kind": "bce", "weight": 1.0}]`
 
-模型侧默认打开的融合组件包括用户-物品图、Fourier 时间编码、上下文交换、多尺度、domain gate、候选解码器、action conditioning、压缩记忆、attention sink、lane mixing 和 semantic id。
-
-Symbiosis 是当前少数覆盖默认 hooks 的实验包：
+Symbiosis 仍覆盖默认 hooks：
 
 ```python
 train_arg_parser=parse_symbiosis_train_args
@@ -47,53 +64,50 @@ prediction_hook_overrides={"build_model": build_symbiosis_prediction_model}
 runtime_hook_overrides={"load_train_config": load_symbiosis_train_config}
 ```
 
-这些 hook 的作用是把 `SymbiosisModelDefaults` 中的额外开关写进 CLI / train_config，并在评估推理时校验这些开关存在。
+这些 hook 的作用是把 `SymbiosisModelDefaults` 中的额外消融参数写进 CLI / train_config，并在评估推理时校验 checkpoint sidecar 里存在这些参数。
 
 ## 模型结构
 
 模型实现是 `experiments/symbiosis/model.py` 的 `PCVRSymbiosis`。
 
-前向的 `_embed()` 大致分为：
+前向大致分为：
 
-1. user / item tokenization，并可追加 semantic item token。
-2. `UserItemGraphBlock` 更新 user / item token。
-3. 每个序列域通过 `SequenceTokenizer` 编码，可叠加 Fourier time encoding。
-4. action token 生成 action context。
-5. candidate query 由 user、item、graph、action context 拼接投影得到。
-6. candidate decoder 从序列中抽取候选相关上下文，可使用 compressed memory 和 attention sink。
-7. prompt token + NS token 进入 unified blocks，和序列上下文交互。
-8. context exchange blocks 让全局 context 再读序列。
-9. multi-scale context 汇总 mean / recent / last 三种序列视角。
-10. lane mixer / fusion gate 融合 unified、context、scale、graph、candidate 五条 lane。
-11. action-conditioned classifier 输出 logits。
+1. user / item 稀疏特征默认按字段生成 token；关闭后退回 RankMixer NS grouped token。
+2. dense 特征默认做 `log1p(abs(x)) * sign(x)` 后拆成少量 packet token；关闭后退回单 dense token projector。
+3. user 与 item summary 生成 sequence query。
+4. 每个序列域生成 bounded memory：recent tokens、可选 learned compressed block top-k、global mean token。
+5. 可选 candidate token 以 item summary 初始化，保护 item 侧强信号。
+6. candidate、user、dense、sequence memory、item token 进入同一个 self-attention backbone。
+7. 输出拼接 candidate summary、context summary 和 item summary 后分类。
 
-`predict()` 返回 `(logits, embeddings)`，embeddings 是融合后的候选表示。
+`predict()` 返回 `(logits, embeddings)`，其中 embeddings 是三段 summary 的拼接向量，形状为 `(B, d_model * 3)`。
 
 ## 消融参数
 
-`SymbiosisModelDefaults` 定义的布尔开关会变成 CLI 参数：
+| 开关                              | 控制                                                                    |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `symbiosis_use_field_tokens`      | 稀疏特征是否按字段 token 化；关闭后使用 NS grouped token                |
+| `symbiosis_use_dense_packets`     | dense 特征是否拆成 packet token 并做 log 缩放；关闭后使用单 dense token |
+| `symbiosis_use_sequence_memory`   | 是否加入序列 memory token                                               |
+| `symbiosis_use_compressed_memory` | sequence memory 中是否加入 learned compressed block top-k               |
+| `symbiosis_use_candidate_token`   | 是否加入候选 token                                                      |
+| `symbiosis_use_item_prior`        | 候选 token 和最终 summary 是否保留 item prior                           |
+| `symbiosis_use_domain_type`       | 是否给 user/item/dense/sequence memory 加 type embedding                |
 
-| 开关 | 控制 |
-| ---- | ---- |
-| `symbiosis_use_user_item_graph` | user/item graph blocks |
-| `symbiosis_use_fourier_time` | Fourier time encoding |
-| `symbiosis_use_context_exchange` | context exchange blocks |
-| `symbiosis_use_multi_scale` | mean / recent / last 多尺度汇总 |
-| `symbiosis_use_domain_gate` | unified block 内的 domain gate |
-| `symbiosis_use_candidate_decoder` | candidate-conditioned sequence decoder |
-| `symbiosis_use_action_conditioning` | action context 和 prompt conditioning |
-| `symbiosis_use_compressed_memory` | decoder compressed memory |
-| `symbiosis_use_attention_sink` | decoder attention sink |
-| `symbiosis_use_lane_mixing` | five-lane mixer |
-| `symbiosis_use_semantic_id` | semantic item token |
+memory 参数只在 `symbiosis_use_sequence_memory=True` 时有意义：
 
-布尔参数支持 `--symbiosis-use-...` 和 `--no-symbiosis-use-...`。
+- `symbiosis_memory_block_size`：压缩 block 大小，默认 `32`。
+- `symbiosis_memory_top_k`：每个序列域保留的 query-relevant block 数，默认 `8`。
+- `symbiosis_recent_tokens`：每个序列域保留的最近 token 数，默认 `32`。
 
-压缩记忆相关整数参数：
+推荐消融顺序：
 
-- `symbiosis_memory_block_size`
-- `symbiosis_memory_top_k`
-- `symbiosis_recent_tokens`
+1. `--no-compile` / `--no-amp`：需要快速调试或定位编译问题时先关闭工程优化。
+2. `--no-symbiosis-use-sequence-memory`：确认序列 memory 是否贡献排序信号。
+3. `--no-symbiosis-use-compressed-memory`：只保留 recent + global，检查压缩块是否值得推理成本。
+4. `--no-symbiosis-use-field-tokens`：对比字段级 token 与 NS grouped token。
+5. `--no-symbiosis-use-dense-packets`：检查 dense packet 和 log 缩放是否稳定。
+6. `--no-symbiosis-use-item-prior`：验证 item 侧强信号是否需要显式保护。
 
 ## 打包
 

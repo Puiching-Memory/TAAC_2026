@@ -180,7 +180,7 @@ experiments/<name>/__init__.py
 ```bash
 uv run taac-benchmark-pcvr-data-pipeline \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json \
+    --schema-path docs/archive/files/schema/sample_1000_raw.schema.json \
   --preset augment
 ```
 

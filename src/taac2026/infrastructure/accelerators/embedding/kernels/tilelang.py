@@ -46,7 +46,7 @@ def build_embedding_bag_mean_forward_kernel(
         ):
             with T.Kernel(T.ceildiv(batch, block_rows), T.ceildiv(emb_dim, block_cols), threads=128) as (bx, by):
                 token_ids = T.alloc_fragment((block_rows,), "int32")
-                valid_counts = T.alloc_fragment((block_rows,), acc_dtype)
+                valid_counts = T.alloc_fragment((block_rows,), "int32")
                 accum = T.alloc_fragment((block_rows, block_cols), acc_dtype)
 
                 T.clear(valid_counts)
@@ -59,7 +59,7 @@ def build_embedding_bag_mean_forward_kernel(
                         if row < batch:
                             token_ids[i] = values[row, position]
                             if (token_ids[i] > 0) & (token_ids[i] < num_embeddings):
-                                valid_counts[i] += 1.0
+                                valid_counts[i] += 1
 
                     for i, j in T.Parallel(block_rows, block_cols):
                         col = by * block_cols + j
@@ -70,7 +70,7 @@ def build_embedding_bag_mean_forward_kernel(
                     row = bx * block_rows + i
                     col = by * block_cols + j
                     if (row < batch) & (col < emb_dim):
-                        denominator = T.max(valid_counts[i], 1.0)
+                        denominator = T.max(valid_counts[i], 1)
                         out[row, col] = (accum[i, j] / denominator).astype(dtype)
 
         return main
@@ -111,7 +111,7 @@ def build_embedding_bag_mean_backward_kernel(
         ):
             with T.Kernel(T.ceildiv(batch, block_rows), T.ceildiv(emb_dim, block_cols), threads=128) as (bx, by):
                 token_ids = T.alloc_fragment((block_rows,), "int32")
-                valid_counts = T.alloc_fragment((block_rows,), acc_dtype)
+                valid_counts = T.alloc_fragment((block_rows,), "int32")
 
                 T.clear(valid_counts)
 
@@ -122,7 +122,7 @@ def build_embedding_bag_mean_backward_kernel(
                         if row < batch:
                             token_ids[i] = values[row, position]
                             if (token_ids[i] > 0) & (token_ids[i] < num_embeddings):
-                                valid_counts[i] += 1.0
+                                valid_counts[i] += 1
 
                 for position in T.serial(bag_size):
                     for i in T.Parallel(block_rows):

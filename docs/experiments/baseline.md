@@ -54,7 +54,7 @@ bash run.sh infer \
 | runtime          | AMP 关闭，`torch.compile` 关闭                                             |
 | sparse optimizer | Adagrad sparse lr `0.05`                                                   |
 | model            | `d_model=64`，`emb_dim=64`，`num_queries=2`，`num_blocks=2`，`num_heads=4` |
-| loss             | BCE，focal 参数保留但 `loss_type="bce"`                                    |
+| loss             | `loss_terms=[{"name": "bce", "kind": "bce", "weight": 1.0}]`         |
 
 NS 分组直接写在 `PCVRNSConfig` 的 `user_groups` 和 `item_groups` 中。不要再为当前实验补一个独立 `ns_groups.json`。
 

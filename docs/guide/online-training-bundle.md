@@ -88,12 +88,12 @@ outputs/bundles/baseline_training/
 | `TAAC_PIP_INDEX_URL`          | 覆盖默认 pip index，默认 Tencent PyPI               |
 | `TAAC_PIP_EXTRA_ARGS`         | 追加 pip 参数，按 shell words 解析                  |
 
-本地模拟一次训练 bundle：
+本地模拟训练 bundle 前，先按 [快速开始](../getting-started.md) 下载 `demo_1000.parquet`。训练 bundle 模拟使用本地 parquet 文件和归档 schema：
 
 ```bash
 export TAAC_RUNNER=python
 export TRAIN_DATA_PATH=data/sample_1000_raw/demo_1000.parquet
-export TAAC_SCHEMA_PATH=data/sample_1000_raw/schema.json
+export TAAC_SCHEMA_PATH=docs/archive/files/schema/sample_1000_raw.schema.json
 export TRAIN_CKPT_PATH=/tmp/taac-training-output
 
 bash outputs/bundles/baseline_training/run.sh --device cpu --num_workers 0
@@ -149,14 +149,14 @@ outputs/bundles/baseline_inference/
 | `TAAC_INFER_AMP_DTYPE`   | 映射为 `--amp-dtype`                                  |
 | `TAAC_INFER_COMPILE`     | `1/0/true/false`，映射为 `--compile` / `--no-compile` |
 
-本地模拟一次推理 bundle：
+本地模拟推理 bundle 同样使用本地下载的 parquet 文件和归档 schema：
 
 ```bash
 export TAAC_BUNDLE_WORKDIR=/tmp/taac-infer-bundle
 export EVAL_DATA_PATH=data/sample_1000_raw/demo_1000.parquet
 export EVAL_RESULT_PATH=/tmp/taac-infer-results
 export MODEL_OUTPUT_PATH=outputs/quickstart_baseline
-export TAAC_SCHEMA_PATH=data/sample_1000_raw/schema.json
+export TAAC_SCHEMA_PATH=docs/archive/files/schema/sample_1000_raw.schema.json
 
 python outputs/bundles/baseline_inference/infer.py
 ```

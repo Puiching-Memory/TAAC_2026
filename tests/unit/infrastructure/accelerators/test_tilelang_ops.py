@@ -100,6 +100,53 @@ def test_embedding_bag_mean_matches_reference_on_cpu_default_torch_backend() -> 
     torch.testing.assert_close(output, reference)
 
 
+def test_embedding_bag_mean_torch_backend_is_compile_friendly() -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32, requires_grad=True)
+    values = torch.tensor(
+        [
+            [1, 2, 0, 4],
+            [0, 0, 0, 0],
+            [3, 3, 7, 0],
+        ],
+        dtype=torch.long,
+    )
+
+    def run(weight: torch.Tensor, values: torch.Tensor) -> torch.Tensor:
+        return embedding_bag_mean(weight, values)
+
+    compiled = torch.compile(run, backend="eager")
+    output = compiled(weight, values)
+    reference = embedding_bag_mean(weight, values)
+    output.sum().backward()
+
+    torch.testing.assert_close(output, reference)
+    assert weight.grad is not None
+    torch.testing.assert_close(weight.grad[0], torch.zeros_like(weight.grad[0]))
+
+
+def test_embedding_bag_mean_torch_backend_matches_reference_backward() -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32, requires_grad=True)
+    reference_weight = weight.detach().clone().requires_grad_(True)
+    values = torch.tensor(
+        [
+            [1, 2, 0, 4],
+            [0, 0, 0, 0],
+            [3, 3, 7, 0],
+        ],
+        dtype=torch.long,
+    )
+
+    output = embedding_bag_mean(weight, values)
+    embedded = F.embedding(values, reference_weight, padding_idx=0)
+    valid = values.ne(0).to(embedded.dtype).unsqueeze(-1)
+    reference = (embedded * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+    output.square().sum().backward()
+    reference.square().sum().backward()
+
+    torch.testing.assert_close(output, reference)
+    torch.testing.assert_close(weight.grad, reference_weight.grad)
+
+
 def test_embedding_bag_mean_default_preserves_registered_torch_kernel(monkeypatch) -> None:
     weight = torch.randn(8, 5, dtype=torch.float32)
     values = torch.ones(3, 4, dtype=torch.long)
@@ -112,6 +159,18 @@ def test_embedding_bag_mean_default_preserves_registered_torch_kernel(monkeypatc
     torch.testing.assert_close(output, expected)
 
 
+def test_embedding_bag_mean_tilelang_defaults_use_forward_row_block_only_for_inference() -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    train_weight = weight.detach().clone().requires_grad_(True)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    inference_key = embedding_bag_ops._embedding_bag_mean_cache_key(weight, values, None, None)
+    training_key = embedding_bag_ops._embedding_bag_mean_cache_key(train_weight, values, 1, None)
+
+    assert inference_key.block_rows == 8
+    assert training_key.block_rows == 1
+
+
 def test_resolved_embedding_bag_mean_backend_rejects_unknown_backend() -> None:
     weight = torch.randn(8, 5, dtype=torch.float32)
     values = torch.ones(3, 4, dtype=torch.long)
@@ -121,11 +180,30 @@ def test_resolved_embedding_bag_mean_backend_rejects_unknown_backend() -> None:
 
 
 def test_resolved_embedding_bag_mean_backend_rejects_tilelang_on_cpu() -> None:
-    weight = torch.randn(8, 5, dtype=torch.float32)
-    values = torch.ones(3, 4, dtype=torch.long)
+	weight = torch.randn(8, 5, dtype=torch.float32)
+	values = torch.ones(3, 4, dtype=torch.long)
 
-    with pytest.raises(RuntimeError, match="requires CUDA tensors"):
-        resolved_embedding_bag_mean_backend(weight, values, "tilelang")
+	with pytest.raises(RuntimeError, match="requires CUDA tensors"):
+		resolved_embedding_bag_mean_backend(weight, values, "tilelang")
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_cuembed_on_cpu() -> None:
+	weight = torch.randn(8, 5, dtype=torch.float32)
+	values = torch.ones(3, 4, dtype=torch.long)
+
+	with pytest.raises(RuntimeError, match=r"CUDA is not available|requires CUDA tensors"):
+		resolved_embedding_bag_mean_backend(weight, values, "cuembed")
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_cuembed_training_path(monkeypatch) -> None:
+	weight = torch.randn(8, 5, dtype=torch.float32, requires_grad=True)
+	values = torch.ones(3, 4, dtype=torch.long)
+
+	monkeypatch.setattr(embedding_bag_ops, "cuembed_available", lambda: True)
+	monkeypatch.setattr(embedding_bag_ops, "require_cuda_tensors", lambda *_args, **_kwargs: None)
+
+	with pytest.raises(RuntimeError, match="forward-only"):
+		resolved_embedding_bag_mean_backend(weight, values, "cuembed")
 
 
 def test_flash_attention_matches_reference_on_cpu_torch_backend() -> None:

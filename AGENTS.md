@@ -244,6 +244,10 @@ When adding or moving docs:
 - Prefer `pathlib.Path` over raw string path manipulation.
 - Prefer structured parsers and typed config objects over ad hoc string parsing.
 - Keep comments short and useful.
+- Do not proactively suppress runtime warnings with `warnings.filterwarnings`,
+  `warnings.simplefilter`, `PYTHONWARNINGS`, pytest warning filters, or blanket
+  command-line warning ignores. Warnings should stay visible unless a user
+  explicitly asks for a narrowly justified exception.
 - Avoid broad refactors while making narrow fixes.
 - Do not commit generated caches, `outputs/`, `.venv/`, `site/`, or
   `__pycache__/`.

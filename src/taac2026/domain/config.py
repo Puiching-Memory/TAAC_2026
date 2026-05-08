@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from taac2026.infrastructure.runtime.execution import (
-    BinaryClassificationLossConfig,
     DENSE_OPTIMIZER_TYPE_CHOICES,
+    PCVRLossConfig,
+    PCVRLossTermConfig as PCVRLossTermConfig,
     RuntimeExecutionConfig,
 )
 
@@ -238,9 +239,7 @@ class PCVRTrainConfig:
     )
     optimizer: PCVROptimizerConfig = field(default_factory=PCVROptimizerConfig)
     runtime: RuntimeExecutionConfig = field(default_factory=RuntimeExecutionConfig)
-    loss: BinaryClassificationLossConfig = field(
-        default_factory=BinaryClassificationLossConfig
-    )
+    loss: PCVRLossConfig = field(default_factory=PCVRLossConfig)
     sparse_optimizer: PCVRSparseOptimizerConfig = field(
         default_factory=PCVRSparseOptimizerConfig
     )
@@ -269,11 +268,7 @@ class PCVRTrainConfig:
             "amp": self.runtime.amp,
             "amp_dtype": self.runtime.amp_dtype,
             "compile": self.runtime.compile,
-            "loss_type": self.loss.loss_type,
-            "focal_alpha": self.loss.focal_alpha,
-            "focal_gamma": self.loss.focal_gamma,
-            "pairwise_auc_weight": self.loss.pairwise_auc_weight,
-            "pairwise_auc_temperature": self.loss.pairwise_auc_temperature,
+            "loss_terms": self.loss.to_list(),
             "sparse_lr": self.sparse_optimizer.sparse_lr,
             "sparse_weight_decay": self.sparse_optimizer.sparse_weight_decay,
             "reinit_sparse_every_n_steps": self.sparse_optimizer.reinit_sparse_every_n_steps,

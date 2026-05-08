@@ -8,13 +8,15 @@ import pytest
 import torch
 
 import taac2026.infrastructure.runtime.trainer as trainer_module
+from taac2026.infrastructure.runtime.checkpoint_io import PCVRTrainerSupportMixin
 from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.optimization.muon import Muon
 from taac2026.infrastructure.runtime.execution import (
-    BinaryClassificationLossConfig,
     EarlyStopping,
+    PCVRLossConfig,
+    PCVRLossTermConfig,
     RuntimeExecutionConfig,
-    compute_binary_classification_loss,
+    compute_pcvr_loss,
     maybe_compile_callable,
 )
 
@@ -46,6 +48,11 @@ class _MatrixDummyModel(torch.nn.Module):
     def predict(self, model_input):
         logits = self.forward(model_input)
         return logits, torch.empty(0)
+
+
+class _AuxLossDummyModel(_DummyModel):
+    def pcvr_loss_terms(self):
+        return {"aux": self.bias.square().sum() + self.bias.new_tensor(0.25)}
 
 
 class _DummyModelInput(NamedTuple):
@@ -122,6 +129,23 @@ def test_maybe_compile_callable_falls_back_to_eager_on_compile_error(
     assert "falling back to eager execution" in log_capture.text
 
 
+def test_logical_train_sweep_steps_uses_dataset_without_calling_dataloader_len() -> None:
+    class DatasetWithLogicalSweep:
+        def logical_sweep_steps(self) -> int:
+            return 7
+
+    class LoaderWithFailingLen:
+        dataset = DatasetWithLogicalSweep()
+
+        def __len__(self) -> int:
+            raise AssertionError("len(train_loader) should not be called")
+
+    class TrainerSupport(PCVRTrainerSupportMixin):
+        train_loader = LoaderWithFailingLen()
+
+    assert TrainerSupport()._logical_train_sweep_steps() == 7
+
+
 def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> None:
     trainer = PCVRPointwiseTrainer(
         model=_DummyModel(),
@@ -147,10 +171,16 @@ def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> No
 
 
 def test_trainer_train_step_matches_shared_focal_loss(tmp_path) -> None:
-    expected_loss_config = BinaryClassificationLossConfig(
-        loss_type="focal",
-        focal_alpha=0.25,
-        focal_gamma=1.5,
+    expected_loss_config = PCVRLossConfig(
+        terms=(
+            PCVRLossTermConfig(
+                name="focal",
+                kind="focal",
+                weight=1.0,
+                focal_alpha=0.25,
+                focal_gamma=1.5,
+            ),
+        )
     )
     trainer = PCVRPointwiseTrainer(
         model=_DummyModel(),
@@ -162,20 +192,18 @@ def test_trainer_train_step_matches_shared_focal_loss(tmp_path) -> None:
         device="cpu",
         save_dir=tmp_path / "checkpoints",
         early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
-        loss_type="FOCAL",
-        focal_alpha=0.25,
-        focal_gamma=1.5,
+        loss_terms=expected_loss_config.to_list(),
     )
-    expected_loss = compute_binary_classification_loss(
+    expected_loss, _components = compute_pcvr_loss(
         torch.zeros(1),
         torch.tensor([1.0]),
         expected_loss_config,
-    ).item()
+    )
 
     train_loss = trainer._train_step(_dummy_batch([1.0]))
 
     assert trainer.loss_config == expected_loss_config
-    assert train_loss == pytest.approx(expected_loss)
+    assert train_loss == pytest.approx(expected_loss.item())
     assert trainer.model.bias.item() > 0.0
 
 
@@ -183,9 +211,48 @@ def test_pairwise_auc_loss_penalizes_misordered_pairs() -> None:
     targets = torch.tensor([1.0, 0.0])
     good_logits = torch.tensor([2.0, -2.0])
     bad_logits = torch.tensor([-2.0, 2.0])
-    loss_config = BinaryClassificationLossConfig(pairwise_auc_weight=1.0)
+    loss_config = PCVRLossConfig(
+        terms=(PCVRLossTermConfig(name="pairwise_auc", kind="pairwise_auc", weight=1.0),)
+    )
 
-    assert compute_binary_classification_loss(bad_logits, targets, loss_config) > compute_binary_classification_loss(good_logits, targets, loss_config)
+    bad_loss, _bad_components = compute_pcvr_loss(bad_logits, targets, loss_config)
+    good_loss, _good_components = compute_pcvr_loss(good_logits, targets, loss_config)
+
+    assert bad_loss > good_loss
+
+
+def test_trainer_combines_multiple_weighted_loss_terms(tmp_path) -> None:
+    loss_config = PCVRLossConfig(
+        terms=(
+            PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),
+            PCVRLossTermConfig(name="aux", kind="model", weight=0.5),
+        )
+    )
+    trainer = PCVRPointwiseTrainer(
+        model=_AuxLossDummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        loss_terms=loss_config.to_list(),
+    )
+    expected_loss, expected_components = compute_pcvr_loss(
+        torch.zeros(1),
+        torch.tensor([1.0]),
+        loss_config,
+        model=trainer.model,
+    )
+
+    train_loss = trainer._train_step(_dummy_batch([1.0]))
+
+    assert train_loss == pytest.approx(expected_loss.item())
+    assert trainer.last_train_loss_components == pytest.approx(
+        {name: float(value) for name, value in expected_components.items()}
+    )
 
 
 @pytest.mark.parametrize("dense_optimizer_type", ["orthogonal_adamw", "fused_adamw", "muon"])

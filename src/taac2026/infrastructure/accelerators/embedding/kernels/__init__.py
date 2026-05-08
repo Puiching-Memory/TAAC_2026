@@ -1,4 +1,4 @@
-"""TileLang kernels for embedding operators."""
+"""Kernel source boundaries for embedding operators."""
 
 from __future__ import annotations
 

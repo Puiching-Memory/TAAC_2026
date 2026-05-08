@@ -234,3 +234,28 @@ def test_embedding_bag_mean_tilelang_matches_torch_forward_and_backward_on_cuda(
     assert resolved_embedding_bag_mean_backend(weight.detach(), values, "tilelang") == "tilelang"
     torch.testing.assert_close(output.float(), reference.float(), atol=1e-3, rtol=1e-3)
     torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for cuEmbed kernel validation")
+def test_embedding_bag_mean_cuembed_matches_torch_forward_on_cuda() -> None:
+    tilelang_ops.clear_embedding_bag_mean_kernel_cache()
+    weight = torch.randn(17, 16, dtype=torch.float16, device="cuda")
+    values = torch.tensor(
+        [
+            [1, 2, 0, 4],
+            [0, 0, 0, 0],
+            [3, 3, 7, 0],
+            [16, 5, 1, 0],
+        ],
+        dtype=torch.long,
+        device="cuda",
+    )
+
+    try:
+        output = embedding_bag_mean(weight, values, backend="cuembed")
+    except RuntimeError as error:
+        pytest.skip(f"cuEmbed JIT extension is unavailable: {error}")
+    reference = embedding_bag_mean(weight, values, backend="torch")
+
+    assert resolved_embedding_bag_mean_backend(weight, values, "cuembed") == "cuembed"
+    torch.testing.assert_close(output.float(), reference.float(), atol=1e-3, rtol=1e-3)

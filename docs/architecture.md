@@ -249,7 +249,7 @@ experiments/baseline/
 
 - `PCVRTrainConfig`、`PCVRModelConfig`、`PCVRNSConfig`
 - `PCVRDataPipelineConfig`、cache 和 transform 配置
-- `RuntimeExecutionConfig`、`BinaryClassificationLossConfig`
+- `RuntimeExecutionConfig`、`PCVRLossConfig`、`PCVRLossTermConfig`
 - `ModelInput`
 - 建模 primitives，例如 tokenizer、embedding bank、RMSNorm
 - `create_pcvr_experiment`
@@ -314,7 +314,7 @@ global_step*.best_model/
 
 ## 本地数据和线上数据
 
-本地 PCVR smoke 不让用户传 `--dataset-path`，默认使用 Hugging Face demo parquet 和仓库内 sample schema。这样本地链路更稳定。
+本地 PCVR smoke 不让用户传 `--dataset-path`，样例 parquet 来自 Hugging Face `TAAC2026/data_sample_1000`。仓库不提交 parquet 数据；样例 schema 参考快照归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`，本地命令应显式传 `--schema-path`。这样本地数据来源和线上平台注入路径能保持清晰边界。
 
 线上 bundle 相反：真实数据路径来自平台变量，例如 `TRAIN_DATA_PATH`、`EVAL_DATA_PATH` 和 `TAAC_SCHEMA_PATH`。bundle 模式使用平台 Python，不依赖线上 `uv`。
 

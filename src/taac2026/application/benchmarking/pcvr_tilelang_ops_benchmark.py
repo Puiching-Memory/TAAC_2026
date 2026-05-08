@@ -19,9 +19,11 @@ from taac2026.infrastructure.accelerators import (
     clear_embedding_bag_mean_kernel_cache,
     clear_flash_attention_kernel_cache,
     clear_tilelang_kernel_cache,
+    compile_cuembed_embedding_bag_mean_kernel,
     compile_embedding_bag_mean_kernel,
     compile_flash_attention_kernel,
     compile_rms_norm_kernel,
+    cuembed_available,
     resolved_embedding_bag_mean_backend,
     resolved_flash_attention_backend,
     resolved_rms_norm_backend,
@@ -29,8 +31,9 @@ from taac2026.infrastructure.accelerators import (
 )
 
 
-BenchmarkBackend = Literal["torch", "tilelang"]
+BenchmarkBackend = Literal["torch", "tilelang", "cuembed"]
 DEFAULT_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang")
+SUPPORTED_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang", "cuembed")
 
 
 @dataclass(slots=True)
@@ -81,7 +84,7 @@ def _parse_backend_names(value: str) -> tuple[BenchmarkBackend, ...]:
     names = tuple(name.strip().lower() for name in value.split(",") if name.strip())
     if not names:
         raise ValueError("at least one backend must be specified")
-    invalid = [name for name in names if name not in DEFAULT_BACKENDS]
+    invalid = [name for name in names if name not in SUPPORTED_BACKENDS]
     if invalid:
         raise ValueError(f"unsupported backends: {', '.join(invalid)}")
     return names  # type: ignore[return-value]
@@ -164,7 +167,7 @@ def _validate_output_accuracy(
 
 
 def _benchmark_failure_status(backend: BenchmarkBackend, error: Exception) -> str:
-    return "unsupported" if backend == "tilelang" and not isinstance(error, AssertionError) else "error"
+    return "unsupported" if backend in {"tilelang", "cuembed"} and not isinstance(error, AssertionError) else "error"
 
 
 def _benchmark_callable(
@@ -278,6 +281,25 @@ def _prepare_embedding_bag_mean_callable(
 ) -> tuple[Callable[[], torch.Tensor], str, float | None]:
     if backend == "torch":
         return lambda: _reference_embedding_bag_mean(embedding_weight, values), "torch", None
+
+    if backend == "cuembed":
+        resolved_backend = resolved_embedding_bag_mean_backend(
+            embedding_weight,
+            values,
+            backend,
+            block_rows=args.block_rows,
+            block_cols=args.block_cols,
+        )
+
+        clear_embedding_bag_mean_kernel_cache()
+        started = time.perf_counter()
+        kernel = compile_cuembed_embedding_bag_mean_kernel(
+            embedding_weight,
+            values,
+        )
+        _synchronize(device)
+        compile_sec = time.perf_counter() - started
+        return lambda: kernel(embedding_weight, values), resolved_backend, compile_sec
 
     resolved_backend = resolved_embedding_bag_mean_backend(
         embedding_weight,
@@ -612,6 +634,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("repeats must be >= 1")
     if args.torch_threads > 0:
         torch.set_num_threads(args.torch_threads)
+    if args.operator != "embedding_bag_mean" and "cuembed" in args.backends:
+        raise ValueError("cuembed backend is only supported for --operator embedding_bag_mean")
 
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -703,6 +727,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "atol": args.atol,
         "rtol": args.rtol,
         "tilelang_installed": tilelang_available(),
+        "cuembed_available": cuembed_available(),
         "backends": list(args.backends),
         "results": results,
     })
@@ -730,7 +755,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--eps", type=float, default=1e-6)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--block-rows", type=int, default=1)
+    parser.add_argument("--block-rows", type=int, default=None)
     parser.add_argument("--block-cols", type=int, default=None)
     parser.add_argument("--torch-threads", type=int, default=0)
     parser.add_argument(
@@ -741,7 +766,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--backends",
         default=",".join(DEFAULT_BACKENDS),
-        help="comma-separated subset of torch,tilelang",
+        help="comma-separated subset of torch,tilelang,cuembed; cuembed is valid only for embedding_bag_mean",
     )
     parser.add_argument("--atol", type=float, default=None, help="absolute tolerance for accuracy checks")
     parser.add_argument("--rtol", type=float, default=None, help="relative tolerance for accuracy checks")

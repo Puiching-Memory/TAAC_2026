@@ -26,6 +26,7 @@ from taac2026.infrastructure.data.pipeline import (
     PCVRSharedTensorSpec,
     PCVRSequenceCropTransform,
     build_pcvr_batch_transforms,
+    concat_pcvr_batches,
 )
 
 
@@ -253,6 +254,17 @@ def test_data_pipeline_keeps_explicit_empty_cache_instance() -> None:
 
     assert pipeline.cache is cache
     assert pipeline.cache._opt_enabled is True
+
+
+def test_concat_batch_drops_optional_metadata_missing_from_cached_batches() -> None:
+    batch_a = _make_batch()
+    batch_b = _make_batch()
+    del batch_b["user_id"]
+
+    merged = concat_pcvr_batches([batch_a, batch_b])
+
+    assert "user_id" not in merged
+    assert merged["label"].tolist() == [1, 0, 1, 0]
 
 
 def test_opt_batch_cache_evicts_farthest_future_key() -> None:

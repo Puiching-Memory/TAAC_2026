@@ -118,7 +118,11 @@ PY
 
 ## 复现命令
 
-先生成足够大的合成数据集。不要用 1000 行 demo 数据推断 cache 策略差异。
+先按 [快速开始](../getting-started.md) 下载 `demo_1000.parquet`，把归档 schema 复制到同一目录，再生成足够大的合成数据集。不要用 1000 行 demo 数据推断 cache 策略差异。
+
+```bash
+cp docs/archive/files/schema/sample_1000_raw.schema.json data/sample_1000_raw/schema.json
+```
 
 ```bash
 uv run taac-generate-pcvr-synthetic-dataset \

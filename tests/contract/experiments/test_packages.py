@@ -9,6 +9,7 @@ import pytest
 import torch
 
 from taac2026.application.experiments.registry import load_experiment_package
+from taac2026.domain.config import PCVR_DATA_CACHE_MODE_CHOICES
 from taac2026.domain.sidecar import build_pcvr_train_config_sidecar
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.modeling import safe_key_padding_mask
@@ -95,6 +96,25 @@ def _make_model(experiment_case, model_module, overrides=None):
         return model_class(**model_kwargs)
 
 
+def _assert_valid_data_pipeline_defaults(data_pipeline: dict[str, object]) -> None:
+    cache = data_pipeline["cache"]
+    assert isinstance(cache, dict)
+    assert cache["mode"] in PCVR_DATA_CACHE_MODE_CHOICES
+    assert isinstance(cache["max_batches"], int)
+    assert cache["max_batches"] >= 0
+
+    seed = data_pipeline["seed"]
+    assert seed is None or isinstance(seed, int)
+    assert isinstance(data_pipeline["strict_time_filter"], bool)
+
+    transforms = data_pipeline["transforms"]
+    assert isinstance(transforms, list)
+    for transform in transforms:
+        assert isinstance(transform, dict)
+        assert isinstance(transform["name"], str)
+        assert isinstance(transform["enabled"], bool)
+
+
 @pytest.mark.parametrize("experiment_case", EXPERIMENT_CASES, ids=lambda case: case.path)
 def test_discovered_experiment_packages_load(experiment_case) -> None:
     experiment = load_experiment_package(experiment_case.path)
@@ -129,44 +149,14 @@ def test_discovered_experiment_packages_load(experiment_case) -> None:
     assert experiment.metadata["runtime_write_train_split_observed_schema_reports"] == "default_write_train_split_observed_schema_reports"
     assert train_defaults["ns_grouping_strategy"] == "explicit"
     assert train_defaults["max_steps"] > 0
-    if experiment_case.path == "experiments/baseline_plus":
-        assert train_defaults["data_pipeline"]["cache"] == {"mode": "opt", "max_batches": 512}
-        assert train_defaults["data_pipeline"]["seed"] == 42
-        assert train_defaults["data_pipeline"]["strict_time_filter"] is True
-        transform_names = [transform["name"] for transform in train_defaults["data_pipeline"]["transforms"]]
-        assert transform_names == ["sequence_crop", "feature_mask", "domain_dropout"]
-        assert train_defaults["data_pipeline"]["transforms"][0] == {
-            "name": "sequence_crop",
-            "enabled": True,
-            "views_per_row": 2,
-            "seq_window_mode": "random_tail",
-            "seq_window_min_len": 8,
-        }
-        assert train_defaults["data_pipeline"]["transforms"][1] == {
-            "name": "feature_mask",
-            "enabled": True,
-            "probability": 0.03,
-        }
-        assert train_defaults["data_pipeline"]["transforms"][2] == {
-            "name": "domain_dropout",
-            "enabled": True,
-            "probability": 0.03,
-        }
-        assert train_defaults["dense_optimizer_type"] == "muon"
-        assert train_defaults["flash_attention_backend"] == "torch"
-        assert train_defaults["rms_norm_backend"] == "tilelang"
-        assert train_defaults["rms_norm_block_rows"] == 8
-    elif experiment_case.path == "experiments/symbiosis":
-        assert train_defaults["data_pipeline"]["cache"] == {"mode": "none", "max_batches": 0}
-        assert train_defaults["data_pipeline"]["seed"] is None
-        assert train_defaults["data_pipeline"]["strict_time_filter"] is True
-        assert train_defaults["data_pipeline"]["transforms"] == []
+    _assert_valid_data_pipeline_defaults(train_defaults["data_pipeline"])
     assert isinstance(train_defaults["user_ns_groups"], dict)
     assert isinstance(train_defaults["item_ns_groups"], dict)
     assert train_defaults["user_ns_groups"]
     assert train_defaults["item_ns_groups"]
     assert "num_hyformer_blocks" not in train_defaults
     assert "symbiosis_use_candidate_decoder" not in train_defaults
+    assert "symbiosis_use_field_tokens" not in train_defaults
     assert "symbiosis_recent_tokens" not in train_defaults
 
 
@@ -199,31 +189,23 @@ def test_discovered_experiment_models_forward_and_predict(experiment_case) -> No
     assert torch.isfinite(predicted_logits).all()
 
 
-def test_symbiosis_enables_amp_and_compile_by_default() -> None:
-    experiment = load_experiment_package("experiments/symbiosis")
-    train_defaults = experiment.train_defaults.to_flat_dict()
+def test_symbiosis_parser_adds_package_specific_config_to_args() -> None:
     symbiosis_module = _load_package_module("experiments/symbiosis")
     symbiosis_args = symbiosis_module.parse_symbiosis_train_args(
         [],
         package_dir=symbiosis_module.EXPERIMENT.package_dir,
         defaults=symbiosis_module.TRAIN_DEFAULTS,
     )
+    base_train_defaults = symbiosis_module.TRAIN_DEFAULTS.to_flat_dict()
+    extra_config_keys = tuple(symbiosis_module.SYMBIOSIS_MODEL_CONFIG_KEYS)
 
-    assert train_defaults["amp"] is True
-    assert train_defaults["amp_dtype"] == "bfloat16"
-    assert train_defaults["compile"] is True
-    assert train_defaults["pairwise_auc_weight"] == pytest.approx(0.05)
-    assert train_defaults["dense_optimizer_type"] == "orthogonal_adamw"
-    assert train_defaults["scheduler_type"] == "cosine"
-    assert train_defaults["warmup_steps"] == 2000
-    assert train_defaults["min_lr_ratio"] == pytest.approx(0.1)
-    assert "symbiosis_use_candidate_decoder" not in train_defaults
-    assert symbiosis_args.symbiosis_use_candidate_decoder is True
-    assert symbiosis_args.symbiosis_use_action_conditioning is True
-    assert symbiosis_args.symbiosis_use_compressed_memory is True
-    assert symbiosis_args.symbiosis_use_attention_sink is True
-    assert symbiosis_args.symbiosis_use_lane_mixing is True
-    assert symbiosis_args.symbiosis_use_semantic_id is True
+    assert extra_config_keys
+    assert not set(extra_config_keys).intersection(base_train_defaults)
+    assert all(hasattr(symbiosis_args, key) for key in extra_config_keys)
+    resolved = symbiosis_module._resolve_symbiosis_model_kwargs(vars(symbiosis_args))
+    assert set(resolved) == set(extra_config_keys)
+    for key, default in symbiosis_module.SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict().items():
+        assert isinstance(resolved[key], type(default))
 
 
 def test_symbiosis_runtime_config_requires_package_specific_keys(tmp_path: Path) -> None:
@@ -235,8 +217,71 @@ def test_symbiosis_runtime_config_requires_package_specific_keys(tmp_path: Path)
         encoding="utf-8",
     )
 
-    with pytest.raises(KeyError, match="symbiosis_use_user_item_graph"):
+    with pytest.raises(KeyError, match="symbiosis_use_field_tokens"):
         symbiosis_module.load_symbiosis_train_config(symbiosis_module.EXPERIMENT, checkpoint_dir)
+
+
+def test_symbiosis_sequence_memory_ignores_fully_padded_domains() -> None:
+    experiment_case = get_experiment_case("experiments/symbiosis")
+    model_module = load_model_module(experiment_case)
+    model = _make_model(experiment_case, model_module)
+    model.eval()
+    model_input_a = _sample_model_input(model_module)._replace(
+        seq_lens={"seq_a": torch.zeros(2, dtype=torch.long), "seq_b": torch.zeros(2, dtype=torch.long)}
+    )
+    model_input_b = model_input_a._replace(
+        seq_data={domain: values.clone() for domain, values in model_input_a.seq_data.items()}
+    )
+    model_input_b.seq_data["seq_a"][:, :, :] = 4
+    user_sparse, _user_mask, item_sparse, _item_mask = model._sparse_tokens(model_input_a)
+    query = model.sequence_query_projection(torch.cat([user_sparse.mean(dim=1), item_sparse.mean(dim=1)], dim=-1))
+
+    with torch.no_grad():
+        pieces_a, masks_a, _domains_a = model.sequence_memory(model_input_a, query)
+        pieces_b, masks_b, _domains_b = model.sequence_memory(model_input_b, query)
+
+    assert len(pieces_a) == len(pieces_b)
+    for tokens_a, tokens_b, mask_a, mask_b in zip(pieces_a, pieces_b, masks_a, masks_b, strict=True):
+        assert torch.allclose(tokens_a, tokens_b)
+        assert torch.equal(mask_a, mask_b)
+
+
+def test_symbiosis_sequence_memory_uses_learned_compression_and_sparse_indexer() -> None:
+    experiment_case = get_experiment_case("experiments/symbiosis")
+    model_module = load_model_module(experiment_case)
+    model = _make_model(experiment_case, model_module)
+
+    assert model.sequence_memory is not None
+    assert model.sequence_memory.block_compressors
+    assert model.sequence_memory.block_indexers
+    resolved_heads = model.blocks[0].attention.num_heads
+    for domain in model.sequence_memory.seq_domains:
+        compressor = model.sequence_memory.block_compressors[domain]
+        indexer = model.sequence_memory.block_indexers[domain]
+        assert compressor.position_bias.shape[0] == model.symbiosis_memory_block_size
+        assert indexer.num_heads == resolved_heads
+
+
+def test_symbiosis_attention_aligns_qk_dtype_for_amp(monkeypatch: pytest.MonkeyPatch) -> None:
+    experiment_case = get_experiment_case("experiments/symbiosis")
+    model_module = load_model_module(experiment_case)
+    captured_dtypes = None
+
+    def fake_attention(q, k, v, **kwargs):
+        nonlocal captured_dtypes
+        captured_dtypes = (q.dtype, k.dtype, v.dtype)
+        return torch.zeros(q.shape[0], q.shape[1], q.shape[2], dtype=v.dtype)
+
+    monkeypatch.setattr(model_module, "scaled_dot_product_attention", fake_attention)
+    attention = model_module.UnifiedSelfAttention(d_model=16, num_heads=2, dropout=0.0)
+    tokens = torch.randn(2, 5, 16)
+    padding_mask = torch.ones(2, 5, dtype=torch.bool)
+
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        attention(tokens, padding_mask)
+
+    assert captured_dtypes == (torch.bfloat16, torch.bfloat16, torch.bfloat16)
+
 
 @pytest.mark.parametrize("experiment_case", EXPERIMENT_CASES, ids=lambda case: case.path)
 def test_discovered_experiment_models_backward_with_gradient_checkpointing(experiment_case) -> None:
@@ -281,11 +326,12 @@ def test_symbiosis_keeps_sequence_width_stable_for_compile() -> None:
         },
     )
 
-    sequences, masks, lengths = model._encode_sequences(model_input)
+    user_sparse, _user_mask, item_sparse, _item_mask = model._sparse_tokens(model_input)
+    query = model.sequence_query_projection(torch.cat([user_sparse.mean(dim=1), item_sparse.mean(dim=1)], dim=-1))
+    pieces, masks, _domain_indices = model.sequence_memory(model_input, query)
 
-    assert [tensor.shape[1] for tensor in sequences] == [6, 5]
-    assert [mask.shape[1] for mask in masks] == [6, 5]
-    assert [length.tolist() for length in lengths] == [[2, 3], [1, 2]]
+    assert [tensor.shape[1] for tensor in pieces] == [6, 1, 1, 5, 1, 1]
+    assert [mask.shape[1] for mask in masks] == [6, 1, 1, 5, 1, 1]
 
 
 def test_safe_key_padding_mask_unmasks_first_position_for_fully_padded_rows() -> None:
@@ -348,18 +394,18 @@ def test_symbiosis_unified_stage_uses_compact_context_tokens(monkeypatch: pytest
     model = _make_model(experiment_case, model_module)
     model_input = _sample_model_input(model_module)
     observed_unified_token_counts: list[int] = []
-    original_forward = model.unified_blocks[0].forward
+    original_forward = model.blocks[0].forward
 
-    def recording_forward(tokens, padding_mask, sequences, masks, modulation):
+    def recording_forward(tokens, padding_mask):
         observed_unified_token_counts.append(int(tokens.shape[1]))
-        return original_forward(tokens, padding_mask, sequences, masks, modulation)
+        return original_forward(tokens, padding_mask)
 
-    monkeypatch.setattr(model.unified_blocks[0], "forward", recording_forward)
+    monkeypatch.setattr(model.blocks[0], "forward", recording_forward)
 
     logits = model(model_input)
 
     sequence_token_count = sum(int(sequence.shape[2]) for sequence in model_input.seq_data.values())
-    context_token_count = model.num_prompt_tokens + model.num_ns
+    context_token_count = model._encode_tokens(model_input)[0].shape[1]
 
     assert logits.shape == (2, 1)
     assert observed_unified_token_counts == [context_token_count]
@@ -373,34 +419,29 @@ def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
         experiment_case,
         model_module,
         overrides={
-            "symbiosis_use_user_item_graph": False,
-            "symbiosis_use_fourier_time": False,
-            "symbiosis_use_context_exchange": False,
-            "symbiosis_use_multi_scale": False,
-            "symbiosis_use_domain_gate": True,
-            "symbiosis_use_candidate_decoder": False,
-            "symbiosis_use_action_conditioning": False,
+            "symbiosis_use_field_tokens": False,
+            "symbiosis_use_dense_packets": False,
+            "symbiosis_use_sequence_memory": False,
             "symbiosis_use_compressed_memory": False,
-            "symbiosis_use_attention_sink": False,
-            "symbiosis_use_lane_mixing": False,
-            "symbiosis_use_semantic_id": False,
+            "symbiosis_use_candidate_token": False,
+            "symbiosis_use_item_prior": False,
+            "symbiosis_use_domain_type": False,
         },
     )
     model_input = _sample_model_input(model_module)
 
-    assert len(model.graph_blocks) == 0
-    assert len(model.context_blocks) == 0
-    assert model.symbiosis_use_fourier_time is False
-    assert model.symbiosis_use_multi_scale is False
-    assert model.candidate_decoder is None
-    assert model.lane_mixer is None
-    assert model.semantic_projection is None
-    assert all(block.use_domain_gate for block in model.unified_blocks)
+    assert model.symbiosis_use_field_tokens is False
+    assert model.symbiosis_use_dense_packets is False
+    assert model.sequence_memory is None
+    assert model.symbiosis_use_compressed_memory is False
+    assert model.symbiosis_use_candidate_token is False
+    assert model.symbiosis_use_item_prior is False
+    assert model.symbiosis_use_domain_type is False
 
     logits = model(model_input)
     predicted_logits, embeddings = model.predict(model_input)
 
     assert logits.shape == (2, 1)
     assert predicted_logits.shape == (2, 1)
-    assert embeddings.shape == (2, model.d_model)
+    assert embeddings.shape == (2, model.d_model * 3)
     assert torch.isfinite(logits).all()

@@ -44,6 +44,7 @@ def test_parse_pcvr_tilelang_ops_benchmark_args_accepts_backend_subset() -> None
     assert args.warmup_steps == 1
     assert args.repeats == 3
     assert args.backends == ("torch", "tilelang")
+    assert args.block_rows is None
     assert args.atol == 1e-5
     assert args.rtol == 1e-5
 
@@ -109,6 +110,43 @@ def test_parse_pcvr_tilelang_ops_benchmark_accepts_embedding_bag_mean_operator()
     assert args.block_cols == 32
     assert args.atol == 1e-2
     assert args.rtol == 1e-2
+
+
+def test_parse_pcvr_tilelang_ops_benchmark_accepts_cuembed_backend() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "embedding_bag_mean",
+            "--backends",
+            "torch,cuembed",
+            "--dtype",
+            "float32",
+        ]
+    )
+
+    assert args.backends == ("torch", "cuembed")
+
+
+def test_run_pcvr_tilelang_ops_benchmark_rejects_cuembed_for_non_embedding_operator() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "rms_norm",
+            "--device",
+            "cpu",
+            "--backends",
+            "cuembed",
+            "--dtype",
+            "float32",
+        ]
+    )
+
+    try:
+        run_benchmark(args)
+    except ValueError as error:
+        assert "embedding_bag_mean" in str(error)
+    else:  # pragma: no cover - defensive branch
+        raise AssertionError("run_benchmark accepted cuembed for rms_norm")
 
 
 def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -> None:
@@ -242,6 +280,47 @@ def test_run_embedding_bag_mean_benchmark_reports_cpu_tilelang_as_unsupported() 
     assert rows["tilelang"]["status"] == "unsupported"
     assert rows["tilelang"]["successful_repeats"] == 0
     assert rows["tilelang"]["error"]
+
+
+def test_run_embedding_bag_mean_benchmark_reports_cpu_cuembed_as_unsupported() -> None:
+    args = parse_args(
+        [
+            "--operator",
+            "embedding_bag_mean",
+            "--device",
+            "cpu",
+            "--batch",
+            "4",
+            "--embedding-vocab-size",
+            "32",
+            "--embedding-dim",
+            "8",
+            "--embedding-bag-size",
+            "3",
+            "--steps",
+            "2",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "2",
+            "--backends",
+            "torch,cuembed",
+            "--dtype",
+            "float32",
+        ]
+    )
+
+    summary = run_benchmark(args)
+
+    assert summary["operator"] == "embedding_bag_mean"
+    assert summary["device"] == "cpu"
+    assert summary["backends"] == ["torch", "cuembed"]
+    rows = {row["backend"]: row for row in summary["results"]}
+    assert rows["torch"]["status"] == "ok"
+    assert rows["cuembed"]["status"] == "unsupported"
+    assert rows["cuembed"]["successful_repeats"] == 0
+    assert rows["cuembed"]["error"]
+    assert isinstance(summary["cuembed_available"], bool)
 
 
 def test_benchmark_marks_tilelang_accuracy_failure_as_error(monkeypatch) -> None:

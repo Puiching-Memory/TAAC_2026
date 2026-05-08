@@ -23,11 +23,11 @@ from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.modeling.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.runtime.checkpoint_io import PCVRTrainerSupportMixin
 from taac2026.infrastructure.runtime.execution import (
-    BinaryClassificationLossConfig,
     DENSE_OPTIMIZER_TYPE_CHOICES,
     EarlyStopping,
+    PCVRLossConfig,
     RuntimeExecutionConfig,
-    compute_binary_classification_loss,
+    compute_pcvr_loss,
     create_grad_scaler,
     maybe_compile_callable,
 )
@@ -70,11 +70,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         scheduler_type: str = "none",
         warmup_steps: int = 0,
         min_lr_ratio: float = 0.0,
-        loss_type: str = "bce",
-        focal_alpha: float = 0.1,
-        focal_gamma: float = 2.0,
-        pairwise_auc_weight: float = 0.0,
-        pairwise_auc_temperature: float = 1.0,
+        loss_terms: Any | None = None,
         sparse_lr: float = 0.05,
         sparse_weight_decay: float = 0.0,
         reinit_sparse_every_n_steps: int = 0,
@@ -163,16 +159,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             label="PCVR trainer predict",
         )
         self.grad_scaler = create_grad_scaler(self.runtime_execution, self.device)
-        self.loss_config = BinaryClassificationLossConfig(
-            loss_type=loss_type,
-            focal_alpha=focal_alpha,
-            focal_gamma=focal_gamma,
-            pairwise_auc_weight=pairwise_auc_weight,
-            pairwise_auc_temperature=pairwise_auc_temperature,
-        )
-        self.loss_type = self.loss_config.loss_type
-        self.focal_alpha = self.loss_config.focal_alpha
-        self.focal_gamma = self.loss_config.focal_gamma
+        self.loss_config = PCVRLossConfig.from_value(loss_terms)
+        self.last_train_loss_components: dict[str, float] = {}
         self.reinit_sparse_every_n_steps = int(reinit_sparse_every_n_steps)
         self.reinit_cardinality_threshold = reinit_cardinality_threshold
         self.sparse_lr = sparse_lr
@@ -183,15 +171,10 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         self.last_eval_diagnostics: dict[str, float | int] = {}
 
         logger.info(
-            "PCVRPointwiseTrainer loss_type={}, focal_alpha={}, focal_gamma={}, "
-            "pairwise_auc_weight={}, pairwise_auc_temperature={}, "
+            "PCVRPointwiseTrainer loss_terms={}, "
             "dense_optimizer_type={}, scheduler_type={}, warmup_steps={}, min_lr_ratio={}, "
             "max_steps={}, reinit_sparse_every_n_steps={}",
-            self.loss_type,
-            self.focal_alpha,
-            self.focal_gamma,
-            self.loss_config.pairwise_auc_weight,
-            self.loss_config.pairwise_auc_temperature,
+            self.loss_config.summary(),
             self.dense_optimizer_type,
             self.scheduler_type,
             self.warmup_steps,
@@ -246,6 +229,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
 
             if self.writer:
                 self.writer.add_scalar("Loss/train", loss, total_step)
+                for name, value in self.last_train_loss_components.items():
+                    self.writer.add_scalar(f"Loss/train/{name}", value, total_step)
                 self.writer.add_scalar("LR/dense", self.current_dense_lr, total_step)
 
             if train_pbar is not None:
@@ -321,7 +306,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         model_input = self._make_model_input(device_batch)
         with self.runtime_execution.autocast_context(self.device):
             logits = self.forward_model(model_input).squeeze(-1)
-            loss = compute_binary_classification_loss(logits, label, self.loss_config)
+            loss, loss_components = compute_pcvr_loss(logits, label, self.loss_config, model=self.model)
+        self.last_train_loss_components = {name: float(value.detach().float().cpu()) for name, value in loss_components.items()}
 
         if self.grad_scaler is not None:
             self.grad_scaler.scale(loss).backward()
