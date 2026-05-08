@@ -43,20 +43,20 @@ In industrial recommendation systems, recent progress in scaling often happens a
 
 ## 1. Introduction
 
-Recommendation systems are a core component of large-scale information services such as e-commerce, streaming media, and social networks [zhou2018deepnetworkclickthroughrate; feng2019deepsessionnetworkclickthrough; pancha2022pinnerformer; chang2023pepnet; xia2023transact; zhang2024wukong; zhai2024actions]. Industrial systems commonly use a cascaded architecture [covington2016deep; liu2017cascade; qin2022rankflow]. A recall stage first narrows a billion-scale corpus down to hundreds of candidates [zhu2018learning; huang2024comprehensive], and a ranking stage then scores those candidates and returns the top results [Wang_2021; gui2023hiformerheterogeneousfeatureinteractions; xia2023transact; zhang2024wukong; zhu2025rankmixerscalingrankingmodels]. Deep Learning Recommendation Models (DLRMs) [naumov2019deep] are now standard in this ranking stage.
+Recommendation systems are a core component of large-scale information services such as e-commerce, streaming media, and social networks \[zhou2018deepnetworkclickthroughrate; feng2019deepsessionnetworkclickthrough; pancha2022pinnerformer; chang2023pepnet; xia2023transact; zhang2024wukong; zhai2024actions\]. Industrial systems commonly use a cascaded architecture \[covington2016deep; liu2017cascade; qin2022rankflow\]. A recall stage first narrows a billion-scale corpus down to hundreds of candidates \[zhu2018learning; huang2024comprehensive\], and a ranking stage then scores those candidates and returns the top results \[Wang_2021; gui2023hiformerheterogeneousfeatureinteractions; xia2023transact; zhang2024wukong; zhu2025rankmixerscalingrankingmodels\]. Deep Learning Recommendation Models (DLRMs) \[naumov2019deep\] are now standard in this ranking stage.
 
 This paper focuses on ranking. In mainstream ranking systems, two modules are usually improved separately:
 
-- Sequence modeling, which encodes multi-behavior histories into candidate-aware representations using attention, local sequence modeling, or Transformers [zhou2018deepnetworkclickthroughrate; kang2018selfattentivesequentialrecommendation; sun2019bert4recsequentialrecommendationbidirectional; chai2025longer].
-- Feature interaction, which models higher-order crosses among non-sequential features such as user profile, item profile, and context [guo2018deepfmendtoendwide; Wang_2021; gui2023hiformerheterogeneousfeatureinteractions; zhu2025rankmixerscalingrankingmodels].
+- Sequence modeling, which encodes multi-behavior histories into candidate-aware representations using attention, local sequence modeling, or Transformers \[zhou2018deepnetworkclickthroughrate; kang2018selfattentivesequentialrecommendation; sun2019bert4recsequentialrecommendationbidirectional; chai2025longer\].
+- Feature interaction, which models higher-order crosses among non-sequential features such as user profile, item profile, and context \[guo2018deepfmendtoendwide; Wang_2021; gui2023hiformerheterogeneousfeatureinteractions; zhu2025rankmixerscalingrankingmodels\].
 
-The dominant architecture is an encode-then-interaction pipeline: user behavior is first compressed into a sequence representation, then concatenated with non-sequential features, and finally sent through a feature-interaction module. This design has two drawbacks. First, sequence modeling and feature interaction are separated, which weakens bidirectional information exchange [zeng2024interformer]. Second, the fragmented architecture cannot benefit as directly from mature large-language-model optimizations such as KV caching, memory-efficient attention, and mixed precision.
+The dominant architecture is an encode-then-interaction pipeline: user behavior is first compressed into a sequence representation, then concatenated with non-sequential features, and finally sent through a feature-interaction module. This design has two drawbacks. First, sequence modeling and feature interaction are separated, which weakens bidirectional information exchange \[zeng2024interformer\]. Second, the fragmented architecture cannot benefit as directly from mature large-language-model optimizations such as KV caching, memory-efficient attention, and mixed precision.
 
-Recent work on scaling laws in RecSys follows the same two-track pattern. Wukong [zhang2024wukong] and RankMixer [zhu2025rankmixerscalingrankingmodels] improve feature interaction. LONGER [chai2025longer] improves long-sequence modeling. These methods produce clear gains, but they still scale disconnected components instead of scaling a single unified backbone.
+Recent work on scaling laws in RecSys follows the same two-track pattern. Wukong \[zhang2024wukong\] and RankMixer \[zhu2025rankmixerscalingrankingmodels\] improve feature interaction. LONGER \[chai2025longer\] improves long-sequence modeling. These methods produce clear gains, but they still scale disconnected components instead of scaling a single unified backbone.
 
-OneTrans is proposed as a unified alternative. It uses a single Transformer-style backbone to jointly process both sequential and non-sequential features. A unified tokenizer maps multi-behavior sequences into sequential tokens and user, item, and context attributes into non-sequential tokens. The resulting mixed token sequence is passed through stacked OneTrans blocks. Unlike LLMs, where tokens are homogeneous text pieces, recommendation tokens come from diverse feature sources. OneTrans therefore adopts mixed parameterization: all sequential tokens share a single set of Q, K, V, and FFN weights, while each non-sequential token receives token-specific parameters, following the heterogeneous-feature insight of HiFormer [gui2023hiformerheterogeneousfeatureinteractions].
+OneTrans is proposed as a unified alternative. It uses a single Transformer-style backbone to jointly process both sequential and non-sequential features. A unified tokenizer maps multi-behavior sequences into sequential tokens and user, item, and context attributes into non-sequential tokens. The resulting mixed token sequence is passed through stacked OneTrans blocks. Unlike LLMs, where tokens are homogeneous text pieces, recommendation tokens come from diverse feature sources. OneTrans therefore adopts mixed parameterization: all sequential tokens share a single set of Q, K, V, and FFN weights, while each non-sequential token receives token-specific parameters, following the heterogeneous-feature insight of HiFormer \[gui2023hiformerheterogeneousfeatureinteractions\].
 
-This unified formulation offers three practical advantages. First, it allows sequential and non-sequential features to interact throughout the same stack. Second, it makes entire-model scaling more natural by adjusting backbone depth and width instead of scaling separate subsystems. Third, it directly inherits LLM optimization techniques, especially FlashAttention [dao2022flashattention], mixed precision [micikevicius2017mixed], and cross-request KV caching [chai2025longer]. In particular, cross-candidate and cross-request KV caching reduces serving complexity from $O(C)$ to $O(1)$ with respect to the number of candidates $C$ in a request.
+This unified formulation offers three practical advantages. First, it allows sequential and non-sequential features to interact throughout the same stack. Second, it makes entire-model scaling more natural by adjusting backbone depth and width instead of scaling separate subsystems. Third, it directly inherits LLM optimization techniques, especially FlashAttention \[dao2022flashattention\], mixed precision \[micikevicius2017mixed\], and cross-request KV caching \[chai2025longer\]. In particular, cross-candidate and cross-request KV caching reduces serving complexity from $O(C)$ to $O(1)$ with respect to the number of candidates $C$ in a request.
 
 The paper summarizes its contributions as follows:
 
@@ -71,15 +71,15 @@ Figure 1. Architectural comparison. In the conventional pipeline, sequence featu
 
 ## 2. Related Work
 
-Early CTR and ranking systems such as DIN [zhou2018deepnetworkclickthroughrate] and DSIN [feng2019deepsessionnetworkclickthrough] use local attention to learn candidate-conditioned summaries of user behavior, but they compress behavior into fixed-length vectors and therefore struggle with long-range dependency modeling [zhou2018deepevolutionnetworkclickthrough]. Self-attentive sequential recommendation models such as SASRec [kang2018selfattentivesequentialrecommendation], BERT4Rec [sun2019bert4recsequentialrecommendationbidirectional], and BST [chen2019behaviorsequencetransformerecommerce] improve this by modeling full-history dependencies. LONGER [chai2025longer] further scales sequence modeling to ultra-long histories in industrial settings. However, these approaches usually remain separate from feature-interaction modules and therefore still perform late fusion rather than full joint optimization [zeng2024interformer].
+Early CTR and ranking systems such as DIN \[zhou2018deepnetworkclickthroughrate\] and DSIN \[feng2019deepsessionnetworkclickthrough\] use local attention to learn candidate-conditioned summaries of user behavior, but they compress behavior into fixed-length vectors and therefore struggle with long-range dependency modeling \[zhou2018deepevolutionnetworkclickthrough\]. Self-attentive sequential recommendation models such as SASRec \[kang2018selfattentivesequentialrecommendation\], BERT4Rec \[sun2019bert4recsequentialrecommendationbidirectional\], and BST \[chen2019behaviorsequencetransformerecommerce\] improve this by modeling full-history dependencies. LONGER \[chai2025longer\] further scales sequence modeling to ultra-long histories in industrial settings. However, these approaches usually remain separate from feature-interaction modules and therefore still perform late fusion rather than full joint optimization \[zeng2024interformer\].
 
-Feature interaction has its own history. Classical models such as Wide and Deep [cheng2016widedeeplearning], FM and DeepFM [chang2010training; guo2018deepfmendtoendwide], and DCN / DCNv2 [wang2017deepcrossnetwork; Wang_2021] provide efficient low-order or bounded-order interactions, but their gains can saturate as more layers are added [zhang2024wukong]. Attention-based models such as AutoInt [Song_2019] and HiFormer [gui2023hiformerheterogeneousfeatureinteractions] make interaction modeling more flexible, and recent large-scale systems such as Wukong [zhang2024wukong] and RankMixer [zhu2025rankmixerscalingrankingmodels] show clearer scaling behavior. Even so, these systems typically preserve the interaction-stage abstraction, so unified optimization with sequence modeling is still limited.
+Feature interaction has its own history. Classical models such as Wide and Deep \[cheng2016widedeeplearning\], FM and DeepFM \[chang2010training; guo2018deepfmendtoendwide\], and DCN / DCNv2 \[wang2017deepcrossnetwork; Wang_2021\] provide efficient low-order or bounded-order interactions, but their gains can saturate as more layers are added \[zhang2024wukong\]. Attention-based models such as AutoInt \[Song_2019\] and HiFormer \[gui2023hiformerheterogeneousfeatureinteractions\] make interaction modeling more flexible, and recent large-scale systems such as Wukong \[zhang2024wukong\] and RankMixer \[zhu2025rankmixerscalingrankingmodels\] show clearer scaling behavior. Even so, these systems typically preserve the interaction-stage abstraction, so unified optimization with sequence modeling is still limited.
 
-InterFormer [zeng2024interformer] is one of the first attempts to explicitly bridge sequence modeling and feature interaction by allowing bidirectional exchange between them. But it still keeps them as distinct modules linked by a cross architecture, which adds complexity and fragments execution. Generative recommender systems such as HSTU [zhai2024actions] offer a complementary direction by framing recommendation as sequential transduction, but DLRM-style ranking still needs strong support for rich non-sequential features. OneTrans is positioned as a unified ranking architecture that merges these concerns into a single production-friendly Transformer backbone.
+InterFormer \[zeng2024interformer\] is one of the first attempts to explicitly bridge sequence modeling and feature interaction by allowing bidirectional exchange between them. But it still keeps them as distinct modules linked by a cross architecture, which adds complexity and fragments execution. Generative recommender systems such as HSTU \[zhai2024actions\] offer a complementary direction by framing recommendation as sequential transduction, but DLRM-style ranking still needs strong support for rich non-sequential features. OneTrans is positioned as a unified ranking architecture that merges these concerns into a single production-friendly Transformer backbone.
 
 ![Figure 2: OneTrans system architecture and block design.](img/onetrans/onetrans_all-1.png)
 
-Figure 2. OneTrans system architecture. Sequential and non-sequential features are tokenized separately. After inserting [SEP] between user-behavior sequences, the unified token sequence is fed into stacked OneTrans pyramid blocks that progressively shrink the sequential token length until it matches the number of non-sequential tokens. Each block is a pre-norm causal Transformer with Mixed Causal Attention and Mixed FFN. Mixed means that sequential tokens share one set of QKV and FFN weights, while each non-sequential token gets token-specific parameters.
+Figure 2. OneTrans system architecture. Sequential and non-sequential features are tokenized separately. After inserting \[SEP\] between user-behavior sequences, the unified token sequence is fed into stacked OneTrans pyramid blocks that progressively shrink the sequential token length until it matches the number of non-sequential tokens. Each block is a pre-norm causal Transformer with Mixed Causal Attention and Mixed FFN. Mixed means that sequential tokens share one set of QKV and FFN weights, while each non-sequential token gets token-specific parameters.
 
 ## 3. Methodology
 
@@ -103,10 +103,10 @@ $$
 OneTrans uses a unified tokenizer that maps sequential features into S-tokens and non-sequential features into NS-tokens. The initial token sequence is:
 
 $$
-\mathbf{X}^{(0)} = [\text{S-tokens}; \text{NS-tokens}] \in \mathbb{R}^{(L_S + L_{NS}) \times d}.
+\mathbf{X}^{(0)} = \[\text{S-tokens}; \text{NS-tokens}\] \in \mathbb{R}^{(L_S + L_{NS}) \times d}.
 $$
 
-The S-side contains $L_S$ sequential tokens, the NS-side contains $L_{NS}$ non-sequential tokens, and every token has dimension $d$. Learnable [SEP] tokens are inserted between different user-behavior sequences.
+The S-side contains $L_S$ sequential tokens, the NS-side contains $L_{NS}$ non-sequential tokens, and every token has dimension $d$. Learnable \[SEP\] tokens are inserted between different user-behavior sequences.
 
 The backbone then applies stacked OneTrans blocks. For block $n$, the update is:
 
@@ -135,10 +135,10 @@ To construct $\mathbf{X}^{(0)}$, OneTrans first embeds all raw inputs and then s
 
 Non-sequential features include numerical signals such as price or historical CTR, and categorical signals such as user ID or item category. After bucketization or one-hot encoding, they are embedded and turned into $L_{NS}$ non-sequential tokens using one of two strategies.
 
-Group-wise tokenizer, aligned with RankMixer [zhu2025rankmixerscalingrankingmodels]:
+Group-wise tokenizer, aligned with RankMixer \[zhu2025rankmixerscalingrankingmodels\]:
 
 $$
-\text{NS-tokens} = [\mathrm{MLP}_1(\mathrm{concat}(\mathbf{g}_1)), \dots, \mathrm{MLP}_{L_{NS}}(\mathrm{concat}(\mathbf{g}_{L_{NS}}))],
+\text{NS-tokens} = \[\mathrm{MLP}_1(\mathrm{concat}(\mathbf{g}_1)), \dots, \mathrm{MLP}_{L_{NS}}(\mathrm{concat}(\mathbf{g}_{L_{NS}}))\],
 $$
 
 where features are manually partitioned into semantic groups $\{\mathbf{g}_1, \dots, \mathbf{g}_{L_{NS}}\}$.
@@ -156,19 +156,19 @@ Auto-Split uses a single dense projection and then splits the output into multip
 OneTrans accepts a multi-behavior sequence set:
 
 $$
-\mathcal{S} = \{\mathbf{S}_1, \dots, \mathbf{S}_n\}, \quad \mathbf{S}_i = [\mathbf{e}_{i1}, \dots, \mathbf{e}_{iL_i}].
+\mathcal{S} = \{\mathbf{S}_1, \dots, \mathbf{S}_n\}, \quad \mathbf{S}_i = \[\mathbf{e}_{i1}, \dots, \mathbf{e}_{iL_i}\].
 $$
 
 Each event embedding $\mathbf{e}_{ij}$ is built from an item ID together with side information such as category or price. Because different behavior streams may have different raw dimensions, each sequence is projected into the common hidden dimension $d$ with a shared sequence-specific projection:
 
 $$
-\tilde{\mathbf{S}}_i = [\mathrm{MLP}_i(\mathbf{e}_{i1}), \dots, \mathrm{MLP}_i(\mathbf{e}_{iL_i})] \in \mathbb{R}^{L_i \times d}.
+\tilde{\mathbf{S}}_i = \[\mathrm{MLP}_i(\mathbf{e}_{i1}), \dots, \mathrm{MLP}_i(\mathbf{e}_{iL_i})\] \in \mathbb{R}^{L_i \times d}.
 $$
 
 The aligned sequences are then merged into one token stream using one of two rules:
 
 - Timestamp-aware fusion: interleave events by time, with sequence-type indicators.
-- Timestamp-agnostic fusion: concatenate sequences by behavior impact, for example purchase before add-to-cart before click, and insert learnable [SEP] tokens between sequences.
+- Timestamp-agnostic fusion: concatenate sequences by behavior impact, for example purchase before add-to-cart before click, and insert learnable \[SEP\] tokens between sequences.
 
 The merged sequential token sequence is:
 
@@ -176,11 +176,11 @@ $$
 \text{S-tokens} = \mathrm{Merge}(\tilde{\mathbf{S}}_1, \dots, \tilde{\mathbf{S}}_n) \in \mathbb{R}^{L_S \times d}, \quad L_S = \sum_{i=1}^{n} L_i + L_{SEP}.
 $$
 
-The ablations later show that timestamp-aware fusion performs better when timestamps are available, and that [SEP] tokens are useful when using timestamp-agnostic fusion.
+The ablations later show that timestamp-aware fusion performs better when timestamps are available, and that \[SEP\] tokens are useful when using timestamp-agnostic fusion.
 
 ### 3.3 OneTrans Block
 
-Each OneTrans block is a pre-norm causal Transformer operating on $L_S$ sequential tokens followed by $L_{NS}$ non-sequential tokens. Since recommendation tokens differ strongly in semantics and statistics, the model applies RMSNorm [zhang2019root] as pre-norm to all token types to stabilize optimization.
+Each OneTrans block is a pre-norm causal Transformer operating on $L_S$ sequential tokens followed by $L_{NS}$ non-sequential tokens. Since recommendation tokens differ strongly in semantics and statistics, the model applies RMSNorm \[zhang2019root\] as pre-norm to all token types to stabilize optimization.
 
 #### 3.3.1 Mixed Causal Attention
 
@@ -256,7 +256,7 @@ Candidate-specific sequences that cannot reuse the shared cache are pre-aggregat
 
 #### 3.5.2 Unified LLM Optimizations
 
-OneTrans adopts FlashAttention-2 [dao2023flashattention2], mixed-precision training [micikevicius2018mixed], and activation recomputation [gruslys2016memory]. These optimizations reduce attention I/O, peak memory, and training cost, and they are especially natural to deploy because the whole model is already expressed as a Transformer backbone.
+OneTrans adopts FlashAttention-2 \[dao2023flashattention2\], mixed-precision training \[micikevicius2018mixed\], and activation recomputation \[gruslys2016memory\]. These optimizations reduce attention I/O, peak memory, and training cost, and they are especially natural to deploy because the whole model is already expressed as a Transformer backbone.
 
 ## 4. Experiments
 
@@ -356,7 +356,7 @@ The ablation study uses OneTrans_S as the reference model and tests both input-d
 | -------------- | --------------------------------------- | ------: | -------: | ------: | -------: | ---------: | -----: |
 | Input          | Group-wise Tokenizer                    |  -0.10% |   -0.30% |  -0.12% |   -0.10% |         78 |   2.35 |
 | Input          | Timestamp-agnostic Fusion               |  -0.09% |   -0.22% |  -0.20% |   -0.21% |         91 |   2.64 |
-| Input          | Timestamp-agnostic Fusion without [SEP] |  -0.13% |   -0.32% |  -0.29% |   -0.33% |         91 |   2.62 |
+| Input          | Timestamp-agnostic Fusion without \[SEP\] |  -0.13% |   -0.32% |  -0.29% |   -0.33% |         91 |   2.62 |
 | OneTrans Block | Shared parameters for all tokens        |  -0.15% |   -0.29% |  -0.14% |   -0.29% |         24 |   2.64 |
 | OneTrans Block | Full attention                          |  +0.00% |   +0.01% |  -0.03% |   +0.06% |         91 |   2.64 |
 | OneTrans Block | Without pyramid stack                   |  -0.05% |   +0.06% |  -0.04% |   -0.42% |         92 |   8.08 |
@@ -365,7 +365,7 @@ The main conclusions are:
 
 - Auto-Split tokenizer performs better than manual group-wise tokenization.
 - Timestamp-aware fusion is better than ordering by behavior impact when timestamps are available.
-- Learnable [SEP] tokens help the model separate multiple sequences when timestamp-agnostic fusion is used.
+- Learnable \[SEP\] tokens help the model separate multiple sequences when timestamp-agnostic fusion is used.
 - Token-specific parameters for non-sequential tokens outperform sharing one projection across all token types.
 - Causal attention performs about as well as full attention while preserving compatibility with caching and other system optimizations.
 - Removing the pyramid stack greatly increases compute without producing meaningful quality gains, which suggests that most useful information can indeed be concentrated into a small tail of queries.

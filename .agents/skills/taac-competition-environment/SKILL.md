@@ -1,244 +1,65 @@
 ---
 name: taac-competition-environment
-description: 'Use when setting up, documenting, debugging, or reviewing the TAAC 2026 competition environment flow: local uv development, CUDA/CPU dependency profiles, run.sh commands, two-file online training bundles, code_package.zip, and online Conda+pip/Python execution without uv.'
-argument-hint: 'local setup, package, online run, or env debug'
-user-invocable: true
+description: Use before running TAAC repository Python commands, pytest, console scripts, packaging/docs CLIs, or run.sh, and when working on local setup, uv/CUDA dependency flow, online training or inference bundles, package contents, platform Python execution, or environment/debug docs.
 ---
 
 # TAAC Competition Environment
 
-## When to Use
+Use this skill to find the live environment contract quickly. Do not copy behavior from this file when the source has changed.
 
-- Set up or debug the local TAAC development environment.
-- Decide whether a command should run through `uv` or plain Python.
-- Build, inspect, or explain online training bundles.
-- Prepare online platform runs where the platform executes only `run.sh`.
-- Review docs or scripts that mention package shape, dependency installation, Conda, pip, CUDA profiles, or competition workflow.
+## Command Contract
 
-## Environment Model
+- In the local repository, assume the system `python`/`python3` may be absent. Use `uv run python ...`, `uv run pytest ...`, and `uv run <console-script> ...` on the first attempt.
+- Use bare `python` only for generated online bundle simulation or platform docs where `TAAC_RUNNER=python`/`TAAC_PYTHON` is the behavior under test.
+- `bash run.sh train|val|eval|infer` is valid locally because `run.sh` dispatches through `uv` outside bundle mode.
 
-This repository deliberately uses two different environment modes:
+## Read First
 
-- Local repository mode uses `uv` for dependency resolution, lockfile fidelity, and command execution.
-- Online bundle mode uses the platform's already activated Python or Conda environment and runs with plain `python`; do not require `uv` online.
+For local vs online runner behavior:
 
-The same top-level `run.sh` supports both modes:
+- `run.sh`
+- `src/taac2026/application/bootstrap/run_sh.py`
+- `src/taac2026/infrastructure/platform/{deps,env,imports}.py`
+- `docs/guide/competition-online-server.md`
+- `docs/guide/online-training-bundle.md`
+- `docs/getting-started.md`
 
-- If `code_package.zip` exists beside `run.sh`, bundle mode is enabled and the default runner is `python`.
-- If running from the repository root without `code_package.zip`, local mode is enabled and the default runner is `uv`.
-- `TAAC_RUNNER=python|uv` can override the default when debugging.
+For package layout:
 
-## Local Development With uv
+- `src/taac2026/application/packaging/{cli,service}.py`
+- `src/taac2026/infrastructure/bundles/`
+- `src/taac2026/application/bootstrap/inference_bundle*.py`
+- `tests/unit/application/packaging/`
+- `tests/unit/application/bootstrap/`
 
-Use `uv` locally because `pyproject.toml` and `uv.lock` are the source of truth for development dependencies.
+For dependencies:
 
-Recommended bootstrap:
+- `pyproject.toml`
+- `uv.lock`
+- docs that mention setup or bundle execution
 
-```bash
-git lfs install
-git lfs pull
-uv python install 3.10.20
-uv sync --locked --extra cuda126
-uv sync --locked --extra dev --extra cuda126  # when running tests, lint, or local docs
-```
+## Non-Obvious Context
 
-For local training or validation, use the only CUDA profile currently supported by the project:
+- Local repository commands are expected to use `uv`; generated online bundles must not require `uv`.
+- Bundle validation must inspect what gets zipped, not just whether local imports work from the repository root.
+- The online platform may provide its own Python/CUDA stack. Avoid changes that make bundle mode depend on dev extras, repo-local files, or `uv.lock`.
+- `docs/archive/files/...` are historical competition references, not active runtime code.
 
-```bash
-uv sync --locked --extra cuda126
-```
+## Validation
 
-Use the top-level entrypoint instead of calling console scripts directly:
-
-```bash
-bash run.sh train --experiment config/baseline \
-    --dataset-path /path/to/parquet_or_dir \
-    --schema-path /path/to/schema.json
-
-uv run pytest tests/unit -q
-bash run.sh package --experiment config/interformer --output-dir /tmp/interformer-online --force
-```
-
-Local defaults:
-
-- All local commands use CUDA profile `cuda126`; setting `TAAC_CUDA_PROFILE` or `--cuda-profile` to any other value is treated as an error.
-- Training, evaluation, inference, and packaging commands all reuse the same `cuda126` environment; pytest, hypothesis, benchmark tooling, coverage helpers, Ruff, and Zensical live in the `dev` extra and should be installed with `uv sync --locked --extra dev --extra cuda126` when needed.
-- `TAAC_SKIP_UV_SYNC=1` skips automatic `uv sync` when the environment is already prepared.
-- `TAAC_INSTALL_UV=0` prevents `run.sh` from trying to install `uv` if it is missing.
-
-## Dependency Profiles
-
-The project requires Python `>=3.10,<3.14`.
-
-Important extras:
-
-- `dev`: Ruff, pytest, hypothesis, benchmark tooling, coverage helpers, and Zensical for local testing and docs work.
-- `cuda126`: CUDA 12.6 PyTorch, FBGEMM, and TorchRec runtime for the repository.
-
-Do not point `uv` at an alternate package index unless you are intentionally updating dependency resolution. The lockfile is expected to resolve against the indexes declared in `pyproject.toml`.
-
-## Online Bundle Shape
-
-The online platform is expected to recognize and execute only top-level `run.sh`. The upload directory must contain exactly the runnable entry script and code package:
-
-```text
-<training_bundle>/
-├── run.sh
-└── code_package.zip
-```
-
-Build it locally with:
+For environment/bootstrap changes:
 
 ```bash
-bash run.sh package --experiment config/baseline --output-dir outputs/training_bundles/baseline_training_bundle --force
-bash run.sh package --experiment config/interformer --output-dir outputs/training_bundles/interformer_training_bundle --force
-bash run.sh package --experiment config/onetrans --output-dir outputs/training_bundles/onetrans_training_bundle --force
+uv run pytest tests/unit/application/bootstrap -q
+uv run pytest tests/unit/application/packaging -q
 ```
 
-The package command calls `taac-package-train`, which writes:
-
-- `run.sh`: copied from the repository root and marked executable.
-- `code_package.zip`: minimal runtime source tree.
-
-The zip contains `project/.taac_training_manifest.json`, `pyproject.toml`, `src/taac2026`, and only the selected experiment package under `config/<experiment>`. It must not include tests, docs, unrelated experiment packages, or local provenance files such as `uv.lock` and `README.md`.
-
-## Official Baseline Snapshots
-
-The competition reference snapshots may appear as top-level source drops:
-
-- self-contained training baseline with `run.sh`, a training entrypoint, a trainer, utilities, dataset code, model code, and `ns_groups.json`.
-- self-contained final scoring baseline with `infer.py`, dataset code, and model code.
-
-Treat these sources as disposable references. Extract the contracts, update repository docs/skills without naming source-drop paths, and delete the source drops when finished. Do not include source drops in generated bundles; build from `config/<experiment>/` with the packaging CLIs instead.
-
-The official training snapshot reads `TRAIN_DATA_PATH`, `TRAIN_CKPT_PATH`, `TRAIN_LOG_PATH`, and `TRAIN_TF_EVENTS_PATH`. The official scoring snapshot reads `MODEL_OUTPUT_PATH`, `EVAL_DATA_PATH`, and `EVAL_RESULT_PATH`, then writes `predictions.json` under `EVAL_RESULT_PATH` with the shape `{"predictions": {user_id: probability}}`.
-
-The important portable contract between training and scoring is the checkpoint directory. It must contain `model.safetensors`, `schema.json`, `train_config.json`, and `ns_groups.json` when grouping was enabled. Evaluation rebuilds the model from these sidecars and loads the state dict strictly, so missing or stale sidecars usually cause shape mismatches rather than a recoverable warning.
-
-## Online Conda + pip / Python Runtime
-
-Online bundle mode must not depend on `uv`.
-
-Use the platform-provided Conda environment when available:
+For bundle-impacting changes, build and inspect at least one tiny bundle:
 
 ```bash
-conda activate <platform-env>
-export TAAC_PYTHON="$(command -v python)"
-export TAAC_RUNNER=python
+uv run taac-package-train --experiment experiments/baseline --output-dir /tmp/taac-training-bundle --json
+uv run taac-package-infer --experiment experiments/baseline --output-dir /tmp/taac-inference-bundle --json
+uv run python -m zipfile -l /tmp/taac-training-bundle/code_package.zip | sed -n '1,80p'
 ```
 
-Dependency responsibility online:
-
-- Prefer the platform or image-provided CUDA, PyTorch, FBGEMM, and TorchRec stack.
-- Use Conda for the base Python/CUDA/PyTorch environment if the platform allows custom images or startup commands.
-- Use pip inside that Conda environment only for missing pure-Python packages that are not already available.
-- Packaged `run.sh` and `infer.py` default to `pip install .` and therefore skip the repository `dev` extra; use `TAAC_BUNDLE_PIP_EXTRAS` only when you intentionally need an extra inside bundle mode.
-- Do not call `uv sync` or require `uv.lock` online; `uv.lock` remains a local repository artifact for provenance and reproducibility and is not packaged into online bundles.
-
-If the platform image allows a pre-run dependency step, use the active Conda Python:
-
-```bash
-python -m pip install --upgrade pip
-python -m pip install numpy pyarrow scikit-learn rich tensorboard tqdm optuna tomli
-```
-
-Install the CUDA PyTorch stack only through the platform-approved channel. Avoid pip-installing a second incompatible Torch stack over the platform environment.
-
-## Online Run Procedure
-
-After uploading `run.sh` and `code_package.zip` to the same directory, configure paths and run the script:
-
-```bash
-export TAAC_DATASET_PATH=/path/to/train.parquet_or_dataset_dir
-export TAAC_SCHEMA_PATH=/path/to/schema.json
-export TAAC_OUTPUT_DIR=/path/to/output
-export TAAC_RUNNER=python
-bash run.sh --compile --amp --amp-dtype bfloat16
-```
-
-Important runtime variables:
-
-- `TAAC_DATASET_PATH` or `TRAIN_DATA_PATH`: parquet file or parquet directory; usually required for training.
-- `TAAC_SCHEMA_PATH` or `TRAIN_SCHEMA_PATH`: official `schema.json` when it is not colocated with the parquet data.
-- `TAAC_OUTPUT_DIR` or `TRAIN_CKPT_PATH`: training output directory.
-- `TAAC_EXPERIMENT`: override the bundled experiment path; normally leave unset so the manifest decides.
-- `TAAC_BUNDLE_WORKDIR`: directory where `code_package.zip` is extracted.
-- `TAAC_CODE_PACKAGE`: non-default path to `code_package.zip`.
-- `TAAC_FORCE_EXTRACT=1`: force re-extraction of the zip.
-- `TAAC_BUNDLE_PIP_EXTRAS`: optional extras to install in bundle mode; default is empty so packaged train/infer skip `dev`.
-- `TAAC_PYTHON`: explicit Python interpreter, often the active Conda interpreter.
-- `TAAC_RUNNER=python`: force online no-uv execution.
-
-In bundle mode, `run.sh` extracts the zip to `.taac_bundle/project`, sets:
-
-```bash
-PYTHONPATH="<bundle-workdir>/project/src:<bundle-workdir>/project:${PYTHONPATH}"
-```
-
-Then it invokes:
-
-```bash
-python -m taac2026.application.training.cli --experiment <manifest experiment> ...
-```
-
-## Competition Workflow
-
-Use this lifecycle for competition work:
-
-1. Develop locally with `uv sync --locked --extra cuda126`.
-2. Install local dev tooling with `uv sync --locked --extra dev --extra cuda126` when you need pytest, Ruff, or docs preview.
-3. Add or modify an experiment package under `config/<name>`.
-4. Run focused unit tests locally with `uv run pytest tests/unit -q`.
-5. For training experiments, keep the same `cuda126` environment and train through `bash run.sh train --experiment config/<name>`.
-6. Build the online bundle with `bash run.sh package --experiment config/<name> --force`.
-7. Inspect `code_package.zip` when changing packaging logic; confirm it contains the selected experiment package and required assets such as `ns_groups.json`.
-8. Upload only `run.sh` and `code_package.zip` to the online platform.
-9. Run online in the platform Conda/Python environment with `TAAC_RUNNER=python` and dataset/output environment variables.
-10. Collect checkpoints, logs, tensorboard events, predictions, and sidecars from the platform output directory.
-
-## Validation Commands
-
-Local validation:
-
-```bash
-uv run pytest tests/unit -q
-uv run --with ruff ruff check src/taac2026 tests/unit
-```
-
-Bundle validation:
-
-```bash
-bash run.sh package --experiment config/interformer --output-dir /tmp/interformer-bundle --force
-python -m zipfile -l /tmp/interformer-bundle/code_package.zip | head
-```
-
-Online-style local smoke without `uv`:
-
-```bash
-export TAAC_RUNNER=python
-export TAAC_DATASET_PATH=/path/to/train.parquet_or_dataset_dir
-export TAAC_SCHEMA_PATH=/path/to/schema.json
-bash /tmp/interformer-bundle/run.sh --device cpu --num_epochs 1 --batch_size 8
-```
-
-Use tiny or sample data for smoke tests; full training should use the platform GPU environment.
-
-## Troubleshooting
-
-If `pyproject.toml not found` appears, upload `run.sh` beside `code_package.zip`, or run from the repository root.
-
-If imports fail online, confirm `run.sh` extracted `code_package.zip` and that `PYTHONPATH` includes both `project/src` and `project`.
-
-If a dependency is missing online, install it into the active Conda environment with `python -m pip install ...` before running `run.sh`, or rebuild the platform image. Do not switch the bundle runner to `uv` unless the platform explicitly provides `uv` and network access.
-
-If Torch, CUDA, FBGEMM, or TorchRec versions conflict online, fix the Conda/platform image rather than pip-overwriting core GPU packages inside the job.
-
-If the wrong experiment runs online, inspect `project/.taac_training_manifest.json` inside `code_package.zip` and check whether `TAAC_EXPERIMENT` is overriding the manifest.
-
-If stale extracted code is reused, set:
-
-```bash
-export TAAC_FORCE_EXTRACT=1
-```
-
-Then rerun `bash run.sh`.
+For docs-only environment edits, validate docs with the docs skill instead of running the full unit suite by default.

@@ -188,7 +188,7 @@ causal / hybrid-mask Transformer backbone
 
 ### 和现有实验包的关系
 
-- `baseline` / `ctr_baseline`：适合做低成本对照，验证新增 loss 是否真涨分。
+- `baseline`：适合做低成本对照，验证新增 loss 是否真涨分。
 - `onetrans`：天然适合承载统一 token stream，可作为第一版实现底座。
 - `interformer` / `hyformer`：适合实验 cross-modal attention、action-conditioned attention bias 和 hybrid mask。
 - `symbiosis`：适合把多任务、多模态、多损失写成更清晰的组合式训练框架。

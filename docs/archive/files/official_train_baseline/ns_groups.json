@@ -1,0 +1,27 @@
+{
+  "_purpose": "EXAMPLE / REFERENCE ONLY. This file illustrates the expected schema and layout of an NS-groups JSON (the format consumed by train.py's --ns_groups_json flag). The concrete fid lists below are not a prescriptive grouping; please adapt them to your own feature schema.",
+  "_format": "Top-level keys: 'user_ns_groups' and 'item_ns_groups', each mapping a group name (e.g. 'U1') to a list of feature ids (fids). All other keys whose names begin with '_' are human-readable notes and are ignored by train.py.",
+  "_usage": "train.py loads this file (path given by --ns_groups_json, default ./ns_groups.json) and converts fids into positional indices of the schema entries at runtime. If the file is missing, each feature is placed in its own singleton group.",
+
+  "_comment": "NS token groups for parquet data. Values are fids (the numeric suffix in column names, e.g. user_int_feats_{fid}); train.py converts them to schema entry indices at load time.",
+  "_note_T": "T = num_queries * num_sequences + num_ns = 1*4 + (7+1+4) = 16. num_sequences=4 (seq_a/b/c/d). num_ns = 7 user_int groups + 1 user_dense token + 4 item_int groups = 12. d_model must be divisible by 16 (e.g. 64).",
+  "_note_user_dense": "All user dense features (fid 61/62/63/64/65/66/87/89/90/91, total_dim=918) are concatenated and projected to a single NS token. Not configured here.",
+  "_note_shared_fids": "Fids 62/63/64/65/66/89/90/91 appear in both user_int_feats and user_dense_feats. The int and float parts jointly describe the same underlying signal. The int parts are grouped via GroupNSTokenizer below; the float parts are included in the single user_dense NS token.",
+
+  "user_ns_groups": {
+    "U1": [1, 15],
+    "U2": [48, 49, 89, 90, 91],
+    "U3": [80],
+    "U4": [51, 52, 53, 54, 86],
+    "U5": [82, 92, 93],
+    "U6": [50, 60, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109],
+    "U7": [3, 4, 55, 56, 57, 58, 59, 62, 63, 64, 65, 66]
+  },
+
+  "item_ns_groups": {
+    "I1": [11, 13],
+    "I2": [5, 6, 7, 8, 12],
+    "I3": [16, 81, 83, 84, 85],
+    "I4": [9, 10]
+  }
+}

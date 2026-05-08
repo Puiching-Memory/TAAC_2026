@@ -4,98 +4,76 @@ icon: lucide/folder-open
 
 # 实验包总览
 
-实验包是 TAAC 2026 的核心扩展单元。每个包是 `config/` 下的独立目录，包含模型定义、NS 分组和默认训练配置。新增实验无需修改框架代码。
+实验包是这个仓库里“可以被训练、评估、推理或打包”的最小单位。框架层负责通用运行时，实验包只回答三个问题：叫什么、默认怎么训、用哪个模型或维护任务。
 
-## 当前实验包
+如果你只是想跑起来，优先从 Baseline 开始；如果你想改模型，再从最接近的实验包复制。
 
-### 模型训练包
+## 怎么选
 
-| 实验包         | 模型类         | Blocks | Dropout | NS Tokenizer      | 亮点                             |
-| -------------- | -------------- | ------ | ------- | ----------------- | -------------------------------- |
-| Baseline       | HyFormer       | 默认   | 默认    | group             | 基准参考                         |
-| CTR Baseline   | CTRBaseline    | 2      | 0.01    | group             | 低 Dropout                       |
-| DeepContextNet | DeepContextNet | 3      | 0.02    | group             | 最深的 group 栈                  |
-| HyFormer       | HyFormer       | 默认   | 默认    | rankmixer (5u/2i) | num_queries=2                    |
-| InterFormer    | InterFormer    | 2      | 0.02    | group             | 交叉注意力                       |
-| OneTrans       | OneTrans       | 2      | 0.02    | rankmixer (5u/2i) | 单 Transformer                   |
-| Symbiosis      | Symbiosis      | 3      | 0.02    | rankmixer (5u/2i) | RoPE + AMP + compile + 11 项开关 |
-| UniRec         | UniRec         | 3      | 0.02    | rankmixer (5u/2i) | 统一推荐                         |
-| UniScaleFormer | UniScaleFormer | 4      | 0.02    | rankmixer (5u/2i) | 最深栈                           |
+| 目标                      | 从这里开始                                  | 说明                                                                  |
+| ------------------------- | ------------------------------------------- | --------------------------------------------------------------------- |
+| 需要一个干净参照          | [Baseline](baseline.md)                     | HyFormer 基线，默认不启用数据增强和 TileLang backend                  |
+| 想看当前增强版基线        | [Baseline+](baseline-plus.md)               | 同一类 HyFormer 思路，默认打开 OPT cache、数据增强和 TileLang backend |
+| 想做用户-物品交互结构     | [InterFormer](interformer.md)               | Group tokenizer，强调用户与物品分支之间的交互                         |
+| 想做统一 Transformer 结构 | [OneTrans](onetrans.md)                     | RankMixer tokenizer，把用户、物品和序列放进更统一的编码路径           |
+| 想试原生统一 token 流     | [UniTok](unitok.md)                         | Field-level token、dense packet 和行为事件进入同一个 backbone          |
+| 想试复杂融合方案          | [Symbiosis](symbiosis.md)                   | 带额外 CLI 参数和自定义 hooks，适合做消融                             |
+| 想知道线上机器是什么样    | [Host Device Info](host-device-info.md)     | 不需要数据集，采集平台环境快照                                        |
+| 想在线上跑数据概览        | [Online Dataset EDA](online-dataset-eda.md) | 需要数据集，流式扫描 parquet 并打印文本报告                           |
 
-### 维护工具包
+## 运行方式
 
-| 实验包             | 用途             | 需要数据集 | 说明                               |
-| ------------------ | ---------------- | ---------- | ---------------------------------- |
-| Host Device Info   | 主机设备诊断采集 | 否         | 采集 GPU、网络、依赖源等环境快照   |
-| Online Dataset EDA | 数据集探索分析   | 是         | 流式 Parquet 统计，线上友好        |
-
-## 包内文件
-
-### 模型训练包
-
-每个模型训练包目录包含三个文件：
-
-```
-config/<experiment_name>/
-├── __init__.py         # EXPERIMENT = PCVRExperiment(name, package_dir, model_class_name, train_defaults)
-├── model.py            # 模型类实现
-└── ns_groups.json      # NS 特征分组映射
-```
-
-**`__init__.py`** 定义模块级 `EXPERIMENT` 对象：
-
-```python
-from taac2026.infrastructure.pcvr.experiment import PCVRExperiment
-from taac2026.infrastructure.pcvr.config import PCVRTrainConfig
-
-EXPERIMENT = PCVRExperiment(
-    name="pcvr_baseline",
-    package_dir=Path(__file__).parent,
-    model_class_name="PCVRHyFormer",
-    train_defaults=PCVRTrainConfig(...),
-)
-```
-
-**`model.py`** 实现模型类，必须继承 `EmbeddingParameterMixin` 并实现：
-
-| 方法                             | 签名                                   | 说明                   |
-| -------------------------------- | -------------------------------------- | ---------------------- |
-| `forward`                        | `(ModelInput) -> logits`               | 前向传播               |
-| `predict`                        | `(ModelInput) -> (logits, embeddings)` | 推理用                 |
-| `get_sparse_params`              | `() -> list[Parameter]`                | 稀疏参数               |
-| `get_dense_params`               | `() -> list[Parameter]`                | 稠密参数               |
-| `reinit_high_cardinality_params` | `() -> None`                           | 重初始化低频 Embedding |
-
-**`ns_groups.json`** 定义 NS 特征分组，格式见 [架构与概念](../architecture.md#ns-groups)。
-
-### 维护工具包
-
-维护工具包使用 `ExperimentSpec` 而非 `PCVRExperiment`，不需要模型定义和 NS 分组：
-
-```
-config/<tool_name>/
-├── __init__.py         # EXPERIMENT = ExperimentSpec(name, package_dir, train_fn, metadata)
-└── runner.py           # 工具逻辑实现
-```
-
-- [Host Device Info](host-device-info.md) -- 主机与设备诊断采集
-- [Online Dataset EDA](online-dataset-eda.md) -- 数据集探索性分析
-
-## 运行任意实验包
+模型实验本地训练：
 
 ```bash
-uv run taac-train --experiment config/<name> \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+bash run.sh train \
+  --experiment experiments/baseline \
+  --run-dir outputs/baseline_smoke
 ```
 
-## 打包任意实验包
+维护实验也走同一个入口：
 
 ```bash
-uv run taac-package-train --experiment config/<name> --output-dir outputs/bundle
-uv run taac-package-infer --experiment config/<name> --output-dir outputs/bundle
+bash run.sh train --experiment experiments/host_device_info
 ```
 
-## 新增或修改实验包
+`run.sh` 只处理 `train`、`val` / `eval` 和 `infer`。线上上传物由独立打包命令生成：
 
-详见 [新增实验包](../guide/contributing.md)。
+```bash
+uv run taac-package-train --experiment experiments/baseline --output-dir outputs/bundles/baseline_training
+uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
+```
+
+维护类实验只支持训练 bundle；它们没有推理模型接口。
+
+## 包长什么样
+
+普通 PCVR 模型实验通常只有两个必需文件：
+
+```text
+experiments/<name>/
+├── __init__.py
+└── model.py
+```
+
+`__init__.py` 导出 `EXPERIMENT`，放实验名、模型类名、默认训练配置和必要 hooks。`model.py` 放当前实验自己的模型类。确实属于共享运行时的逻辑应放到 `src/taac2026/`，不要塞回实验包。
+
+维护工具包更轻：
+
+```text
+experiments/<tool>/
+├── __init__.py
+└── runner.py
+```
+
+它们使用 `ExperimentSpec`，不需要模型类、checkpoint sidecar 或推理 hooks。
+
+## 改实验时先看哪里
+
+- 实验入口：`experiments/<name>/__init__.py`
+- 模型实现：`experiments/<name>/model.py`
+- 实验发现与装载：`src/taac2026/application/experiments/`
+- 模型输入契约：`src/taac2026/domain/model_contract.py`
+- 新增实验流程：[新增实验包](../guide/contributing.md)
+
+不要从 `docs/archive/files/...` 推断当前契约；那里是历史快照。

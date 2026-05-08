@@ -4,98 +4,160 @@ icon: lucide/bar-chart
 
 # Online Dataset EDA
 
-线上友好的数据集探索性分析（EDA）工具，以实验包形式集成，可在训练 bundle 内直接运行，无需额外依赖。
+Online Dataset EDA 是一个维护类实验包，用来在线上训练环境里对 parquet 数据做文本化探索分析。它按 batch 流式扫描，不依赖可视化库，也不要求把全量数据读进内存。
 
-## 概述
-
-`online_dataset_eda` 是一个维护类实验包（`kind: maintenance`），对 Parquet 格式的数据集进行流式统计分析，输出结构化报告。它专为线上环境设计：纯流式处理，内存占用可控，不需要 matplotlib 等可视化库。
-
-该包需要数据集（`requires_dataset: True`）。
-
-## 分析内容
-
-| 分析项               | 方法                              | 说明                                   |
-| -------------------- | --------------------------------- | -------------------------------------- |
-| 列布局概览           | schema 解析                       | scalar / user_int / user_dense / item_int / sequence 列数 |
-| 空值率               | 逐列扫描                          | 按空值率降序排列                       |
-| 稀疏特征基数         | KMV Sketch（k=4096）              | 近似去重计数，内存可控                 |
-| 基数分桶             | 1-10 / 11-100 / 101-1000 / 1001+ | 稀疏特征基数分布                       |
-| 序列长度分布         | Reservoir Sampling（n=16384）     | min/Q1/median/Q3/max/mean/p95/empty_rate |
-| 序列重复率           | 逐行采样                          | 每个序列域的 token 重复率              |
-| 稠密特征分布         | 在线均值/方差                     | mean、std、zero_frac                   |
-| 共现缺失矩阵         | 二次扫描                          | 高空值列两两共现缺失计数               |
-| 用户活跃度           | Bottom-K 用户采样（n=50000）      | 采样用户的行为次数分布                 |
-| 跨域用户重叠         | Bottom-K 用户采样                 | 序列域两两 Jaccard 重叠率              |
-
-## 两遍扫描架构
-
-1. **第一遍**：流式扫描全量（或采样）数据，收集空值、基数、序列长度、稠密统计、用户采样
-2. **第二遍**：基于第一遍的采样用户和高空值列，计算共现缺失矩阵和跨域重叠
-
-每遍扫描使用 PyArrow 逐 batch 读取，batch 大小默认 128 行。
-
-## 配置
-
-配置项在 `config/online_dataset_eda/__init__.py` 的 `OnlineDatasetEDAConfig` 中定义，也支持环境变量覆盖：
-
-| 参数                       | 默认值   | 环境变量                    | 说明                           |
-| -------------------------- | -------- | --------------------------- | ------------------------------ |
-| `dataset_path`             | -        | -                           | 数据集路径（必填）             |
-| `schema_path`              | 自动推导 | `TAAC_SCHEMA_PATH`          | schema.json 路径               |
-| `batch_rows`               | 128      | `ONLINE_EDA_BATCH_ROWS`     | 每批读取行数                   |
-| `cardinality_sketch_k`     | 4096     | -                           | KMV Sketch 容量               |
-| `user_sample_limit`        | 50000    | -                           | 用户采样上限                   |
-| `sequence_sample_size`     | 16384    | -                           | 序列长度采样容量               |
-| `max_rows`                 | None     | `ONLINE_EDA_MAX_ROWS`       | 最大扫描行数                   |
-| `sample_percent`           | None     | `ONLINE_EDA_SAMPLE_PERCENT` | 采样百分比（与 max_rows 互斥） |
-| `progress_step_percent`    | 10.0     | -                           | 进度打印间隔（%）              |
-
-## 运行
+## 本地运行
 
 ```bash
-uv run taac-train --experiment config/online_dataset_eda \
+bash run.sh train \
+  --experiment experiments/online_dataset_eda \
   --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --schema-path data/sample_1000_raw/schema.json
 ```
 
-支持目录（含多个 `.parquet` 文件）或单文件路径。schema.json 自动从数据集同级目录推导，也可通过 `--schema-path` 或 `TAAC_SCHEMA_PATH` 显式指定。
+支持单个 parquet 文件或包含多个 parquet 的目录。
 
-## 线上打包
+## 实验契约
 
-```bash
-uv run taac-package-train --experiment config/online_dataset_eda --output-dir outputs/bundle
+入口文件 `experiments/online_dataset_eda/__init__.py` 导出 `ExperimentSpec`：
+
+```python
+EXPERIMENT = ExperimentSpec(
+    name="online_dataset_eda",
+    kind="maintenance",
+    requires_dataset=True,
+)
 ```
 
-该维护类实验支持训练 bundle 打包，生成 `run.sh` 与 `code_package.zip`，可在线上环境直接执行 EDA 任务。
+这个实验必须有 `dataset_path`。`train_fn` 会拒绝 extra args；采样和 batch 参数通过 runner config 或环境变量控制。
 
-由于 `online_dataset_eda` 不实现模型推理接口，因此不适用 `taac-package-infer`。
+## 线上运行
 
-## 输出
+先生成训练 bundle：
 
-运行后将报告打印到 stdout，包含以下节：
+```bash
+uv run taac-package-train \
+  --experiment experiments/online_dataset_eda \
+  --output-dir outputs/bundles/online_dataset_eda
+```
 
-- **Dataset**：路径、总行数、是否采样
-- **Column Layout**：各类型列数、序列域分布
-- **Top Null Rates**：高空值特征排名
-- **Top Cardinalities**：高基数稀疏特征排名
-- **Sequence Length Summary**：各序列域长度分布
-- **Sequence Repeat Rate**：各序列域 token 重复率
-- **Dense Feature Summary**：稠密特征均值/标准差/零值比例
-- **Cardinality Bins**：基数分桶分布
-- **Sampled User Activity**：采样用户行为次数分布
-- **Sampled Cross-Domain Overlap**：跨域 Jaccard 重叠矩阵
-- **Approximation**：各近似方法的参数说明
+线上通过平台变量给数据路径：
 
-返回值为完整的结构化报告 dict，可用于下游自动化分析。
+```bash
+export TRAIN_DATA_PATH=/path/to/train_parquet_or_dir
+export TAAC_SCHEMA_PATH=/path/to/schema.json
 
-## 设计约束
+bash run.sh
+```
 
-- 纯 Python + PyArrow，不依赖 pandas、matplotlib 或其他可视化库
-- 流式处理，不将全量数据加载到内存
-- 近似算法（KMV、Reservoir、Bottom-K）控制内存上限
-- 标签相关分析（label_distribution、feature_auc、null_rate_by_label）已跳过，因为线上 EDA 场景通常无标签
+这个实验不支持推理 bundle。
 
-## 来源
+## 报告怎么看
 
-- 运行器源码：`config/online_dataset_eda/runner.py`
-- 包入口：`config/online_dataset_eda/__init__.py`
+报告打印到 stdout。优先看这些节：
+
+- `Dataset`：实际扫到的数据路径、行数和采样状态。
+- `Column Layout`：schema 中各类列的数量和序列域分布。
+- `Label Distribution`：`label_type == 2` 的正样本数、负样本数、缺失数和正样本率。
+- `Null Rate By Label`：正负样本中的特征空值率差异。
+- `Top Null Rates`：高空值特征。
+- `Top Cardinalities`：高基数稀疏特征。
+- `Top Sequence Token Cardinalities`：序列 side-info token 的基数估计，不包含时间列。
+- `Top User Feature Label Lift`：用户离散特征候选 token 的正样本率、lift 和平滑 log-odds。
+- `Top Item Feature Label Lift`：物品离散特征候选 token 的正样本率、lift 和平滑 log-odds。
+- `Top Categorical Pair Associations`：低基数类别列之间的 Cramer's V 关联度。
+- `Sequence Length Summary`：序列长度分布。
+- `Dense Feature Summary`：稠密特征均值、方差、标准差和零值比例。
+- `Sampled Cross-Domain Coverage`：bottom-k 抽样用户在各序列域的覆盖率。
+- `Approximation`：近似统计使用的采样参数。
+
+返回 summary 只保留自动化友好的少量字段：
+
+```python
+{
+    "experiment_name": "online_dataset_eda",
+    "run_dir": "...",
+    "dataset_role": "...",
+    "row_count": ...,
+    "sampled": ...,
+}
+```
+
+完整报告打印到 stdout。
+
+## Runner 配置
+
+`OnlineDatasetEDAConfig` 字段：
+
+| 字段                    | 默认                      | 作用                      |
+| ----------------------- | ------------------------- | ------------------------- |
+| `dataset_path`          | 必填                      | parquet 文件或目录        |
+| `schema_path`           | 自动 / `TAAC_SCHEMA_PATH` | schema 路径               |
+| `batch_rows`            | 128                       | PyArrow 每批读取行数      |
+| `cardinality_sketch_k`  | 4096                      | KMV sketch 容量           |
+| `user_sample_limit`     | 50000                     | 用户 bottom-k 采样上限    |
+| `sequence_sample_size`  | 16384                     | 序列长度 reservoir 样本数 |
+| `max_rows`              | None                      | 最大扫描行数              |
+| `sample_percent`        | None                      | 按百分比限制扫描行数      |
+| `progress_step_percent` | 10.0                      | 进度日志间隔              |
+| `label_feature_candidate_k` | 128 | 每个 user/item 离散列保留的 label lift 候选 token 数 |
+| `label_feature_top_k` | 20 | label lift 输出行数 |
+| `label_feature_min_support` | 20 | label lift token 最小样本数 |
+| `categorical_pair_max_columns` | 16 | 类别列相关性最多纳入的列数 |
+| `categorical_pair_max_cardinality` | 128 | 类别列相关性允许的最大列基数 |
+| `categorical_pair_sample_rows` | 50000 | 类别列相关性 reservoir 样本行数 |
+| `categorical_pair_top_k` | 20 | 类别列相关性输出行数 |
+
+环境变量覆盖：
+
+| 变量                        | 作用             |
+| --------------------------- | ---------------- |
+| `TAAC_SCHEMA_PATH`          | 显式 schema 路径 |
+| `ONLINE_EDA_BATCH_ROWS`     | 覆盖 batch rows  |
+| `ONLINE_EDA_MAX_ROWS`       | 限制最大扫描行数 |
+| `ONLINE_EDA_SAMPLE_PERCENT` | 按百分比采样     |
+
+`ONLINE_EDA_MAX_ROWS` 和 `ONLINE_EDA_SAMPLE_PERCENT` 互斥。
+
+## 近似算法
+
+为控制线上内存，EDA 不做全量重型分析：
+
+- 稀疏基数使用 KMV sketch。
+- 序列 side-info token 基数也使用 KMV sketch。
+- user/item token 与 label 的关联先用 bounded 候选 sketch，再在第二遍扫描里对候选做精确正负计数。
+- 序列长度分布使用 reservoir sampling。
+- 用户活跃度、跨域覆盖和跨域重叠使用 bottom-k 用户采样。
+- 类别列相关性只纳入低基数列，并用 reservoir 行样本计算 Cramer's V。
+- 高空值列共现缺失需要第二遍扫描。
+
+因此报告适合判断量级、分布和异常方向，不适合作为精确离线统计报表。
+
+## 调小扫描量
+
+大数据上先限制扫描量：
+
+```bash
+export ONLINE_EDA_MAX_ROWS=100000
+```
+
+或者按比例采样：
+
+```bash
+export ONLINE_EDA_SAMPLE_PERCENT=5
+```
+
+不要同时设置这两个变量。
+
+## 源码入口
+
+- 实验入口：`experiments/online_dataset_eda/__init__.py`
+- 分析逻辑：`experiments/online_dataset_eda/runner.py`
+- 维护实验测试：`tests/contract/experiments/test_online_dataset_eda_runner.py`
+
+## 最小复核
+
+```bash
+uv run pytest tests/contract/experiments/test_maintenance_experiments.py -q
+uv run pytest tests/contract/experiments/test_online_dataset_eda_runner.py -q
+```

@@ -1,0 +1,333 @@
+"""Shared training runtime helpers."""
+
+from __future__ import annotations
+
+import copy
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+import os
+import random
+from pathlib import Path
+from typing import Any, Literal
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from taac2026.infrastructure.logging import configure_logging, logger
+from taac2026.infrastructure.checkpoints import save_checkpoint_state_dict
+
+
+AMP_DTYPE_CHOICES: tuple[str, ...] = ("bfloat16", "float16")
+BINARY_LOSS_TYPE_CHOICES: tuple[str, ...] = ("bce", "focal")
+DENSE_OPTIMIZER_TYPE_CHOICES: tuple[str, ...] = (
+    "adamw",
+    "fused_adamw",
+    "orthogonal_adamw",
+    "muon",
+)
+_AMP_DTYPE_ALIASES = {
+    "bf16": "bfloat16",
+    "bfloat16": "bfloat16",
+    "fp16": "float16",
+    "float16": "float16",
+    "half": "float16",
+}
+
+
+def normalize_amp_dtype(value: str | None) -> str:
+    if value is None:
+        return "bfloat16"
+    normalized = str(value).strip().lower()
+    try:
+        return _AMP_DTYPE_ALIASES[normalized]
+    except KeyError as error:
+        raise ValueError(f"unsupported amp dtype: {value}") from error
+
+
+def amp_dtype_to_torch_dtype(value: str | None) -> torch.dtype:
+    normalized = normalize_amp_dtype(value)
+    if normalized == "bfloat16":
+        return torch.bfloat16
+    return torch.float16
+
+
+def _device_type(device: str | torch.device) -> str:
+    return device.type if isinstance(device, torch.device) else torch.device(device).type
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeExecutionConfig:
+    amp: bool = False
+    amp_dtype: str = "bfloat16"
+    compile: bool = False
+
+    def normalized_amp_dtype(self) -> str:
+        return normalize_amp_dtype(self.amp_dtype)
+
+    def torch_amp_dtype(self) -> torch.dtype:
+        return amp_dtype_to_torch_dtype(self.amp_dtype)
+
+    def amp_enabled_for(self, device: str | torch.device) -> bool:
+        return self.amp and _device_type(device) == "cuda" and torch.cuda.is_available()
+
+    def grad_scaler_enabled_for(self, device: str | torch.device) -> bool:
+        return self.amp_enabled_for(device) and self.torch_amp_dtype() == torch.float16
+
+    def autocast_context(self, device: str | torch.device) -> AbstractContextManager[None]:
+        if not self.amp_enabled_for(device):
+            return nullcontext()
+        return torch.autocast(device_type="cuda", dtype=self.torch_amp_dtype())
+
+    def summary(self, device: str | torch.device) -> str:
+        return (
+            f"amp={self.amp} (effective={self.amp_enabled_for(device)}), "
+            f"amp_dtype={self.normalized_amp_dtype()}, compile={self.compile}"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryClassificationLossConfig:
+    loss_type: str = "bce"
+    focal_alpha: float = 0.1
+    focal_gamma: float = 2.0
+    pairwise_auc_weight: float = 0.0
+    pairwise_auc_temperature: float = 1.0
+
+    def __post_init__(self) -> None:
+        normalized_loss_type = str(self.loss_type).strip().lower()
+        if normalized_loss_type not in BINARY_LOSS_TYPE_CHOICES:
+            raise ValueError(f"unsupported loss_type: {self.loss_type}")
+
+        focal_alpha = float(self.focal_alpha)
+        if not 0.0 <= focal_alpha <= 1.0:
+            raise ValueError(f"focal_alpha must be between 0 and 1, got {self.focal_alpha}")
+
+        focal_gamma = float(self.focal_gamma)
+        if focal_gamma < 0.0:
+            raise ValueError(f"focal_gamma must be >= 0, got {self.focal_gamma}")
+
+        pairwise_auc_weight = float(self.pairwise_auc_weight)
+        if pairwise_auc_weight < 0.0:
+            raise ValueError(f"pairwise_auc_weight must be >= 0, got {self.pairwise_auc_weight}")
+
+        pairwise_auc_temperature = float(self.pairwise_auc_temperature)
+        if pairwise_auc_temperature <= 0.0:
+            raise ValueError(f"pairwise_auc_temperature must be > 0, got {self.pairwise_auc_temperature}")
+
+        object.__setattr__(self, "loss_type", normalized_loss_type)
+        object.__setattr__(self, "focal_alpha", focal_alpha)
+        object.__setattr__(self, "focal_gamma", focal_gamma)
+        object.__setattr__(self, "pairwise_auc_weight", pairwise_auc_weight)
+        object.__setattr__(self, "pairwise_auc_temperature", pairwise_auc_temperature)
+
+
+DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG = BinaryClassificationLossConfig()
+
+
+def create_grad_scaler(
+    runtime_execution: RuntimeExecutionConfig,
+    device: str | torch.device,
+) -> torch.amp.GradScaler | None:
+    if not runtime_execution.grad_scaler_enabled_for(device):
+        return None
+    return torch.amp.GradScaler(device="cuda", enabled=True)
+
+
+def maybe_compile_callable(callable_obj, *, enabled: bool, label: str):
+    if not enabled:
+        return callable_obj
+    try:
+        return torch.compile(callable_obj)
+    except Exception as error:  # pragma: no cover - exercised via monkeypatched tests.
+        logger.warning("Failed to compile {}; falling back to eager execution: {}", label, error)
+        return callable_obj
+
+
+def create_logger(filepath: str | Path):
+    """Configure shared loguru sinks for a training or evaluation process."""
+
+    configure_logging(filepath)
+    return logger
+
+
+class EarlyStopping:
+    """Early-stop training when a higher-is-better validation metric plateaus."""
+
+    def __init__(
+        self,
+        checkpoint_path: str | Path,
+        label: str = "",
+        patience: int = 5,
+        verbose: bool = False,
+        delta: float = 0,
+        patience_unit: Literal["evaluations", "steps"] = "evaluations",
+        step_scale: int = 1,
+    ) -> None:
+        self.checkpoint_path = str(checkpoint_path)
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score: float | None = None
+        self.early_stop = False
+        self.delta = delta
+        self.best_model: dict[str, torch.Tensor] | None = None
+        self.best_saved_score = 0.0
+        self.best_extra_metrics: dict[str, Any] | None = None
+        self.label = f"{label} " if label else ""
+        if patience_unit not in {"evaluations", "steps"}:
+            raise ValueError(f"unsupported patience_unit: {patience_unit}")
+        if step_scale <= 0:
+            raise ValueError("step_scale must be positive")
+        self.patience_unit = patience_unit
+        self.step_scale = int(step_scale)
+        self.best_step: int | None = None
+
+    @property
+    def resolved_patience(self) -> int:
+        if self.patience_unit == "steps":
+            return self.patience * self.step_scale
+        return self.patience
+
+    def configure_step_scale(self, step_scale: int) -> None:
+        if step_scale <= 0:
+            raise ValueError("step_scale must be positive")
+        self.step_scale = int(step_scale)
+
+    def _resolve_current_step(self, step: int | None) -> int:
+        if self.patience_unit != "steps":
+            return 0
+        if step is None:
+            raise ValueError("step is required when patience_unit='steps'")
+        return int(step)
+
+    def _is_not_improved(self, score: float) -> bool:
+        assert self.best_score is not None, "call __call__ first to seed best_score"
+        return score <= self.best_score + self.delta
+
+    def __call__(
+        self,
+        score: float,
+        model: nn.Module,
+        extra_metrics: dict[str, Any] | None = None,
+        step: int | None = None,
+    ) -> None:
+        current_step = self._resolve_current_step(step)
+        if self.best_score is None:
+            self.best_score = score
+            self.best_extra_metrics = extra_metrics
+            self.best_saved_score = 0.0
+            self.best_step = current_step if self.patience_unit == "steps" else None
+            self.save_checkpoint(score, model)
+            self.best_model = copy.deepcopy(model.state_dict())
+        elif self._is_not_improved(score):
+            if self.patience_unit == "steps":
+                assert self.best_step is not None
+                self.counter = max(0, current_step - self.best_step)
+            else:
+                self.counter += 1
+            logger.info(
+                "{}earlyStopping counter: {} / {} {}",
+                self.label,
+                self.counter,
+                self.resolved_patience,
+                self.patience_unit,
+            )
+            if self.counter >= self.resolved_patience:
+                self.early_stop = True
+        else:
+            logger.info("{}earlyStopping counter reset!", self.label)
+            self.best_score = score
+            self.best_model = copy.deepcopy(model.state_dict())
+            self.best_extra_metrics = extra_metrics
+            self.best_step = current_step if self.patience_unit == "steps" else None
+            self.save_checkpoint(score, model)
+            self.counter = 0
+
+    def save_checkpoint(self, score: float, model: nn.Module) -> None:
+        if self.verbose:
+            logger.info("Validation score increased. Saving model ...")
+        checkpoint_path = Path(self.checkpoint_path)
+        save_checkpoint_state_dict(model.state_dict(), checkpoint_path)
+        self.best_saved_score = score
+
+
+def set_seed(seed: int) -> None:
+    """Seed Python, NumPy, and PyTorch RNGs for reproducible training."""
+
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+
+
+def sigmoid_focal_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.1,
+    gamma: float = 2.0,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute binary sigmoid focal loss from raw logits."""
+
+    probabilities = torch.sigmoid(logits)
+    bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    p_t = probabilities * targets + (1 - probabilities) * (1 - targets)
+    focal_weight = (1 - p_t) ** gamma
+    alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+    loss = alpha_t * focal_weight * bce_loss
+    if reduction == "mean":
+        return loss.mean()
+    if reduction == "sum":
+        return loss.sum()
+    return loss
+
+
+def compute_binary_classification_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    loss_config: BinaryClassificationLossConfig | None = None,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute the shared binary classification loss from raw logits."""
+
+    resolved_loss_config = loss_config or DEFAULT_BINARY_CLASSIFICATION_LOSS_CONFIG
+    if resolved_loss_config.loss_type == "focal":
+        loss = sigmoid_focal_loss(
+            logits,
+            targets,
+            alpha=resolved_loss_config.focal_alpha,
+            gamma=resolved_loss_config.focal_gamma,
+            reduction=reduction,
+        )
+    else:
+        loss = F.binary_cross_entropy_with_logits(logits, targets, reduction=reduction)
+    if reduction == "none" or resolved_loss_config.pairwise_auc_weight <= 0.0:
+        return loss
+    return loss + resolved_loss_config.pairwise_auc_weight * binary_pairwise_auc_loss(
+        logits,
+        targets,
+        temperature=resolved_loss_config.pairwise_auc_temperature,
+    )
+
+
+def binary_pairwise_auc_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    temperature: float = 1.0,
+) -> torch.Tensor:
+    """Pairwise softplus ranking loss for improving positive-negative ordering."""
+
+    flat_logits = logits.reshape(-1)
+    flat_targets = targets.reshape(-1)
+    positive_logits = flat_logits[flat_targets > 0.5]
+    negative_logits = flat_logits[flat_targets <= 0.5]
+    if positive_logits.numel() == 0 or negative_logits.numel() == 0:
+        return flat_logits.sum() * 0.0
+    pairwise_margin = (positive_logits[:, None] - negative_logits[None, :]) / float(temperature)
+    return F.softplus(-pairwise_margin).mean()

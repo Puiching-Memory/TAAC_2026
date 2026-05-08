@@ -4,128 +4,185 @@ icon: lucide/rocket
 
 # 快速开始
 
-## 前置要求
+这页只做一件事：让你从干净环境跑通一次 Baseline 训练、评估和推理，并说明这些命令实际会读写哪些文件。
 
+## 准备环境
+
+需要：
+
+- Linux
 - Python 3.10 - 3.13
-- CUDA 12.6（GPU 训练需要）
-- `uv` 包管理器（推荐）或 `pip`
+- `uv`
 - Git
+- CUDA 12.6，本地 GPU 训练时需要
 
-## 安装
-
-=== "uv（推荐）"
-
-    ```bash
-    git clone https://github.com/Puiching-Memory/TAAC_2026.git
-    cd TAAC_2026
-    uv sync --extra dev --extra cuda126
-    ```
-
-=== "pip"
-
-    ```bash
-    git clone https://github.com/Puiching-Memory/TAAC_2026.git
-    cd TAAC_2026
-    pip install -e ".[dev,cuda126]"
-    ```
-
-依赖说明：
-
-- `--extra dev`：Ruff、Pytest、Hypothesis、Benchmark、覆盖率插件、Zensical
-- `--extra cuda126`：PyTorch、TorchRec、FBGEMM
-
-## 准备数据
-
-仓库附带 `data/sample_1000_raw/` 含 1000 条示例数据：
-
-```
-data/sample_1000_raw/
-├── demo_1000.parquet    # 1000 行样本
-└── schema.json          # 列定义（特征 FID、词表大小、序列域等）
-```
-
-比赛正式数据需从官方平台下载，放置为相同格式。
-
-## 训练第一个模型
+安装依赖：
 
 ```bash
-uv run taac-train \
-  --experiment config/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+git clone https://github.com/Puiching-Memory/TAAC_2026.git
+cd TAAC_2026
+
+uv python install 3.10.20
+uv sync --locked --extra cuda126
 ```
 
-训练完成后，Checkpoint 和日志保存在 `outputs/<run-slug>/` 目录下。
-
-## 评估
+如果你还要跑测试、lint 或文档站：
 
 ```bash
-uv run taac-evaluate single \
-  --experiment config/baseline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+uv sync --locked --extra dev --extra cuda126
 ```
 
-## 运行其他实验包
+说明：
 
-切换 `--experiment` 参数即可：
+- `cuda126` 是当前仓库支持的本地 CUDA profile。
+- `dev` 包含 Ruff、Vulture、Pytest、Coverage 和 Zensical。
+- 线上 bundle 不依赖 `uv`，见 [线上 Bundle 上传](guide/online-training-bundle.md)。
+
+## 数据从哪里来
+
+本地 PCVR smoke 默认使用 Hugging Face 上的 `TAAC2026/data_sample_1000` demo parquet，并使用仓库内的 `data/sample_1000_raw/schema.json`。
+
+本地 PCVR 训练、评估和推理不接受显式 `--dataset-path`；真实比赛数据只在 bundle 模式下由平台环境变量注入。维护类实验例外，例如 Online Dataset EDA 本身就需要指定数据路径。
+
+## 训练 Baseline
 
 ```bash
-uv run taac-train --experiment config/symbiosis \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-  --schema-path data/sample_1000_raw/schema.json
+bash run.sh train \
+  --experiment experiments/baseline \
+  --run-dir outputs/quickstart_baseline \
+  --device cpu \
+  --num_workers 0 \
+  --batch_size 8 \
+  --max_steps 1
 ```
 
-所有实验包位于 `config/` 目录下，每个包含 `__init__.py`、`model.py`、`ns_groups.json`。
+训练完成后，输出目录里会有 checkpoint 和 sidecar。当前 checkpoint 通常位于：
 
-## 线上训练打包
+```text
+outputs/quickstart_baseline/
+└── global_step*.best_model/
+    ├── model.safetensors
+    ├── schema.json
+    └── train_config.json
+```
+
+如果你有可用 GPU，可以把 `--device cpu` 改成 `--device cuda`，并适当调大 batch size / max steps。
+
+## 评估训练结果
+
+```bash
+bash run.sh val \
+  --experiment experiments/baseline \
+  --run-dir outputs/quickstart_baseline \
+  --device cpu \
+  --num-workers 0
+```
+
+传 `--run-dir` 时，运行时会在目录下自动寻找最新的 `global_step*.best_model/model.safetensors`。
+
+评估会写出：
+
+```text
+outputs/quickstart_baseline/
+├── evaluation.json
+├── validation_predictions.jsonl
+└── evaluation_observed_schema.json
+```
+
+`evaluation.json` 里包含 metrics、checkpoint 路径、schema 路径和数据诊断；`validation_predictions.jsonl` 保留逐样本验证预测，便于排查分数异常。
+
+## 生成推理结果
+
+```bash
+bash run.sh infer \
+  --experiment experiments/baseline \
+  --checkpoint outputs/quickstart_baseline \
+  --result-dir outputs/quickstart_infer \
+  --device cpu \
+  --num-workers 0
+```
+
+输出文件：
+
+```text
+outputs/quickstart_infer/
+└── predictions.json
+```
+
+`predictions.json` 的顶层 key 是 `predictions`，内部是 `user_id -> probability`：
+
+```json
+{
+  "predictions": {
+    "user_001": 0.8732
+  }
+}
+```
+
+## 换一个实验包
+
+只改 `--experiment`：
+
+```bash
+bash run.sh train \
+  --experiment experiments/baseline_plus \
+  --run-dir outputs/quickstart_baseline_plus \
+  --device cpu \
+  --num_workers 0 \
+  --batch_size 8 \
+  --max_steps 1
+```
+
+实验选择见 [实验包总览](experiments/index.md)。
+
+## 生成线上 Bundle
+
+训练 bundle：
 
 ```bash
 uv run taac-package-train \
-  --experiment config/symbiosis \
-  --output-dir outputs/bundle
+  --experiment experiments/baseline \
+  --output-dir outputs/bundles/baseline_training
 ```
 
-生成 `run.sh` + `code_package.zip`，详见 [线上 Bundle 上传指南](guide/online-training-bundle.md)。
-
-## 测试
+推理 bundle：
 
 ```bash
-# 已执行 uv sync --extra dev --extra cuda126
-uv run pytest tests/unit -v
+uv run taac-package-infer \
+  --experiment experiments/baseline \
+  --output-dir outputs/bundles/baseline_inference
 ```
 
-## 本地文档站
+训练 bundle 输出 `run.sh + code_package.zip`，推理 bundle 输出 `infer.py + code_package.zip`。上传和本地模拟方式见 [线上 Bundle 上传](guide/online-training-bundle.md)。
 
-```bash
-# 已执行 uv sync --extra dev
-uv run zensical serve
-```
+## 命令边界
 
-默认在 `http://127.0.0.1:8000` 启动开发服务器。
+`run.sh` 只支持：
 
-## 统一入口速查
+| 命令                                   | 用途                    |
+| -------------------------------------- | ----------------------- |
+| `bash run.sh train`                    | 训练实验                |
+| `bash run.sh val` / `bash run.sh eval` | 本地评估                |
+| `bash run.sh infer`                    | 生成 `predictions.json` |
 
-| 命令                                   | 用途               |
-| -------------------------------------- | ------------------ |
-| `taac-train`                           | 训练实验           |
-| `taac-evaluate single`                 | 评估模型           |
-| `taac-evaluate infer`                  | 推理（无标签数据） |
-| `taac-package-train`                   | 打包训练 Bundle    |
-| `taac-package-infer`                   | 打包推理 Bundle    |
-| `taac-benchmark-pcvr-data-pipeline`    | 数据管道吞吐压测   |
-| `taac-generate-pcvr-synthetic-dataset` | 生成合成压测数据   |
-| `taac-plot-model-performance`          | 绘制 Pareto 前沿图 |
+打包、测试和文档站分别使用独立命令：`taac-package-*`、`pytest` 和 `zensical`。
 
-运维/分析类实验通过 `taac-train --experiment config/<name>` 或同等的 `bash run.sh train --experiment config/<name>` 调用。
+`run.sh` 的分发逻辑在 `src/taac2026/application/bootstrap/run_sh.py`：
 
-仓库缓存清理和文档结构裁剪保留为 shell 脚本：`bash tools/cache-cleanup.sh`、`bash tools/strip_docs_content.sh docs/<path-or-dir>`。
+- 不写子命令时默认等价于 `train`。
+- `train` 最终调用 `taac-train`。
+- `val` / `eval` / `infer` 最终调用 `taac-evaluate`。
+- 本地默认 runner 是 `uv`；bundle 模式或 `TAAC_RUNNER=python` 会改用当前 Python。
+- `--cuda-profile` 目前只接受 `cuda126`，也可以用 `TAAC_CUDA_PROFILE=cuda126`。
 
-所有命令均通过 `run.sh` 也可调用：
+训练 CLI 继承了历史参数命名，常见参数是下划线形式：`--num_workers`、`--batch_size`、`--max_steps`。评估和推理 CLI 使用连字符形式：`--num-workers`、`--batch-size`。
 
-```bash
-./run.sh train --experiment config/baseline --dataset-path ...
-./run.sh val   --experiment config/baseline --dataset-path ...
-./run.sh infer --experiment config/baseline --dataset-path ...
-./run.sh package --experiment config/symbiosis
-```
+## 常见失败
+
+| 现象 | 处理 |
+| ---- | ---- |
+| `uv is required but not found` | 本地安装 `uv`，或显式设置 `TAAC_RUNNER=python` 并确认依赖已安装 |
+| `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地 smoke 不传数据路径；维护实验例外 |
+| 找不到 checkpoint | 确认 `--run-dir` 或 `--checkpoint` 指向包含 `global_step*.best_model/` 的目录 |
+| 推理缺 `train_config.json` 或 `schema.json` | checkpoint 目录不完整，需要使用训练产物目录而不是只拷贝权重 |
+| CUDA OOM | 降低 `--batch_size`、序列长度、模型宽度或改用 `--device cpu` 做链路检查 |

@@ -4,100 +4,66 @@ icon: lucide/wrench
 
 # 仓库日志管理
 
-通过 shell 脚本收集 GitHub 清理请求参数，或直接使用 `gh api` 清理 CI 工作流日志和 Pages 部署记录。
+这页用于处理 GitHub Actions 日志和 Pages 部署记录。这里的操作会影响远端仓库，请先 dry-run 和列清楚目标，再删除。
 
-## 目标
+## 本仓库脚本做什么
 
-减少仓库存储占用，清理过期的 CI 日志和部署记录。
-
-## 覆盖范围
-
-- GitHub Actions Workflow Runs 日志
-- GitHub Pages Deployments 记录
-
-## 使用前准备
-
-需要 GitHub Token：
+`tools/github-cleanup.sh` 只负责收集和校验参数，不会直接删除 GitHub 远端数据。
 
 ```bash
-export GITHUB_TOKEN=ghp_xxxxx
 export GITHUB_REPO=Puiching-Memory/TAAC_2026
-```
+export GITHUB_TOKEN=ghp_xxxxx
 
-## 脚本参数
-
-```bash
-# 使用环境变量
 bash tools/github-cleanup.sh --dry-run
-
-# 或显式传参
-bash tools/github-cleanup.sh --repo Puiching-Memory/TAAC_2026 --actions-only
 ```
 
-当前仓库内脚本只负责参数校验和请求记录，不会直接调用 GitHub API 删除日志。需要真正执行清理时，请使用下文列出的 `gh api` 命令。
+输出里会告诉你目标仓库、模式和 token 是否提供。真正删除要使用 `gh api` 或 GitHub UI。
 
-## 推荐执行流程
+## 建议流程
 
-1. 设置环境变量
-2. 用 `bash tools/github-cleanup.sh ...` 校验目标仓库和模式
-3. 按需执行下方 `gh api` 命令
-4. 检查输出
+1. 用 GitHub UI 或 `gh` 列出要删除的 workflow runs / Pages deployments。
+2. 记录 ID，确认不是正在排查的失败任务。
+3. 运行 `tools/github-cleanup.sh --dry-run` 记录目标和模式。
+4. 对单个 ID 执行删除命令。
+5. 回到 Actions / Pages 页面确认状态。
 
-## 常用命令
+## 常用查询
+
+列出最近的 workflow runs：
 
 ```bash
-# 清理所有 workflow run 日志
-gh api --method DELETE repos/{owner}/{repo}/actions/runs
-
-# 清理超过 30 天的 workflow runs
-gh api repos/{owner}/{repo}/actions/runs --paginate \
-  | jq '.workflow_runs[] | select(.created_at < "2026-03-01") | .id' \
-  | xargs -I {} gh api --method DELETE repos/{owner}/{repo}/actions/runs/{}
+gh run list --repo Puiching-Memory/TAAC_2026 --limit 20
 ```
 
-## 输出解释
+列出 Pages deployments：
 
-- 目标仓库
-- 是否 dry-run
-- 返回码 0 表示参数合法
-- 返回码 0 表示成功
-
-## 返回码约定
-
-| 返回码 | 含义               |
-| ------ | ------------------ |
-| 0      | 参数校验通过       |
-| 1      | 参数缺失或校验失败 |
-| 2      | 参数组合非法       |
-
-## GitHub API 接口清单
-
-### 1) 列出 workflow runs
-
-```
-GET /repos/{owner}/{repo}/actions/runs
+```bash
+gh api repos/Puiching-Memory/TAAC_2026/pages/deployments --paginate
 ```
 
-### 2) 删除 workflow run 日志
+删除某个 workflow run 的日志：
 
-```
-DELETE /repos/{owner}/{repo}/actions/runs/{run_id}/logs
-```
-
-### 3) 列出 Pages deployments
-
-```
-GET /repos/{owner}/{repo}/pages/deployments
+```bash
+gh api --method DELETE \
+  repos/Puiching-Memory/TAAC_2026/actions/runs/<run_id>/logs
 ```
 
-### 4) 将 deployment 标记为 inactive
+删除某个 workflow run：
 
-```
-POST /repos/{owner}/{repo}/pages/deployments/{deployment_id}
+```bash
+gh api --method DELETE \
+  repos/Puiching-Memory/TAAC_2026/actions/runs/<run_id>
 ```
 
-### 5) 删除 deployment
+Pages deployment 的删除和 inactive 操作请先用 `gh api repos/<owner>/<repo>/pages/deployments` 查到具体 ID，再按 GitHub API 当前文档执行。不要写一个没有筛选条件的批量删除管道。
 
-```
-DELETE /repos/{owner}/{repo}/pages/deployments/{deployment_id}
-```
+## 什么时候不该清
+
+- 失败任务还在排查。
+- 正在比较 Pages 部署差异。
+- 不确定 token 权限范围。
+- 只是本地仓库变脏，这种情况用 [仓库缓存清理](cache-cleanup.md)。
+
+## 脚本入口
+
+- `tools/github-cleanup.sh`

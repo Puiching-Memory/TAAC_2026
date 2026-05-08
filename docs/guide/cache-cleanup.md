@@ -4,56 +4,54 @@ icon: lucide/wrench
 
 # 仓库缓存清理
 
-清理仓库里的 Python 缓存目录和常见构建产物。
+这个脚本只清理本地缓存和构建产物，用来让工作区变轻一点。它不处理实验输出目录，也不替你判断哪些结果值得保留。
 
-## 目标
-
-删除 `__pycache__`、`*.egg-info`、`dist/`、`build/` 等缓存目录，保持仓库干净。
-
-## 脚本入口
+## 先预览
 
 ```bash
-# 预览将要删除的内容
 bash tools/cache-cleanup.sh --dry-run
+```
 
-# 执行清理
+确认列表合理后再执行：
+
+```bash
 bash tools/cache-cleanup.sh
 ```
 
-## 常用命令
+## 会清什么
+
+默认会清理：
+
+- `__pycache__/` 和 `.pyc`
+- `.ruff_cache/`
+- `.pytest_cache/`
+- `.benchmarks/`
+- `.cache/`
+- `*.egg-info`
+- `.coverage` 和 `.coverage.cpu`
+- `build/` 和 `dist/`
+
+默认不会深入 `.venv`、`venv`、`env`、`node_modules`、`.tox` 和 `.mypy_cache` 这些环境目录。
+
+## 常用参数
 
 ```bash
-# 清理当前目录及子目录的所有 __pycache__
-find . -type d -name "__pycache__" -exec rm -rf {} +
+# 指定清理根目录
+bash tools/cache-cleanup.sh --root /path/to/repo --dry-run
 
-# 清理 .pyc 文件
-find . -type f -name "*.pyc" -delete
-
-# 清理 egg-info
-find . -type d -name "*.egg-info" -exec rm -rf {} +
+# 连环境目录里的缓存也一起清
+bash tools/cache-cleanup.sh --include-env-dirs --dry-run
 ```
 
-## 脚本参数
+`--include-env-dirs` 建议先 dry-run，因为它会扩大扫描范围。
 
-- `--root <path>`：指定清理根目录，默认是仓库根目录
-- `--dry-run`：只打印将删除的目录，不真正删除
-- `--include-env-dirs`：连 `.venv`、`venv`、`env`、`node_modules`、`.tox`、`.mypy_cache` 里的 `__pycache__` 一起清理
+## 什么时候用
 
-## 输出解释
+- 切换 Python 版本后。
+- 跑完大量测试或 benchmark 后。
+- 提交前想移除工具缓存。
+- 本地磁盘空间紧张，但还不想删 `outputs/`。
 
-- 删除目录数和文件数会打印到终端
-- 返回码 0 表示成功
+## 脚本入口
 
-## 推荐使用时机
-
-- 切换 Python 版本后
-- 提交代码前
-- CI 构建前
-- 磁盘空间不足时
-
-## 返回码约定
-
-| 返回码 | 含义                   |
-| ------ | ---------------------- |
-| 0      | 清理成功               |
-| 1      | 发生错误（权限不足等） |
+- `tools/cache-cleanup.sh`

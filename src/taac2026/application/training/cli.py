@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
-from taac2026.domain.config import TrainRequest, default_run_dir
-from taac2026.infrastructure.experiments.loader import load_experiment_package
-from taac2026.infrastructure.io.json_utils import dumps
+from taac2026.domain.requests import TrainRequest, default_run_dir
+from taac2026.application.experiments.registry import load_experiment_package
+from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
 
 
 def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(description="Train a TAAC 2026 experiment package")
-    parser.add_argument("--experiment", default="config/baseline", help="experiment package path or module")
+    parser.add_argument("--experiment", required=True, help="experiment package path or module")
     parser.add_argument("--dataset-path", default=None, help="parquet file or parquet directory; required for data-driven experiments")
     parser.add_argument("--schema-path", default=None, help="schema.json path; defaults to the dataset directory")
     parser.add_argument("--run-dir", default=None, help="checkpoint/output directory")
@@ -28,10 +30,24 @@ def _experiment_requires_dataset(experiment: object) -> bool:
     return bool(requires_dataset) if isinstance(requires_dataset, bool) else True
 
 
+def _experiment_kind(experiment: object) -> str | None:
+    metadata = getattr(experiment, "metadata", {})
+    if not isinstance(metadata, dict):
+        return None
+    kind = metadata.get("kind")
+    return kind if isinstance(kind, str) else None
+
+
+def _is_bundle_mode() -> bool:
+    return os.environ.get("TAAC_BUNDLE_MODE") == "1"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args, extra_args = parse_train_args(argv)
     experiment = load_experiment_package(args.experiment)
-    if args.dataset_path is None and _experiment_requires_dataset(experiment):
+    if _experiment_kind(experiment) == "pcvr" and not _is_bundle_mode() and args.dataset_path is not None:
+        raise ValueError("local PCVR runs no longer accept --dataset-path; demo data is managed automatically")
+    if args.dataset_path is None and _experiment_requires_dataset(experiment) and (_experiment_kind(experiment) != "pcvr" or _is_bundle_mode()):
         raise ValueError(f"experiment {args.experiment!r} requires --dataset-path")
     run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.experiment)
     request = TrainRequest(
@@ -42,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         extra_args=tuple(extra_args),
     )
     summary = experiment.train(request) or {"run_dir": str(run_dir)}
-    print(dumps(summary))
+    write_stdout_line(dumps(summary))
     return 0
 
 

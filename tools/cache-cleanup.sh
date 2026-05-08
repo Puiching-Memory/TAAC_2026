@@ -11,7 +11,7 @@ usage() {
 	cat <<'EOF'
 Usage: bash tools/cache-cleanup.sh [--root <path>] [--dry-run] [--include-env-dirs]
 
-Remove __pycache__ directories and common build artifacts from the repository.
+Remove __pycache__ directories, cache directories, coverage files, and common build artifacts from the repository.
 EOF
 }
 
@@ -44,8 +44,46 @@ done
 TARGET_ROOT="$(cd "${TARGET_ROOT}" && pwd)"
 ENV_DIR_PATTERN='/(\.venv|venv|env|node_modules|\.tox|\.mypy_cache)/'
 
+find_matching_dirs() {
+	local name="$1"
+	find "${TARGET_ROOT}" -type d -name "${name}" | sort | {
+		if [[ "${INCLUDE_ENV_DIRS}" == "1" ]]; then
+			cat
+		else
+			grep -Ev "${ENV_DIR_PATTERN}" || true
+		fi
+	}
+}
+
 mapfile -t PYCACHE_DIRS < <(
-	find "${TARGET_ROOT}" -type d -name '__pycache__' | sort | {
+	find_matching_dirs '__pycache__'
+)
+
+CACHE_DIR_NAMES=(
+	'.ruff_cache'
+	'.pytest_cache'
+	'.benchmarks'
+	'.cache'
+)
+
+CACHE_DIRS=()
+for name in "${CACHE_DIR_NAMES[@]}"; do
+	mapfile -t matched_dirs < <(find_matching_dirs "${name}")
+	for path in "${matched_dirs[@]}"; do
+		if [[ -n "${path}" ]]; then
+			CACHE_DIRS+=("${path}")
+		fi
+	done
+done
+
+BUILD_TARGETS=(
+	"${TARGET_ROOT}/build"
+	"${TARGET_ROOT}/dist"
+)
+
+mapfile -t EGG_INFO_DIRS < <(find "${TARGET_ROOT}" -type d -name '*.egg-info' | sort)
+mapfile -t COVERAGE_FILES < <(
+	find "${TARGET_ROOT}" -type f \( -name '.coverage' -o -name '.coverage.cpu' \) | sort | {
 		if [[ "${INCLUDE_ENV_DIRS}" == "1" ]]; then
 			cat
 		else
@@ -54,15 +92,8 @@ mapfile -t PYCACHE_DIRS < <(
 	}
 )
 
-BUILD_TARGETS=(
-	"${TARGET_ROOT}/build"
-	"${TARGET_ROOT}/dist"
-)
-
-mapfile -t EGG_INFO_DIRS < <(find "${TARGET_ROOT}" -type d -name '*.egg-info' | sort)
-
 TARGETS=()
-for path in "${PYCACHE_DIRS[@]}" "${EGG_INFO_DIRS[@]}"; do
+for path in "${PYCACHE_DIRS[@]}" "${CACHE_DIRS[@]}" "${EGG_INFO_DIRS[@]}" "${COVERAGE_FILES[@]}"; do
 	if [[ -n "${path}" ]]; then
 		TARGETS+=("${path}")
 	fi

@@ -1,0 +1,266 @@
+"""Benchmark PCVR data pipeline throughput without running a model."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import time
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.streams import write_stdout_line
+from taac2026.domain.config import (
+    PCVRDataCacheConfig,
+    PCVRDataPipelineConfig,
+    PCVRDomainDropoutConfig,
+    PCVRFeatureMaskConfig,
+    PCVRSequenceCropConfig,
+)
+from taac2026.infrastructure.data.dataset import get_pcvr_data
+from taac2026.domain.model_contract import parse_seq_max_lens
+
+
+def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:
+    transforms = []
+    cache_mode = getattr(args, "cache_mode", None)
+    if cache_mode is None:
+        if args.pipeline_preset in {"cache", "augment"}:
+            cache_mode = "lru"
+        elif args.pipeline_preset in {"opt", "opt-augment"}:
+            cache_mode = "opt"
+        else:
+            cache_mode = "none"
+    cache = (
+        PCVRDataCacheConfig()
+        if cache_mode == "none"
+        else PCVRDataCacheConfig(mode=cache_mode, max_batches=args.cache_batches)
+    )
+    if args.pipeline_preset in {"augment", "opt-augment"}:
+        transforms.extend(
+            [
+                PCVRSequenceCropConfig(
+                    views_per_row=args.views_per_row,
+                    seq_window_mode="random_tail",
+                    seq_window_min_len=args.seq_window_min_len,
+                ),
+                PCVRFeatureMaskConfig(probability=args.feature_mask_probability),
+                PCVRDomainDropoutConfig(probability=args.domain_dropout_probability),
+            ]
+        )
+    return PCVRDataPipelineConfig(
+        cache=cache,
+        transforms=tuple(transforms),
+        seed=args.seed,
+        strict_time_filter=args.strict_time_filter,
+    )
+
+
+def _consume_batches(iterator: Any, batch_count: int) -> int:
+    rows = 0
+    for _ in range(batch_count):
+        batch = next(iterator)
+        rows += int(batch["label"].shape[0])
+    return rows
+
+
+def _consume_measured_batches(
+    train_loader: Any,
+    *,
+    batches_per_pass: int,
+    passes: int,
+    max_batches: int,
+) -> tuple[int, int, int]:
+    measured_rows = 0
+    measured_batches = 0
+    measured_passes = 0
+
+    if max_batches > 0:
+        iterator = iter(train_loader)
+        while measured_batches < max_batches:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            measured_rows += int(batch["label"].shape[0])
+            measured_batches += 1
+        if measured_batches > 0:
+            measured_passes = math.ceil(measured_batches / max(1, batches_per_pass))
+        return measured_rows, measured_batches, measured_passes
+
+    for _ in range(max(1, passes)):
+        iterator = iter(train_loader)
+        pass_batches = 0
+        while pass_batches < batches_per_pass:
+            try:
+                batch = next(iterator)
+            except StopIteration:
+                break
+            measured_rows += int(batch["label"].shape[0])
+            measured_batches += 1
+            pass_batches += 1
+        if pass_batches == 0:
+            break
+        measured_passes += 1
+    return measured_rows, measured_batches, measured_passes
+
+
+def _estimated_batches_per_pass(
+    *,
+    train_rows: int,
+    batch_size: int,
+    pipeline_config: PCVRDataPipelineConfig,
+) -> int:
+    row_multiplier = 1
+    for transform in pipeline_config.transforms:
+        if isinstance(transform, PCVRSequenceCropConfig) and transform.enabled:
+            row_multiplier *= max(1, int(transform.views_per_row))
+    return max(1, math.ceil((train_rows * row_multiplier) / max(1, batch_size)))
+
+
+def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
+    if args.torch_threads > 0:
+        torch.set_num_threads(args.torch_threads)
+
+    pipeline_config = _build_pipeline_config(args)
+    train_loader, _valid_loader, train_dataset = get_pcvr_data(
+        data_dir=str(args.dataset_path),
+        schema_path=str(args.schema_path),
+        batch_size=args.batch_size,
+        valid_ratio=args.valid_ratio,
+        train_ratio=args.train_ratio,
+        num_workers=args.num_workers,
+        buffer_batches=args.buffer_batches,
+        shuffle_train=not args.no_shuffle,
+        seed=args.seed,
+        seq_max_lens=parse_seq_max_lens(args.seq_max_lens),
+        data_pipeline_config=pipeline_config,
+        max_steps=(args.max_batches + args.warmup_batches if args.max_batches > 0 else 0),
+    )
+
+    warmup_rows = 0
+    iterator_after_warmup: Any | None = None
+    try:
+        iterator_after_warmup = iter(train_loader)
+        warmup_rows = _consume_batches(iterator_after_warmup, args.warmup_batches)
+    except StopIteration:
+        return {
+            "dataset_path": str(args.dataset_path),
+            "schema_path": str(args.schema_path),
+            "pipeline_preset": args.pipeline_preset,
+            "train_rows": train_dataset.num_rows,
+            "measured_rows": 0,
+            "measured_batches": 0,
+            "warmup_rows": warmup_rows,
+            "passes": args.passes,
+            "measured_passes": 0,
+            "elapsed_sec": 0.0,
+            "rows_per_sec": 0.0,
+            "batches_per_sec": 0.0,
+        }
+
+    batches_per_pass = _estimated_batches_per_pass(
+        train_rows=train_dataset.num_rows,
+        batch_size=args.batch_size,
+        pipeline_config=pipeline_config,
+    )
+    started = time.perf_counter()
+    measured_rows, measured_batches, measured_passes = _consume_measured_batches(
+        iterator_after_warmup if args.max_batches > 0 else train_loader,
+        batches_per_pass=batches_per_pass,
+        passes=args.passes,
+        max_batches=args.max_batches,
+    )
+    elapsed = time.perf_counter() - started
+    cache = getattr(train_dataset.pipeline, "cache", None)
+    cache_stats_fn = getattr(cache, "stats", None)
+    cache_stats = cache_stats_fn() if callable(cache_stats_fn) else {}
+
+    return {
+        "dataset_path": str(args.dataset_path),
+        "schema_path": str(args.schema_path),
+        "pipeline_preset": args.pipeline_preset,
+        "cache_mode": pipeline_config.cache.mode,
+        "cache_impl": train_dataset.pipeline.cache.__class__.__name__,
+        "shared_cache": train_dataset.pipeline.cache.__class__.__name__ == "PCVRSharedBatchCache",
+        "data_cache_stats": cache_stats,
+        "train_rows": train_dataset.num_rows,
+        "train_row_groups": len(train_dataset._rg_list),
+        "batch_size": args.batch_size,
+        "num_workers": args.num_workers,
+        "buffer_batches": args.buffer_batches,
+        "shuffle": not args.no_shuffle,
+        "warmup_batches": args.warmup_batches,
+        "warmup_rows": warmup_rows,
+        "passes": args.passes,
+        "batches_per_pass": batches_per_pass,
+        "measured_passes": measured_passes,
+        "measured_rows": measured_rows,
+        "measured_batches": measured_batches,
+        "elapsed_sec": elapsed,
+        "rows_per_sec": measured_rows / elapsed if elapsed > 0 else 0.0,
+        "batches_per_sec": measured_batches / elapsed if elapsed > 0 else 0.0,
+    }
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset-path", type=Path, required=True)
+    parser.add_argument("--schema-path", type=Path, required=True)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--buffer-batches", type=int, default=1)
+    parser.add_argument("--valid-ratio", type=float, default=0.1)
+    parser.add_argument("--train-ratio", type=float, default=1.0)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seq-max-lens", default="seq_a:256,seq_b:256,seq_c:512,seq_d:512"
+    )
+    parser.add_argument("--max-batches", type=int, default=0)
+    parser.add_argument("--warmup-batches", type=int, default=5)
+    parser.add_argument("--passes", type=int, default=1)
+    parser.add_argument("--torch-threads", type=int, default=0)
+    parser.add_argument("--no-shuffle", action="store_true")
+    parser.add_argument(
+        "--preset",
+        dest="pipeline_preset",
+        choices=("none", "cache", "opt", "augment", "opt-augment"),
+        default="none",
+        help="alias of --pipeline-preset",
+    )
+    parser.add_argument(
+        "--pipeline-preset",
+        choices=("none", "cache", "opt", "augment", "opt-augment"),
+        default=None,
+    )
+    parser.add_argument(
+        "--cache-mode",
+        choices=("none", "lru", "fifo", "lfu", "rr", "opt"),
+        default=None,
+        help="override cache mode while keeping the selected transform preset",
+    )
+    parser.add_argument("--cache-batches", type=int, default=512)
+    parser.add_argument("--views-per-row", type=int, default=2)
+    parser.add_argument("--seq-window-min-len", type=int, default=8)
+    parser.add_argument("--feature-mask-probability", type=float, default=0.05)
+    parser.add_argument("--domain-dropout-probability", type=float, default=0.05)
+    parser.add_argument(
+        "--strict-time-filter", action=argparse.BooleanOptionalAction, default=True
+    )
+    args = parser.parse_args(argv)
+    if args.pipeline_preset is None:
+        args.pipeline_preset = args.preset
+    return args
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    summary = run_benchmark(parse_args(argv))
+    write_stdout_line(dumps(summary, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

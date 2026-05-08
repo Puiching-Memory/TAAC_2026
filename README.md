@@ -8,11 +8,9 @@
   <a href="https://github.com/Puiching-Memory/TAAC_2026/actions/workflows/ci.yml"><img src="https://github.com/Puiching-Memory/TAAC_2026/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status (main)"></a>
   <a href="https://puiching-memory.github.io/TAAC_2026/"><img src="https://img.shields.io/website?label=Docs&up_message=Online&down_message=Offline&up_color=0A7B83&url=https%3A%2F%2Fpuiching-memory.github.io%2FTAAC_2026%2F" alt="Online Docs Status"></a>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.10--3.13-blue.svg" alt="Python">
   <img src="https://img.shields.io/badge/PyTorch-2.7.1-EE4C2C.svg" alt="PyTorch">
   <img src="https://img.shields.io/badge/Task-Recommendation-brightgreen.svg" alt="Task">
-  <img src="https://img.shields.io/badge/Track-TAAC%202026-orange.svg" alt="Track">
-  <img src="https://img.shields.io/badge/Status-Research-yellow.svg" alt="Status">
 </p>
 
 <p align="center">
@@ -33,18 +31,12 @@
 > 以促进社区在统一序列建模与特征交互方向上的研究和创新。
 
 > [!IMPORTANT]
-> 感谢各位的支持, 本项目会继续维护，但是需要提前说明：
+> 感谢各位的支持，本项目会继续维护，但需要提前说明：
 > 1. 我们无法保证 API 长期稳定。
 > 2. 各子模型的研究与复现状态并不等于 100% 官方还原。
->
-> 当前仓库的主要开发方向是：
-> 1. 提供开箱可用的训练与评估框架。
-> 2. 支持大算力场景下的实验管理与复核流程。
-> 3. 持续同步最新论文、公开方案和可复核实验包。
->
-> 当前仓库仅支持 Linux 运行时；Windows 与 WSL 不在支持范围内。
+> 3. 当前仓库仅支持 Linux；Windows 和 macOS 用户请优先使用 Docker 或 Dev Container。
 
-这是一个完全面向 TAAC 2026 大赛的实验工作区。设计目标是共享训练底座、目录式实验包、统一输出产物和回归测试放进同一套工程里，让新实验可以更快接入、训练、评估和复核。
+这是一个面向 TAAC 2026 的实验工作区。当前仓库把共享训练底座、目录式实验包、线上 Bundle 打包和回归测试放进同一套工程里，核心约定如下：
 
 ## 比赛简介
 
@@ -60,58 +52,100 @@
 
 ## 我们的工作
 
-![Model Performance VS Size](figures/model_performance_vs_size.svg)
+![PCVR Runtime Resources](figures/pcvr_diagnostics/pcvr_runtime_resources.svg)
 
-![Model Performance VS Compute](figures/model_performance_vs_compute.svg)
+![PCVR Prediction Distribution](figures/pcvr_diagnostics/pcvr_prediction_distribution.svg)
+
+![PCVR Prediction Correlation](figures/pcvr_diagnostics/pcvr_prediction_correlation.svg)
+
+![PCVR Sample Disagreement](figures/pcvr_diagnostics/pcvr_sample_disagreement.svg)
+
+![PCVR Stability](figures/pcvr_diagnostics/pcvr_stability.svg)
 
 ## 快速开始
+
+### 安装环境
 
 ```bash
 uv python install 3.10.20
 
-# 仅训练/评估
+# 本地训练 / 评估
 uv sync --locked --extra cuda126
 
 # 需要测试、lint 或本地文档站时
 uv sync --locked --extra dev --extra cuda126
-
-# 训练baseline
-bash run.sh train --experiment config/baseline \
-  --dataset-path /path/to/dataset_dir \
-  --schema-path /path/to/dataset_dir/schema.json
-
-# 评估默认输出目录中的 best_model/model.safetensors；single 模式始终只评估一个实验/一个 checkpoint
-bash run.sh val --experiment config/baseline \
-  --dataset-path /path/to/dataset_dir \
-  --schema-path /path/to/dataset_dir/schema.json
 ```
+
+### 训练、评估和推理
+
+```bash
+# 训练 baseline
+bash run.sh train --experiment experiments/baseline \
+  --run-dir outputs/readme_baseline
+
+# 评估训练输出目录中的 checkpoint
+bash run.sh val --experiment experiments/baseline \
+  --run-dir outputs/readme_baseline
+
+# 生成 predictions.json
+bash run.sh infer --experiment experiments/baseline \
+  --checkpoint outputs/readme_baseline/best_model/model.safetensors \
+  --result-dir outputs/readme_infer
+```
+
+PCVR 本地 smoke 会通过 `datasets` 从 Hugging Face 缓存 `TAAC2026/data_sample_1000` 的 `demo_1000.parquet`，不再接受显式 `--dataset-path`。默认 schema 会复用仓库内的 `data/sample_1000_raw/schema.json`；只有切换 schema 快照时，才需要显式传 `--schema-path`。线上 Bundle 仍由平台注入真实数据路径。
+
+### 生成线上 Bundle
 
 ```bash
 # 生成线上训练上传文件
-uv run taac-package-train --experiment config/baseline
+uv run taac-package-train --experiment experiments/baseline \
+  --output-dir outputs/bundles/baseline_training
 
 # 生成线上推理上传文件
-uv run taac-package-infer --experiment config/baseline
+uv run taac-package-infer --experiment experiments/baseline \
+  --output-dir outputs/bundles/baseline_inference
 
-# 跑完整训练栈回归（需 `--extra dev`）
-uv run pytest tests -q
+# 训练 Bundle 顶层输出: run.sh + code_package.zip
+# 推理 Bundle 顶层输出: infer.py + code_package.zip
 ```
+
+### 测试与文档
+
+```bash
+# 跑当前单元测试树
+uv run pytest tests/unit -q
+
+# 严格检查 docs 站点能否构建
+uv run zensical build --strict
+
+# 本地预览文档站
+uv run zensical serve
+```
+
+### 入口速查
+
+| 入口                                   | 当前用途                |
+| -------------------------------------- | ----------------------- |
+| `bash run.sh train`                    | 训练实验                |
+| `bash run.sh val` / `bash run.sh eval` | 本地评估一个实验        |
+| `bash run.sh infer`                    | 生成 `predictions.json` |
+| `uv run taac-package-train`            | 打包训练 Bundle         |
+| `uv run taac-package-infer`            | 打包推理 Bundle         |
+| `uv run pytest tests/unit -q`          | 运行单元测试            |
+| `uv run zensical serve`                | 启动本地文档站          |
 
 ## 当前支持实验包
 
-| 实验包         | 目录                                           | 公开来源                                                                                                                                      |
-| -------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline       | [config/baseline](config/baseline)             | 官方 DHyFormer baseline                                                                                                                       |
-| Symbiosis      | [config/symbiosis](config/symbiosis)           | 本仓库维护的比赛用融合实验模型                                                                                                                |
-| CTR Baseline   | [config/ctr_baseline](config/ctr_baseline)     | [creatorwyx/TAAC2026-CTR-Baseline](https://github.com/creatorwyx/TAAC2026-CTR-Baseline)                                                       |
-| DeepContextNet | [config/deepcontextnet](config/deepcontextnet) | [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) |
-| InterFormer    | [config/interformer](config/interformer)       | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
-| OneTrans       | [config/onetrans](config/onetrans)             | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
-| HyFormer       | [config/hyformer](config/hyformer)             | [HyFormer paper](https://arxiv.org/abs/2601.12681)                                                                                            |
-| UniRec         | [config/unirec](config/unirec)                 | [hojiahao/TAAC2026](https://github.com/hojiahao/TAAC2026)                                                                                     |
-| UniScaleFormer | [config/uniscaleformer](config/uniscaleformer) | [twx145/Unirec](https://github.com/twx145/Unirec)                                                                                             |
+| 实验包         | 目录                                                               | 公开来源                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Baseline       | [experiments/baseline](experiments/baseline)                       | 官方 DHyFormer baseline                                                                                                                       |
+| Symbiosis      | [experiments/symbiosis](experiments/symbiosis)                     | 本仓库维护的比赛用融合实验模型                                                                                                                |
+| InterFormer    | [experiments/interformer](experiments/interformer)                 | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                                                         |
+| OneTrans       | [experiments/onetrans](experiments/onetrans)                       | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                                                            |
+| UniTok         | [experiments/unitok](experiments/unitok)                           | 统一 token-stream 实验包，将 field-level token、dense packet、行为事件和候选 token 放入同一 backbone                                         |
 
-更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。
+更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/testing.md](docs/guide/testing.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。官方平台规则和赛题说明可再参考 [docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)。
 
 ------
 
@@ -186,7 +220,7 @@ print(df.shape)       # (1000, 120)
 print(df.columns)     # ['user_id', 'item_id', 'label_type', ...]
 ```
 
-如果你按仓库当前文档做本地 smoke，推荐目录布局如下：
+仓库仍保留与 HF demo 对齐的快照布局，便于检查 schema 与维护脚本：
 
 ```text
 data/sample_1000_raw/
@@ -194,7 +228,7 @@ data/sample_1000_raw/
 └── schema.json
 ```
 
-补充说明：官方 `demo_1000.parquet` 当前只有 1 个 Row Group。本仓库已经兼容这种样例文件，在 smoke 训练时会复用同一个 Row Group 做 train/valid 切分，仅用于通路验证，不代表有统计意义的离线验证。
+补充说明：官方 `demo_1000.parquet` 当前只有 1 个 Row Group。本仓库支持这种样例文件，在 smoke 训练时会复用同一个 Row Group 做 train/valid 切分，仅用于通路验证，不代表有统计意义的离线验证。
 
 ## Evaluation
 我们将使用单一的ROC曲线下面积（AUC）指标对所有团队进行排名（越高越好）。为确保实用性，每次提交还必须在官方评估环境和协议下满足特定于赛道和轮次的推理延迟限制；超出延迟预算的提交将被视为无效，因此不予排名，无论AUC分数如何。
