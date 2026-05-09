@@ -319,6 +319,16 @@ def test_parse_pcvr_train_args_accepts_sampling_strategy(tmp_path: Path) -> None
     assert args.sampling_strategy == "row_group_sweep"
 
 
+@pytest.mark.parametrize("flag", ["--patience", "--steps-per-epoch"])
+def test_parse_pcvr_train_args_rejects_legacy_epoch_flags(tmp_path: Path, flag: str) -> None:
+    with pytest.raises(SystemExit):
+        parse_pcvr_train_args(
+            [flag, "1"],
+            package_dir=tmp_path,
+            defaults=PCVRTrainConfig(),
+        )
+
+
 def test_parse_pcvr_train_args_uses_timestamp_split_defaults(tmp_path: Path) -> None:
     defaults = PCVRTrainConfig(
         data=PCVRDataConfig(
@@ -422,8 +432,12 @@ def test_parse_pcvr_train_args_accepts_loss_terms_and_optimizer_flags(tmp_path: 
             "bce:1.0,pairwise_auc:pairwise_auc:0.2",
             "--loss-weight-overrides",
             "pairwise_auc=0.5",
+            "--eval-every-n-steps",
+            "5000",
             "--dense-optimizer-type",
             dense_optimizer_type,
+            "--patience-steps",
+            "77",
             "--scheduler-type",
             "cosine",
             "--warmup-steps",
@@ -453,7 +467,9 @@ def test_parse_pcvr_train_args_accepts_loss_terms_and_optimizer_flags(tmp_path: 
             "temperature": 1.0,
         },
     ]
+    assert args.eval_every_n_steps == 5000
     assert args.dense_optimizer_type == dense_optimizer_type
+    assert args.patience_steps == 77
     assert args.scheduler_type == "cosine"
     assert args.warmup_steps == 256
     assert args.min_lr_ratio == pytest.approx(0.1)
@@ -551,12 +567,14 @@ def test_pcvr_train_config_serializes_structured_data_pipeline() -> None:
 def test_pcvr_train_config_serializes_optimizer_schedule_fields() -> None:
     flat_config = PCVRTrainConfig(
         optimizer=PCVROptimizerConfig(
+            patience_steps=512,
             scheduler_type="cosine",
             warmup_steps=64,
             min_lr_ratio=0.2,
         )
     ).to_flat_dict()
 
+    assert flat_config["patience_steps"] == 512
     assert flat_config["scheduler_type"] == "cosine"
     assert flat_config["warmup_steps"] == 64
     assert flat_config["min_lr_ratio"] == pytest.approx(0.2)
@@ -565,6 +583,7 @@ def test_pcvr_train_config_serializes_optimizer_schedule_fields() -> None:
 def test_pcvr_train_config_serializes_data_split_fields() -> None:
     flat_config = PCVRTrainConfig(
         data=PCVRDataConfig(
+            train_steps_per_sweep=128,
             split_strategy="timestamp_range",
             train_timestamp_end=10,
             valid_timestamp_start=10,
@@ -572,6 +591,8 @@ def test_pcvr_train_config_serializes_data_split_fields() -> None:
         )
     ).to_flat_dict()
 
+    assert flat_config["eval_every_n_steps"] == 5000
+    assert flat_config["train_steps_per_sweep"] == 128
     assert flat_config["split_strategy"] == "timestamp_range"
     assert flat_config["train_timestamp_start"] == 0
     assert flat_config["train_timestamp_end"] == 10

@@ -112,7 +112,13 @@ def build_pcvr_train_arg_parser(
     parser.add_argument("--batch_size", type=int, default=default_values["batch_size"])
     parser.add_argument("--lr", type=float, default=default_values["lr"])
     parser.add_argument("--max_steps", type=int, default=default_values["max_steps"])
-    parser.add_argument("--patience", type=int, default=default_values["patience"])
+    parser.add_argument(
+        "--patience_steps",
+        "--patience-steps",
+        dest="patience_steps",
+        type=int,
+        default=default_values["patience_steps"],
+    )
     parser.add_argument("--seed", type=int, default=default_values["seed"])
     parser.add_argument(
         "--device",
@@ -177,11 +183,11 @@ def build_pcvr_train_arg_parser(
         "--buffer_batches", type=int, default=default_values["buffer_batches"]
     )
     parser.add_argument(
-        "--steps_per_epoch",
-        "--steps-per-epoch",
-        dest="steps_per_epoch",
+        "--train_steps_per_sweep",
+        "--train-steps-per-sweep",
+        dest="train_steps_per_sweep",
         type=int,
-        default=default_values["steps_per_epoch"],
+        default=default_values["train_steps_per_sweep"],
     )
     parser.add_argument(
         "--train_ratio", type=float, default=default_values["train_ratio"]
@@ -232,7 +238,11 @@ def build_pcvr_train_arg_parser(
         default=default_values["valid_timestamp_end"],
     )
     parser.add_argument(
-        "--eval_every_n_steps", type=int, default=default_values["eval_every_n_steps"]
+        "--eval_every_n_steps",
+        "--eval-every-n-steps",
+        dest="eval_every_n_steps",
+        type=int,
+        default=default_values["eval_every_n_steps"],
     )
     parser.add_argument("--seq_max_lens", default=default_values["seq_max_lens"])
 

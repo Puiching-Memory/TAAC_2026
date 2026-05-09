@@ -48,7 +48,7 @@ class PCVRDataConfig:
     batch_size: int = 256
     num_workers: int = 16
     buffer_batches: int = 1
-    steps_per_epoch: int = 0
+    train_steps_per_sweep: int = 0
     train_ratio: float = 1.0
     valid_ratio: float = 0.1
     split_strategy: PCVRDataSplitStrategy = "row_group_tail"
@@ -57,7 +57,7 @@ class PCVRDataConfig:
     train_timestamp_end: int = 0
     valid_timestamp_start: int = 0
     valid_timestamp_end: int = 0
-    eval_every_n_steps: int = 0
+    eval_every_n_steps: int = 5_000
     seq_max_lens: str = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
 
     def __post_init__(self) -> None:
@@ -65,8 +65,10 @@ class PCVRDataConfig:
             raise ValueError(f"unsupported PCVR data split strategy: {self.split_strategy}")
         if self.sampling_strategy not in PCVR_DATA_SAMPLING_STRATEGY_CHOICES:
             raise ValueError(f"unsupported PCVR data sampling strategy: {self.sampling_strategy}")
-        if self.steps_per_epoch < 0:
-            raise ValueError("steps_per_epoch must be non-negative")
+        if self.train_steps_per_sweep < 0:
+            raise ValueError("train_steps_per_sweep must be non-negative")
+        if self.eval_every_n_steps < 0:
+            raise ValueError("eval_every_n_steps must be non-negative")
         for field_name in (
             "train_timestamp_start",
             "train_timestamp_end",
@@ -185,7 +187,7 @@ def _data_transform_config_to_dict(
 class PCVROptimizerConfig:
     lr: float = 1e-4
     max_steps: int = 0
-    patience: int = 5
+    patience_steps: int = 25_000
     seed: int = 42
     device: str | None = None
     dense_optimizer_type: DenseOptimizerType = "adamw"
@@ -198,6 +200,8 @@ class PCVROptimizerConfig:
             raise ValueError(f"unsupported dense optimizer type: {self.dense_optimizer_type}")
         if self.scheduler_type not in DENSE_LR_SCHEDULER_TYPE_CHOICES:
             raise ValueError(f"unsupported scheduler type: {self.scheduler_type}")
+        if self.patience_steps < 0:
+            raise ValueError("patience_steps must be non-negative")
         if self.warmup_steps < 0:
             raise ValueError("warmup_steps must be non-negative")
         if not 0.0 <= self.min_lr_ratio <= 1.0:
@@ -285,7 +289,7 @@ class PCVRTrainConfig:
             "batch_size": self.data.batch_size,
             "num_workers": self.data.num_workers,
             "buffer_batches": self.data.buffer_batches,
-            "steps_per_epoch": self.data.steps_per_epoch,
+            "train_steps_per_sweep": self.data.train_steps_per_sweep,
             "train_ratio": self.data.train_ratio,
             "valid_ratio": self.data.valid_ratio,
             "split_strategy": self.data.split_strategy,
@@ -299,7 +303,7 @@ class PCVRTrainConfig:
             **self.data_pipeline.to_flat_dict(),
             "lr": self.optimizer.lr,
             "max_steps": self.optimizer.max_steps,
-            "patience": self.optimizer.patience,
+            "patience_steps": self.optimizer.patience_steps,
             "seed": self.optimizer.seed,
             "device": self.optimizer.device,
             "dense_optimizer_type": self.optimizer.dense_optimizer_type,
@@ -342,9 +346,24 @@ REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())
 PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
     "split_strategy": "row_group_tail",
     "sampling_strategy": "step_random",
-    "steps_per_epoch": 0,
+    "train_steps_per_sweep": 0,
     "train_timestamp_start": 0,
     "train_timestamp_end": 0,
     "valid_timestamp_start": 0,
     "valid_timestamp_end": 0,
 }
+
+
+def normalize_pcvr_train_config_compat(config: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(config)
+    legacy_aliases = {
+        "steps_per_epoch": "train_steps_per_sweep",
+        "patience": "patience_steps",
+    }
+    for old_key, new_key in legacy_aliases.items():
+        if new_key not in normalized and old_key in normalized:
+            normalized[new_key] = normalized[old_key]
+        normalized.pop(old_key, None)
+    for key, value in PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS.items():
+        normalized.setdefault(key, value)
+    return normalized

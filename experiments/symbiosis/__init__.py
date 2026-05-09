@@ -203,7 +203,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         train_timestamp_end=0,
         valid_timestamp_start=0,
         valid_timestamp_end=0,
-        eval_every_n_steps=0,
+        eval_every_n_steps=5_000,
         seq_max_lens="seq_a:256,seq_b:256,seq_c:512,seq_d:512",
     ),
     data_pipeline=PCVRDataPipelineConfig(
@@ -215,7 +215,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     optimizer=PCVROptimizerConfig(
         lr=1e-4,
         max_steps=100_000,
-        patience=5,
+        patience_steps=25_000,
         seed=42,
         device=None,
         dense_optimizer_type="muon",

@@ -73,7 +73,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         ckpt_params: dict[str, Any] | None = None,
         writer: Any | None = None,
         schema_path: str | Path | None = None,
-        eval_every_n_steps: int = 0,
+        eval_every_n_steps: int = 5_000,
         train_config: dict[str, Any] | None = None,
         runtime_execution: RuntimeExecutionConfig | None = None,
     ) -> None:
@@ -166,7 +166,9 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         self.sparse_lr = sparse_lr
         self.sparse_weight_decay = sparse_weight_decay
         self.ckpt_params = ckpt_params or {}
-        self.eval_every_n_steps = eval_every_n_steps
+        self.eval_every_n_steps = int(eval_every_n_steps)
+        if self.eval_every_n_steps < 0:
+            raise ValueError("eval_every_n_steps must be non-negative")
         self.train_config = train_config
         self.last_eval_diagnostics: dict[str, float | int] = {}
 
@@ -212,8 +214,6 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         log_interval = self.runtime_execution.progress_log_interval_steps
         loop_started_at = time.monotonic()
         eval_interval = self.eval_every_n_steps if self.eval_every_n_steps > 0 else self._logical_train_sweep_steps()
-        if self.early_stopping.patience_unit == "steps":
-            self.early_stopping.configure_step_scale(eval_interval)
         train_iter = self._infinite_train_batches()
         train_pbar = tqdm(total=total_train_steps, dynamic_ncols=True) if use_tqdm else None
         window_loss_sum = 0.0

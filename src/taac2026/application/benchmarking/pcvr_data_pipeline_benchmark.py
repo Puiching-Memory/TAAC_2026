@@ -140,7 +140,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         buffer_batches=args.buffer_batches,
         shuffle_train=not args.no_shuffle,
         sampling_strategy=args.sampling_strategy,
-        steps_per_epoch=args.steps_per_epoch,
+        train_steps_per_sweep=args.train_steps_per_sweep,
         seed=args.seed,
         seq_max_lens=parse_seq_max_lens(args.seq_max_lens),
         data_pipeline_config=pipeline_config,
@@ -201,7 +201,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "buffer_batches": args.buffer_batches,
         "shuffle": not args.no_shuffle,
         "sampling_strategy": args.sampling_strategy,
-        "steps_per_epoch": args.steps_per_epoch,
+        "train_steps_per_sweep": args.train_steps_per_sweep,
         "warmup_batches": args.warmup_batches,
         "warmup_rows": warmup_rows,
         "passes": args.passes,
@@ -327,7 +327,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("step_random", "row_group_sweep"),
         default="step_random",
     )
-    parser.add_argument("--steps-per-epoch", type=int, default=0)
+    parser.add_argument("--train-steps-per-sweep", type=int, default=0)
     parser.add_argument(
         "--preset",
         dest="pipeline_preset",

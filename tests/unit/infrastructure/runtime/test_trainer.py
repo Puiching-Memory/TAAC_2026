@@ -101,7 +101,7 @@ def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, log_ca
         max_steps=4,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
     )
 
     losses = iter((0.5, 0.4, 0.3, 0.2))
@@ -132,7 +132,7 @@ def test_train_uses_runtime_execution_progress_log_interval(monkeypatch, tmp_pat
         max_steps=4,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         runtime_execution=RuntimeExecutionConfig(progress_log_interval_steps=2),
     )
 
@@ -206,7 +206,7 @@ def test_trainer_skips_whole_model_compile_when_model_handles_internal_compile(
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         runtime_execution=RuntimeExecutionConfig(compile=True),
     )
 
@@ -232,19 +232,19 @@ def test_logical_train_sweep_steps_uses_dataset_without_calling_dataloader_len()
     assert TrainerSupport()._logical_train_sweep_steps() == 7
 
 
-def test_infinite_train_batches_advances_epoch_aware_sampler() -> None:
-    class EpochAwareSampler:
+def test_infinite_train_batches_advances_step_window_sampler() -> None:
+    class StepWindowSampler:
         def __init__(self) -> None:
-            self.epochs: list[int] = []
+            self.start_steps: list[int] = []
 
-        def set_epoch(self, epoch: int) -> None:
-            self.epochs.append(epoch)
+        def set_start_step(self, start_step: int) -> None:
+            self.start_steps.append(start_step)
 
     class OneBatchLoader:
-        sampler = EpochAwareSampler()
+        sampler = StepWindowSampler()
 
         def __iter__(self):
-            return iter([{"label": torch.tensor([float(len(self.sampler.epochs))])}])
+            return iter([{"label": torch.tensor([float(len(self.sampler.start_steps))])}])
 
     class TrainerSupport(PCVRTrainerSupportMixin):
         train_loader = OneBatchLoader()
@@ -254,7 +254,7 @@ def test_infinite_train_batches_advances_epoch_aware_sampler() -> None:
     first = next(iterator)
     second = next(iterator)
 
-    assert TrainerSupport.train_loader.sampler.epochs == [0, 1]
+    assert TrainerSupport.train_loader.sampler.start_steps == [0, 1]
     assert first["label"].tolist() == [1.0]
     assert second["label"].tolist() == [2.0]
 
@@ -269,7 +269,7 @@ def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> No
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         runtime_execution=RuntimeExecutionConfig(amp=True, amp_dtype="float16", compile=False),
     )
 
@@ -304,7 +304,7 @@ def test_trainer_train_step_matches_shared_focal_loss(tmp_path) -> None:
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         loss_terms=expected_loss_config.to_list(),
     )
     expected_loss, _components = compute_pcvr_loss(
@@ -350,7 +350,7 @@ def test_trainer_combines_multiple_weighted_loss_terms(tmp_path) -> None:
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         loss_terms=loss_config.to_list(),
     )
     expected_loss, expected_components = compute_pcvr_loss(
@@ -379,7 +379,7 @@ def test_trainer_accepts_supported_dense_optimizers(tmp_path, dense_optimizer_ty
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         dense_optimizer_type=dense_optimizer_type,
     )
 
@@ -396,7 +396,7 @@ def test_trainer_builds_fused_adamw_optimizer(tmp_path) -> None:
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         dense_optimizer_type="fused_adamw",
     )
 
@@ -415,7 +415,7 @@ def test_trainer_muon_updates_matrix_parameters(tmp_path) -> None:
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         dense_optimizer_type="muon",
     )
     initial_weight = model.weight.detach().clone()
@@ -439,7 +439,7 @@ def test_trainer_applies_dense_warmup_and_cosine_decay(tmp_path) -> None:
         max_steps=4,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
         scheduler_type="cosine",
         warmup_steps=2,
         min_lr_ratio=0.2,
@@ -457,9 +457,7 @@ def test_trainer_applies_dense_warmup_and_cosine_decay(tmp_path) -> None:
 def test_early_stopping_supports_step_based_patience(tmp_path) -> None:
     early_stopping = EarlyStopping(
         tmp_path / "best" / "model.safetensors",
-        patience=2,
-        patience_unit="steps",
-        step_scale=3,
+        patience_steps=6,
     )
     model = _DummyModel()
 
@@ -475,11 +473,10 @@ def test_early_stopping_supports_step_based_patience(tmp_path) -> None:
     assert early_stopping.early_stop is True
 
 
-def test_trainer_scales_step_based_early_stopping_by_eval_interval(monkeypatch, tmp_path) -> None:
+def test_trainer_uses_step_based_early_stopping_without_interval_scaling(monkeypatch, tmp_path) -> None:
     early_stopping = EarlyStopping(
         tmp_path / "best" / "model.safetensors",
-        patience=2,
-        patience_unit="steps",
+        patience_steps=4,
     )
     trainer = PCVRPointwiseTrainer(
         model=_DummyModel(),
@@ -508,7 +505,6 @@ def test_trainer_scales_step_based_early_stopping_by_eval_interval(monkeypatch, 
 
     trainer.train()
 
-    assert early_stopping.step_scale == 2
     assert early_stopping.resolved_patience == 4
     assert early_stopping.counter == 4
     assert early_stopping.early_stop is True
@@ -525,7 +521,7 @@ def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
     )
     logits = iter(
         (
@@ -554,7 +550,7 @@ def test_evaluate_records_score_diagnostics(tmp_path, log_capture) -> None:
         max_steps=1,
         device="cpu",
         save_dir=tmp_path / "checkpoints",
-        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
     )
     logits = iter(
         (

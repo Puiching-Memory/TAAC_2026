@@ -37,21 +37,20 @@ class PCVRStepPlan:
 
 
 class PCVRStepIndexSampler(Sampler[int]):
-    """Epoch-aware sampler that emits absolute step indices."""
+    """Sampler that emits a fixed absolute optimizer-step window."""
 
-    def __init__(self, *, steps_per_epoch: int, epoch: int = 0) -> None:
-        self.steps_per_epoch = max(1, int(steps_per_epoch))
-        self.epoch = max(0, int(epoch))
+    def __init__(self, *, step_count: int, start_step: int = 0) -> None:
+        self.step_count = max(1, int(step_count))
+        self.start_step = max(0, int(start_step))
 
     def __iter__(self) -> Iterator[int]:
-        start = self.epoch * self.steps_per_epoch
-        yield from range(start, start + self.steps_per_epoch)
+        yield from range(self.start_step, self.start_step + self.step_count)
 
     def __len__(self) -> int:
-        return self.steps_per_epoch
+        return self.step_count
 
-    def set_epoch(self, epoch: int) -> None:
-        self.epoch = max(0, int(epoch))
+    def set_start_step(self, start_step: int) -> None:
+        self.start_step = max(0, int(start_step))
 
 
 class PCVRStepDataset(Dataset[PCVRBatch]):
@@ -66,7 +65,7 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
         self,
         source_dataset: Any,
         *,
-        steps_per_epoch: int = 0,
+        train_steps_per_sweep: int = 0,
         planned_steps: int = 0,
         seed: int = 0,
     ) -> None:
@@ -87,8 +86,8 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
         self.num_rows = int(getattr(source_dataset, "num_rows", 0))
         self.sampling_seed = int(seed)
         self.planned_steps = max(0, int(planned_steps))
-        self.steps_per_epoch = max(0, int(steps_per_epoch))
-        self._epoch = 0
+        self.train_steps_per_sweep = max(0, int(train_steps_per_sweep))
+        self._start_step = 0
         self._global_batch_keys_cache: tuple[PCVRBatchKey, ...] | None = None
         self._global_batch_cumulative_rows_cache: np.ndarray | None = None
         self._worker_parquet_files: OrderedDict[str, pq.ParquetFile] = OrderedDict()
@@ -155,18 +154,18 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
     def uses_step_random_sampling(self) -> bool:
         return True
 
-    def set_epoch(self, epoch: int) -> None:
-        self._epoch = max(0, int(epoch))
+    def set_start_step(self, start_step: int) -> None:
+        self._start_step = max(0, int(start_step))
 
     def make_sampler(self) -> PCVRStepIndexSampler:
         return PCVRStepIndexSampler(
-            steps_per_epoch=self.logical_sweep_steps(),
-            epoch=self._epoch,
+            step_count=self.logical_sweep_steps(),
+            start_step=self._start_step,
         )
 
     def logical_sweep_steps(self) -> int:
-        if self.steps_per_epoch > 0:
-            return self.steps_per_epoch
+        if self.train_steps_per_sweep > 0:
+            return self.train_steps_per_sweep
         if self.planned_steps > 0:
             return self.planned_steps
         source_steps = getattr(self.source_dataset, "logical_sweep_steps", None)

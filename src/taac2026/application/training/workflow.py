@@ -64,7 +64,11 @@ def default_build_train_data(context: PCVRTrainContext) -> PCVRTrainDataBundle:
         train_ratio=context.args.train_ratio,
         split_strategy=getattr(context.args, "split_strategy", context.defaults.data.split_strategy),
         sampling_strategy=getattr(context.args, "sampling_strategy", context.defaults.data.sampling_strategy),
-        steps_per_epoch=getattr(context.args, "steps_per_epoch", context.defaults.data.steps_per_epoch),
+        train_steps_per_sweep=getattr(
+            context.args,
+            "train_steps_per_sweep",
+            context.defaults.data.train_steps_per_sweep,
+        ),
         train_timestamp_start=getattr(context.args, "train_timestamp_start", context.defaults.data.train_timestamp_start),
         train_timestamp_end=getattr(context.args, "train_timestamp_end", context.defaults.data.train_timestamp_end),
         valid_timestamp_start=getattr(context.args, "valid_timestamp_start", context.defaults.data.valid_timestamp_start),
@@ -129,9 +133,8 @@ def default_build_train_trainer(
 ) -> Any:
     early_stopping = EarlyStopping(
         checkpoint_path=preferred_checkpoint_path(context.ckpt_dir),
-        patience=context.args.patience,
+        patience_steps=context.args.patience_steps,
         label="model",
-        patience_unit="steps",
     )
     checkpoint_params = {
         "blocks": context.args.num_blocks,
@@ -183,7 +186,13 @@ def default_build_train_summary(
         "valid_ratio": float(context.args.valid_ratio),
         "split_strategy": str(getattr(context.args, "split_strategy", context.defaults.data.split_strategy)),
         "sampling_strategy": str(getattr(context.args, "sampling_strategy", context.defaults.data.sampling_strategy)),
-        "steps_per_epoch": int(getattr(context.args, "steps_per_epoch", context.defaults.data.steps_per_epoch)),
+        "train_steps_per_sweep": int(
+            getattr(
+                context.args,
+                "train_steps_per_sweep",
+                context.defaults.data.train_steps_per_sweep,
+            )
+        ),
         "train_timestamp_start": int(getattr(context.args, "train_timestamp_start", context.defaults.data.train_timestamp_start)),
         "train_timestamp_end": int(getattr(context.args, "train_timestamp_end", context.defaults.data.train_timestamp_end)),
         "valid_timestamp_start": int(getattr(context.args, "valid_timestamp_start", context.defaults.data.valid_timestamp_start)),

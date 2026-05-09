@@ -260,7 +260,7 @@ def _benchmark_optimizer(
                 max_steps=args.steps,
                 device=str(device),
                 save_dir=Path(tempdir),
-                early_stopping=EarlyStopping(Path(tempdir) / "best" / "model.safetensors", patience=2),
+                early_stopping=EarlyStopping(Path(tempdir) / "best" / "model.safetensors", patience_steps=2),
                 dense_optimizer_type=optimizer_name,
                 runtime_execution=RuntimeExecutionConfig(
                     amp=args.amp,

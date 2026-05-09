@@ -37,7 +37,7 @@ def get_pcvr_data(
     valid_ratio: float = 0.1,
     train_ratio: float = 1.0,
     split_strategy: str = "row_group_tail",
-    steps_per_epoch: int = 0,
+    train_steps_per_sweep: int = 0,
     train_timestamp_start: int = 0,
     train_timestamp_end: int = 0,
     valid_timestamp_start: int = 0,
@@ -98,7 +98,7 @@ def get_pcvr_data(
         train_source_dataset,
         sampling_strategy=effective_sampling_strategy,
         train_timestamp_range=train_timestamp_range,
-        steps_per_epoch=steps_per_epoch,
+        train_steps_per_sweep=train_steps_per_sweep,
         planned_steps=planned_steps,
         seed=seed,
     )
@@ -272,7 +272,7 @@ def _wrap_train_dataset(
     *,
     sampling_strategy: str,
     train_timestamp_range: PCVRTimestampRange | None,
-    steps_per_epoch: int,
+    train_steps_per_sweep: int,
     planned_steps: int,
     seed: int,
 ) -> Any:
@@ -282,7 +282,7 @@ def _wrap_train_dataset(
 
     return PCVRStepDataset(
         train_source_dataset,
-        steps_per_epoch=steps_per_epoch,
+        train_steps_per_sweep=train_steps_per_sweep,
         planned_steps=planned_steps,
         seed=seed,
     )

@@ -12,8 +12,8 @@ from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
 import taac2026.infrastructure.data.dataset as pcvr_data
 from taac2026.domain.config import (
-    PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS,
     REQUIRED_PCVR_TRAIN_CONFIG_KEYS,
+    normalize_pcvr_train_config_compat,
 )
 from taac2026.infrastructure.logging import logger
 from taac2026.domain.sidecar import load_pcvr_train_config_sidecar
@@ -41,9 +41,7 @@ def default_load_train_config(experiment: Any, checkpoint_dir: Path) -> dict[str
     config_path = checkpoint_dir / "train_config.json"
     if not config_path.exists():
         raise FileNotFoundError(f"PCVR train_config.json not found in checkpoint directory: {checkpoint_dir}")
-    config = load_pcvr_train_config_sidecar(read_json(config_path))
-    for key, value in PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS.items():
-        config.setdefault(key, value)
+    config = normalize_pcvr_train_config_compat(load_pcvr_train_config_sidecar(read_json(config_path)))
     missing_keys = sorted(REQUIRED_PCVR_TRAIN_CONFIG_KEYS - set(config))
     if missing_keys:
         joined = ", ".join(missing_keys)

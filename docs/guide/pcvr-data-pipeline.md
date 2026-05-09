@@ -91,7 +91,7 @@ PCVRDomainDropoutConfig(
 5. PyTorch `DataLoader` 继续负责 worker / prefetch / pin memory。
 6. training workflow 把 batch 转成 `ModelInput`。
 
-`steps_per_epoch=0` 时，一个 epoch 的步数默认使用训练数据的逻辑 sweep 步数；如果显式设置 `--steps-per-epoch`，则 PyTorch sampler 会把 epoch 视为 step 空间上的窗口。`max_steps>0` 时，训练器仍按总 optimizer step 截断。
+`train_steps_per_sweep=0` 时，step-random 训练 loader 的一次逻辑 sweep 使用训练数据推导出的 batch 数；如果显式设置 `--train-steps-per-sweep`，则 PyTorch sampler 会使用这个固定长度的 step 窗口。`max_steps>0` 时，训练器仍按总 optimizer step 截断。
 
 验证和推理不应该启用随机增强。训练增强通过实验包默认配置进入，不应该在评估入口临时拼出来。
 

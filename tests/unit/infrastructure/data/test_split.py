@@ -414,17 +414,17 @@ def test_get_pcvr_data_step_loader_materializes_optimizer_batches(
     assert batch["user_int_feats"].shape[0] == 2
 
 
-def test_step_index_sampler_offsets_indices_by_epoch() -> None:
-    sampler = PCVRStepIndexSampler(steps_per_epoch=3)
+def test_step_index_sampler_offsets_indices_by_start_step() -> None:
+    sampler = PCVRStepIndexSampler(step_count=3)
 
     assert list(sampler) == [0, 1, 2]
 
-    sampler.set_epoch(2)
+    sampler.set_start_step(6)
 
     assert list(sampler) == [6, 7, 8]
 
 
-def test_step_dataset_steps_per_epoch_overrides_planned_steps_for_loader_length(
+def test_step_dataset_train_steps_per_sweep_overrides_planned_steps_for_loader_length(
     tmp_path: Path,
 ) -> None:
     schema_path = tmp_path / "schema.json"
@@ -440,7 +440,7 @@ def test_step_dataset_steps_per_epoch_overrides_planned_steps_for_loader_length(
         is_training=True,
         dataset_role="train",
     )
-    dataset = PCVRStepDataset(source_dataset, steps_per_epoch=2, planned_steps=5, seed=42)
+    dataset = PCVRStepDataset(source_dataset, train_steps_per_sweep=2, planned_steps=5, seed=42)
 
     assert len(dataset) == 2
     assert dataset.logical_sweep_steps() == 2
