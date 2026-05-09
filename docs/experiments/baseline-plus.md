@@ -44,7 +44,7 @@ bash run.sh train \
 
 ```python
 configure_flash_attention_runtime(flash_attention_backend="torch" | "tilelang")
-configure_rms_norm_runtime(rms_norm_backend="torch" | "tilelang", rms_norm_block_rows=...)
+configure_rms_norm_runtime(rms_norm_backend="torch" | "tilelang" | "triton", rms_norm_block_rows=...)
 ```
 
 默认配置保留 attention 的 torch backend，并把 RMSNorm 切到 TileLang：

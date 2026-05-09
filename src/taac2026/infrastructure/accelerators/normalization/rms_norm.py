@@ -14,15 +14,23 @@ from taac2026.infrastructure.accelerators.tilelang_runtime import (
     tilelang_available,
     tilelang_dtype,
 )
+from taac2026.infrastructure.accelerators.triton_runtime import (
+    triton_available,
+    triton_supported_floating_dtype,
+)
 from taac2026.infrastructure.accelerators.tensor_validation import require_cuda_tensors
 from taac2026.infrastructure.accelerators.normalization.kernels.tilelang import (
     build_rms_norm_backward_kernel,
     build_rms_norm_forward_kernel,
 )
+from taac2026.infrastructure.accelerators.normalization.kernels.triton import (
+    build_rms_norm_backward_kernel as build_triton_rms_norm_backward_kernel,
+    build_rms_norm_forward_kernel as build_triton_rms_norm_forward_kernel,
+)
 
 
 RMSNormKernel = Callable[[torch.Tensor, torch.Tensor, float], torch.Tensor]
-RMSNormBackend = Literal["torch", "tilelang"]
+RMSNormBackend = Literal["torch", "tilelang", "triton"]
 
 _rms_norm_kernel: RMSNormKernel | None = None
 
@@ -40,11 +48,19 @@ _rms_norm_forward_kernel_cache: dict[RMSNormKernelKey, Callable[[torch.Tensor, t
 _rms_norm_backward_kernel_cache: dict[
     RMSNormKernelKey, Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
 ] = {}
+_triton_rms_norm_forward_kernel_cache: dict[
+    RMSNormKernelKey, Callable[[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
+] = {}
+_triton_rms_norm_backward_kernel_cache: dict[
+    RMSNormKernelKey, Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
+] = {}
 
 
 def clear_rms_norm_kernel_cache() -> None:
     _rms_norm_forward_kernel_cache.clear()
     _rms_norm_backward_kernel_cache.clear()
+    _triton_rms_norm_forward_kernel_cache.clear()
+    _triton_rms_norm_backward_kernel_cache.clear()
 
 
 def register_rms_norm_kernel(kernel: RMSNormKernel) -> None:
@@ -70,15 +86,24 @@ def _normalize_rms_norm_inputs(x: torch.Tensor, weight: torch.Tensor) -> tuple[t
     return matrix, normalized_weight, original_shape
 
 
-def _resolve_rms_norm_backend(x: torch.Tensor, backend: RMSNormBackend) -> Literal["torch", "tilelang"]:
+def _resolve_rms_norm_backend(x: torch.Tensor, backend: RMSNormBackend) -> Literal["torch", "tilelang", "triton"]:
     if backend == "torch":
         return "torch"
-    if not tilelang_available():
-        raise RuntimeError("tilelang backend requested but tilelang is not installed")
-    require_cuda_tensors("tilelang rms_norm", x)
-    if not _is_power_of_two(int(x.shape[-1])):
-        raise RuntimeError("tilelang rms_norm currently requires the last dimension to be a power of two")
-    return "tilelang"
+    if backend == "tilelang":
+        if not tilelang_available():
+            raise RuntimeError("tilelang backend requested but tilelang is not installed")
+        require_cuda_tensors("tilelang rms_norm", x)
+        if not _is_power_of_two(int(x.shape[-1])):
+            raise RuntimeError("tilelang rms_norm currently requires the last dimension to be a power of two")
+        return "tilelang"
+    if backend != "triton":
+        raise ValueError(f"unsupported rms_norm backend: {backend}")
+    if not triton_available():
+        raise RuntimeError("triton backend requested but triton is not installed")
+    require_cuda_tensors("triton rms_norm", x)
+    if not triton_supported_floating_dtype(x.dtype):
+        raise RuntimeError(f"triton rms_norm does not support dtype {x.dtype}")
+    return "triton"
 
 
 def _is_power_of_two(value: int) -> bool:
@@ -162,6 +187,55 @@ def _compile_tilelang_rms_norm_backward_kernel(
     return runner
 
 
+def _compile_triton_rms_norm_kernel(key: RMSNormKernelKey) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    forward_kernel = _compile_triton_rms_norm_forward_kernel(key)
+
+    def runner(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+        out, _inv_rms = forward_kernel(x, weight)
+        return out
+
+    return runner
+
+
+def _compile_triton_rms_norm_forward_kernel(
+    key: RMSNormKernelKey,
+) -> Callable[[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
+    if not triton_available():
+        raise RuntimeError("triton is not installed")
+    if key in _triton_rms_norm_forward_kernel_cache:
+        return _triton_rms_norm_forward_kernel_cache[key]
+
+    compiled = build_triton_rms_norm_forward_kernel(key.rows, key.cols, key.block_rows, key.eps)
+
+    def runner(x: torch.Tensor, weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return compiled(x, weight)
+
+    _triton_rms_norm_forward_kernel_cache[key] = runner
+    return runner
+
+
+def _compile_triton_rms_norm_backward_kernel(
+    key: RMSNormKernelKey,
+) -> Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]]:
+    if not triton_available():
+        raise RuntimeError("triton is not installed")
+    if key in _triton_rms_norm_backward_kernel_cache:
+        return _triton_rms_norm_backward_kernel_cache[key]
+
+    compiled = build_triton_rms_norm_backward_kernel(key.rows, key.cols, key.block_rows)
+
+    def runner(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        inv_rms: torch.Tensor,
+        grad_out: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return compiled(x, weight, inv_rms, grad_out)
+
+    _triton_rms_norm_backward_kernel_cache[key] = runner
+    return runner
+
+
 def compile_rms_norm_kernel(
     x: torch.Tensor,
     weight: torch.Tensor,
@@ -172,6 +246,18 @@ def compile_rms_norm_kernel(
     matrix, _normalized_weight, _original_shape = _normalize_rms_norm_inputs(x, weight)
     key = _rms_norm_cache_key(matrix, eps, block_rows)
     return _compile_tilelang_rms_norm_kernel(key)
+
+
+def compile_triton_rms_norm_kernel(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    eps: float = 1e-6,
+    *,
+    block_rows: int | None = None,
+) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    matrix, _normalized_weight, _original_shape = _normalize_rms_norm_inputs(x, weight)
+    key = _rms_norm_cache_key(matrix, eps, block_rows)
+    return _compile_triton_rms_norm_kernel(key)
 
 
 class _TilelangRMSNormFunction(torch.autograd.Function):
@@ -193,6 +279,25 @@ class _TilelangRMSNormFunction(torch.autograd.Function):
         return grad_x, grad_weight, None, None
 
 
+class _TritonRMSNormFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, weight: torch.Tensor, eps: float, block_rows: int) -> torch.Tensor:
+        key = _rms_norm_cache_key(x, eps, block_rows)
+        forward_kernel = _compile_triton_rms_norm_forward_kernel(key)
+        out, inv_rms = forward_kernel(x, weight)
+        ctx.save_for_backward(x, weight, inv_rms)
+        ctx.key = key
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_out: torch.Tensor):
+        x, weight, inv_rms = ctx.saved_tensors
+        backward_kernel = _compile_triton_rms_norm_backward_kernel(ctx.key)
+        grad_x, grad_weight_partial = backward_kernel(x, weight, inv_rms, grad_out.contiguous())
+        grad_weight = grad_weight_partial.sum(dim=0).to(weight.dtype)
+        return grad_x, grad_weight, None, None
+
+
 def _run_tilelang_rms_norm(
     x: torch.Tensor,
     weight: torch.Tensor,
@@ -207,13 +312,27 @@ def _run_tilelang_rms_norm(
     return kernel(x, weight)
 
 
+def _run_triton_rms_norm(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    eps: float,
+    *,
+    block_rows: int | None,
+) -> torch.Tensor:
+    resolved_block_rows = max(1, int(block_rows or 1))
+    if x.requires_grad or weight.requires_grad:
+        return _TritonRMSNormFunction.apply(x, weight, eps, resolved_block_rows)
+    kernel = compile_triton_rms_norm_kernel(x, weight, eps, block_rows=resolved_block_rows)
+    return kernel(x, weight)
+
+
 def resolved_rms_norm_backend(
     x: torch.Tensor,
     backend: RMSNormBackend,
     *,
     eps: float = 1e-6,
     block_rows: int | None = None,
-) -> Literal["torch", "tilelang"]:
+) -> Literal["torch", "tilelang", "triton"]:
     del eps, block_rows
     matrix = x.reshape(-1, x.shape[-1]).contiguous() if x.ndim >= 2 else x
     return _resolve_rms_norm_backend(matrix, backend)
@@ -231,7 +350,14 @@ def rms_norm(
     resolved_backend = resolved_rms_norm_backend(matrix, backend, eps=eps, block_rows=block_rows)
     if resolved_backend == "torch":
         return _run_torch_rms_norm(matrix, normalized_weight, eps).reshape(original_shape)
-    return _run_tilelang_rms_norm(
+    if resolved_backend == "tilelang":
+        return _run_tilelang_rms_norm(
+            matrix,
+            normalized_weight,
+            eps,
+            block_rows=block_rows,
+        ).reshape(original_shape)
+    return _run_triton_rms_norm(
         matrix,
         normalized_weight,
         eps,
@@ -245,6 +371,7 @@ __all__ = [
     "RMSNormKernelKey",
     "clear_rms_norm_kernel_cache",
     "compile_rms_norm_kernel",
+    "compile_triton_rms_norm_kernel",
     "register_rms_norm_kernel",
     "resolved_rms_norm_backend",
     "rms_norm",

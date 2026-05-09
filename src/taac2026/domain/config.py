@@ -24,8 +24,10 @@ PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range"]
 PCVRDataSamplingStrategy = Literal["step_random", "row_group_sweep"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
-RMSNormBackend = Literal["torch", "tilelang"]
+RMSNormBackend = Literal["torch", "tilelang", "triton"]
 FlashAttentionBackend = Literal["torch", "tilelang"]
+RMS_NORM_BACKEND_CHOICES = ("torch", "tilelang", "triton")
+FLASH_ATTENTION_BACKEND_CHOICES = ("torch", "tilelang")
 
 
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
@@ -235,9 +237,9 @@ class PCVRModelConfig:
     rms_norm_block_rows: int = 1
 
     def __post_init__(self) -> None:
-        if self.flash_attention_backend not in {"torch", "tilelang"}:
+        if self.flash_attention_backend not in FLASH_ATTENTION_BACKEND_CHOICES:
             raise ValueError(f"unsupported flash attention backend: {self.flash_attention_backend}")
-        if self.rms_norm_backend not in {"torch", "tilelang"}:
+        if self.rms_norm_backend not in RMS_NORM_BACKEND_CHOICES:
             raise ValueError(f"unsupported rms_norm backend: {self.rms_norm_backend}")
         if self.rms_norm_block_rows < 1:
             raise ValueError("rms_norm_block_rows must be positive")
@@ -307,6 +309,7 @@ class PCVRTrainConfig:
             "amp": self.runtime.amp,
             "amp_dtype": self.runtime.amp_dtype,
             "compile": self.runtime.compile,
+            "progress_log_interval_steps": self.runtime.progress_log_interval_steps,
             "loss_terms": self.loss.to_list(),
             "sparse_lr": self.sparse_optimizer.sparse_lr,
             "sparse_weight_decay": self.sparse_optimizer.sparse_weight_decay,

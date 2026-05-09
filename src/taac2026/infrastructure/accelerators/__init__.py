@@ -28,6 +28,7 @@ from taac2026.infrastructure.accelerators.embedding.embedding_bag import (
     EmbeddingBagMeanKernelKey,
     clear_embedding_bag_mean_kernel_cache,
     compile_embedding_bag_mean_kernel,
+    compile_triton_embedding_bag_mean_kernel,
     embedding_bag_mean,
     register_embedding_bag_mean_kernel,
     resolved_embedding_bag_mean_backend,
@@ -44,10 +45,12 @@ from taac2026.infrastructure.accelerators.normalization.rms_norm import (
     _resolve_rms_norm_backend,
     clear_rms_norm_kernel_cache,
     compile_rms_norm_kernel,
+    compile_triton_rms_norm_kernel,
     register_rms_norm_kernel,
     resolved_rms_norm_backend,
     rms_norm,
 )
+from taac2026.infrastructure.accelerators.triton_runtime import triton_available
 from taac2026.infrastructure.accelerators.tilelang_runtime import (
     _TILELANG_E8M0_COMPAT_GUARD,
     _TILELANG_E8M0_ORIGINAL_GUARD,
@@ -98,6 +101,8 @@ __all__ = [
     "compile_embedding_bag_mean_kernel",
     "compile_flash_attention_kernel",
     "compile_rms_norm_kernel",
+    "compile_triton_embedding_bag_mean_kernel",
+    "compile_triton_rms_norm_kernel",
     "cuda_multiprocessor_count",
     "cuembed_available",
     "embedding_bag_mean",
@@ -114,4 +119,5 @@ __all__ = [
     "resolved_rms_norm_backend",
     "rms_norm",
     "tilelang_available",
+    "triton_available",
 ]

@@ -9,6 +9,7 @@ icon: lucide/activity
 - CLI operator：`rms_norm`。
 - Torch reference：`x * rsqrt(mean(x^2) + eps) * weight`。
 - TileLang backend 支持 `float16`、`bfloat16`、`float32`，CUDA tensor，last dimension 需要符合当前 kernel 约束。
+- Triton backend 支持 `float16`、`bfloat16`、`float32` CUDA tensor，last dimension 不要求 2 的幂。
 - benchmark 只测算子本体，不代表完整模型 step time。
 - 主要源码：`src/taac2026/infrastructure/accelerators/normalization/rms_norm.py`。
 
@@ -21,7 +22,7 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --rows 8192 \
   --cols 128 \
   --dtype float16 \
-  --backends torch,tilelang \
+  --backends torch,tilelang,triton \
   --steps 100 \
   --warmup-steps 20 \
   --repeats 5 \
@@ -31,7 +32,7 @@ uv run taac-benchmark-pcvr-tilelang-ops \
 ## 读数要点
 
 - 变更 `block_rows` 时要一起记录参数，例如 `--block-rows 8`。
-- 如果 `tilelang` backend 报 unsupported，先确认 CUDA、TileLang 安装和 dtype / shape 约束。
+- 如果 `tilelang` 或 `triton` backend 报 unsupported，先确认 CUDA、对应编译器包安装和 dtype / shape 约束。
 - RMSNorm 的模型收益取决于调用频率和 tensor shape；单算子速度提升不等于端到端同幅提升。
 
 ## 最近验收观察

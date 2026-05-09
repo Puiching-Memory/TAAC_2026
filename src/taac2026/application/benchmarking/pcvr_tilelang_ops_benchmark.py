@@ -6,6 +6,7 @@ import argparse
 from dataclasses import asdict, dataclass
 import os
 import statistics
+import sys
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
@@ -23,17 +24,20 @@ from taac2026.infrastructure.accelerators import (
     compile_embedding_bag_mean_kernel,
     compile_flash_attention_kernel,
     compile_rms_norm_kernel,
+    compile_triton_embedding_bag_mean_kernel,
+    compile_triton_rms_norm_kernel,
     cuembed_available,
     resolved_embedding_bag_mean_backend,
     resolved_flash_attention_backend,
     resolved_rms_norm_backend,
     tilelang_available,
+    triton_available,
 )
 
 
-BenchmarkBackend = Literal["torch", "tilelang", "cuembed"]
-DEFAULT_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang")
-SUPPORTED_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang", "cuembed")
+BenchmarkBackend = Literal["torch", "tilelang", "triton", "cuembed"]
+DEFAULT_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang", "triton")
+SUPPORTED_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang", "triton", "cuembed")
 
 
 @dataclass(slots=True)
@@ -167,7 +171,7 @@ def _validate_output_accuracy(
 
 
 def _benchmark_failure_status(backend: BenchmarkBackend, error: Exception) -> str:
-    return "unsupported" if backend in {"tilelang", "cuembed"} and not isinstance(error, AssertionError) else "error"
+    return "unsupported" if backend in {"tilelang", "triton", "cuembed"} and not isinstance(error, AssertionError) else "error"
 
 
 def _benchmark_callable(
@@ -226,12 +230,20 @@ def _prepare_rms_norm_callable(
 
     clear_tilelang_kernel_cache()
     started = time.perf_counter()
-    kernel = compile_rms_norm_kernel(
-        x,
-        weight,
-        args.eps,
-        block_rows=args.block_rows,
-    )
+    if backend == "triton":
+        kernel = compile_triton_rms_norm_kernel(
+            x,
+            weight,
+            args.eps,
+            block_rows=args.block_rows,
+        )
+    else:
+        kernel = compile_rms_norm_kernel(
+            x,
+            weight,
+            args.eps,
+            block_rows=args.block_rows,
+        )
     _synchronize(device)
     compile_sec = time.perf_counter() - started
     return lambda: kernel(x, weight), resolved_backend, compile_sec
@@ -296,6 +308,27 @@ def _prepare_embedding_bag_mean_callable(
         kernel = compile_cuembed_embedding_bag_mean_kernel(
             embedding_weight,
             values,
+        )
+        _synchronize(device)
+        compile_sec = time.perf_counter() - started
+        return lambda: kernel(embedding_weight, values), resolved_backend, compile_sec
+
+    if backend == "triton":
+        resolved_backend = resolved_embedding_bag_mean_backend(
+            embedding_weight,
+            values,
+            backend,
+            block_rows=args.block_rows,
+            block_cols=args.block_cols,
+        )
+
+        clear_embedding_bag_mean_kernel_cache()
+        started = time.perf_counter()
+        kernel = compile_triton_embedding_bag_mean_kernel(
+            embedding_weight,
+            values,
+            block_rows=args.block_rows,
+            block_cols=args.block_cols,
         )
         _synchronize(device)
         compile_sec = time.perf_counter() - started
@@ -636,7 +669,6 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         torch.set_num_threads(args.torch_threads)
     if args.operator != "embedding_bag_mean" and "cuembed" in args.backends:
         raise ValueError("cuembed backend is only supported for --operator embedding_bag_mean")
-
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA device requested but torch.cuda.is_available() is False")
@@ -727,6 +759,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "atol": args.atol,
         "rtol": args.rtol,
         "tilelang_installed": tilelang_available(),
+        "triton_installed": triton_available(),
         "cuembed_available": cuembed_available(),
         "backends": list(args.backends),
         "results": results,
@@ -735,6 +768,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    raw_argv = tuple(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--operator", choices=("rms_norm", "flash_attention", "embedding_bag_mean"), default="rms_norm")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -766,13 +800,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--backends",
         default=",".join(DEFAULT_BACKENDS),
-        help="comma-separated subset of torch,tilelang,cuembed; cuembed is valid only for embedding_bag_mean",
+        help="comma-separated subset of torch,tilelang,triton,cuembed; cuembed is valid only for embedding_bag_mean",
     )
     parser.add_argument("--atol", type=float, default=None, help="absolute tolerance for accuracy checks")
     parser.add_argument("--rtol", type=float, default=None, help="relative tolerance for accuracy checks")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
     args.backends = _parse_backend_names(args.backends)
     args.dtype = getattr(torch, args.dtype)
+    if args.operator == "flash_attention" and "triton" in args.backends:
+        explicit_backends = any(argument == "--backends" or argument.startswith("--backends=") for argument in raw_argv)
+        if explicit_backends:
+            raise ValueError("triton backend is currently supported for rms_norm and embedding_bag_mean benchmarks")
+        args.backends = tuple(backend for backend in args.backends if backend != "triton")
     default_atol, default_rtol = _default_error_tolerances(args.dtype)
     if args.atol is None:
         args.atol = default_atol

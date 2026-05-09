@@ -129,7 +129,7 @@ uv run taac-benchmark-pcvr-optimizer \
 
 如果只是本地 CPU 可用性检查，可以把 `--device cuda` 改成 `--device cpu`，但不要拿 CPU 数字推断线上 GPU 训练性能。
 
-## TileLang 算子 Benchmark
+## Accelerator 算子 Benchmark
 
 算子 benchmark 用来比较 torch backend 和 accelerator backend 的耗时，并同时做误差检查。每个已接入算子的参数、命令模板、支持状态和最近一次验收快照记录在 [Benchmark 总览](../benchmark/index.md)。本页只保留最小入口命令。
 
@@ -142,8 +142,8 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --rows 8192 \
   --cols 128 \
   --dtype float16 \
-  --backends torch,tilelang \
-  > outputs/benchmarks/tilelang_rms_norm.json
+  --backends torch,tilelang,triton \
+  > outputs/benchmarks/rms_norm_accelerators.json
 ```
 
 Flash Attention：
@@ -174,9 +174,9 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --embedding-bag-size 4 \
   --embedding-padding-prob 0.25 \
   --dtype float16 \
-  --backends torch,tilelang \
+  --backends torch,tilelang,triton \
   --block-cols 64 \
-  > outputs/benchmarks/tilelang_embedding_bag_mean.json
+  > outputs/benchmarks/embedding_bag_mean_accelerators.json
 ```
 
 cuEmbed forward-only 对照可以在同一入口显式加入 `cuembed`：
@@ -191,12 +191,12 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --embedding-bag-size 4 \
   --embedding-padding-prob 0.25 \
   --dtype float16 \
-  --backends torch,tilelang,cuembed \
+  --backends torch,tilelang,triton,cuembed \
   --block-cols 64 \
   > outputs/benchmarks/embedding_bag_mean_accelerators.json
 ```
 
-如果在 CPU 上运行，TileLang 或 cuEmbed backend 可能报告 unsupported，这是正常的环境信号，不等于 torch fallback 有问题。cuEmbed backend 还需要可用 CUDA toolkit 来完成 PyTorch extension JIT。
+如果在 CPU 上运行，TileLang、Triton 或 cuEmbed backend 可能报告 unsupported，这是正常的环境信号，不等于 torch fallback 有问题。cuEmbed backend 还需要可用 CUDA toolkit 来完成 PyTorch extension JIT。
 
 ## 解读原则
 

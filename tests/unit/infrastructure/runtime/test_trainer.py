@@ -120,6 +120,39 @@ def test_train_logs_progress_when_tqdm_is_disabled(monkeypatch, tmp_path, log_ca
     assert any(message.startswith("Train step 4, Average Loss:") and message.endswith("0.35") for message in messages)
 
 
+def test_train_uses_runtime_execution_progress_log_interval(monkeypatch, tmp_path, log_capture) -> None:
+    train_loader = [{"label": torch.tensor([0.0])} for _ in range(4)]
+    valid_loader = [{"label": torch.tensor([0.0])} for _ in range(1)]
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=object,
+        train_loader=train_loader,
+        valid_loader=valid_loader,
+        lr=1e-3,
+        max_steps=4,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience=2),
+        runtime_execution=RuntimeExecutionConfig(progress_log_interval_steps=2),
+    )
+
+    losses = iter((0.5, 0.4, 0.3, 0.2))
+    monotonic_values = iter((100.0, 101.0, 102.0, 103.0, 104.0))
+    monkeypatch.setattr(trainer_module, "_use_interactive_progress", lambda: False)
+    monkeypatch.setattr(trainer_module.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(trainer, "_train_step", lambda batch: next(losses))
+    monkeypatch.setattr(trainer, "evaluate", lambda step=None: (0.75, 0.25))
+
+    with log_capture.at_level(logging.INFO):
+        trainer.train()
+
+    messages = [record.getMessage() for record in log_capture.records]
+    assert any(message.startswith("Train progress 1/4 (25.0%)") and "loss=0.5000" in message for message in messages)
+    assert any(message.startswith("Train progress 2/4 (50.0%)") and "loss=0.4000" in message for message in messages)
+    assert not any(message.startswith("Train progress 3/4 (75.0%)") for message in messages)
+    assert any(message.startswith("Train progress 4/4 (100.0%)") and "loss=0.2000" in message for message in messages)
+
+
 def test_maybe_compile_callable_falls_back_to_eager_on_compile_error(
     monkeypatch: pytest.MonkeyPatch,
     log_capture,

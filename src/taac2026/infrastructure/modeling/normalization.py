@@ -14,7 +14,7 @@ RMS_NORM_BLOCK_ROWS = 1
 
 def configure_rms_norm_runtime(*, backend: str, block_rows: int) -> None:
 	global RMS_NORM_BACKEND, RMS_NORM_BLOCK_ROWS
-	if backend not in {"torch", "tilelang"}:
+	if backend not in {"torch", "tilelang", "triton"}:
 		raise ValueError(f"unsupported rms_norm backend: {backend}")
 	resolved_block_rows = int(block_rows)
 	if resolved_block_rows < 1:

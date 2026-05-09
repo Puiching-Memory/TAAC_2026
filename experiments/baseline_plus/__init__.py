@@ -58,7 +58,12 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         warmup_steps=0,
         min_lr_ratio=0.0,
     ),
-    runtime=RuntimeExecutionConfig(amp=False, amp_dtype="bfloat16", compile=False),
+    runtime=RuntimeExecutionConfig(
+        amp=False,
+        amp_dtype="bfloat16",
+        compile=False,
+        progress_log_interval_steps=100,
+    ),
     loss=PCVRLossConfig(terms=(PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),)),
     sparse_optimizer=PCVRSparseOptimizerConfig(
         sparse_lr=0.05,

@@ -31,7 +31,7 @@ def test_parse_pcvr_tilelang_ops_benchmark_args_accepts_backend_subset() -> None
             "--repeats",
             "3",
             "--backends",
-            "torch,tilelang",
+            "torch,tilelang,triton",
             "--dtype",
             "float32",
         ]
@@ -43,7 +43,7 @@ def test_parse_pcvr_tilelang_ops_benchmark_args_accepts_backend_subset() -> None
     assert args.steps == 2
     assert args.warmup_steps == 1
     assert args.repeats == 3
-    assert args.backends == ("torch", "tilelang")
+    assert args.backends == ("torch", "tilelang", "triton")
     assert args.block_rows is None
     assert args.atol == 1e-5
     assert args.rtol == 1e-5
@@ -70,6 +70,7 @@ def test_parse_pcvr_tilelang_ops_benchmark_accepts_flash_attention_operator() ->
     )
 
     assert args.operator == "flash_attention"
+    assert args.backends == ("torch", "tilelang")
     assert args.batch == 2
     assert args.heads == 4
     assert args.query_len == 32
@@ -127,6 +128,23 @@ def test_parse_pcvr_tilelang_ops_benchmark_accepts_cuembed_backend() -> None:
     assert args.backends == ("torch", "cuembed")
 
 
+def test_parse_pcvr_tilelang_ops_benchmark_rejects_explicit_triton_flash_attention_backend() -> None:
+    try:
+        parse_args(
+            [
+                "--operator",
+                "flash_attention",
+                "--backends",
+                "torch,triton",
+            ]
+        )
+    except ValueError as error:
+        assert "rms_norm" in str(error)
+        assert "embedding_bag_mean" in str(error)
+    else:  # pragma: no cover - defensive branch
+        raise AssertionError("parse_args accepted triton for flash_attention")
+
+
 def test_run_pcvr_tilelang_ops_benchmark_rejects_cuembed_for_non_embedding_operator() -> None:
     args = parse_args(
         [
@@ -165,7 +183,7 @@ def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -
             "--repeats",
             "2",
             "--backends",
-            "torch,tilelang",
+            "torch,tilelang,triton",
             "--dtype",
             "float32",
         ]
@@ -175,8 +193,8 @@ def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -
 
     assert summary["operator"] == "rms_norm"
     assert summary["device"] == "cpu"
-    assert summary["backends"] == ["torch", "tilelang"]
-    assert len(summary["results"]) == 2
+    assert summary["backends"] == ["torch", "tilelang", "triton"]
+    assert len(summary["results"]) == 3
 
     rows = {row["backend"]: row for row in summary["results"]}
     assert rows["torch"]["status"] == "ok"
@@ -187,6 +205,9 @@ def test_run_pcvr_tilelang_ops_benchmark_reports_cpu_tilelang_as_unsupported() -
     assert rows["tilelang"]["status"] == "unsupported"
     assert rows["tilelang"]["successful_repeats"] == 0
     assert rows["tilelang"]["error"]
+    assert rows["triton"]["status"] == "unsupported"
+    assert rows["triton"]["successful_repeats"] == 0
+    assert rows["triton"]["error"]
     assert summary["atol"] == 1e-5
     assert summary["rtol"] == 1e-5
 
@@ -258,7 +279,7 @@ def test_run_embedding_bag_mean_benchmark_reports_cpu_tilelang_as_unsupported() 
             "--repeats",
             "2",
             "--backends",
-            "torch,tilelang",
+            "torch,tilelang,triton",
             "--dtype",
             "float32",
         ]
@@ -268,7 +289,7 @@ def test_run_embedding_bag_mean_benchmark_reports_cpu_tilelang_as_unsupported() 
 
     assert summary["operator"] == "embedding_bag_mean"
     assert summary["device"] == "cpu"
-    assert summary["backends"] == ["torch", "tilelang"]
+    assert summary["backends"] == ["torch", "tilelang", "triton"]
     assert summary["embedding_vocab_size"] == 32
     assert summary["embedding_dim"] == 8
     assert summary["embedding_bag_size"] == 3
@@ -280,6 +301,9 @@ def test_run_embedding_bag_mean_benchmark_reports_cpu_tilelang_as_unsupported() 
     assert rows["tilelang"]["status"] == "unsupported"
     assert rows["tilelang"]["successful_repeats"] == 0
     assert rows["tilelang"]["error"]
+    assert rows["triton"]["status"] == "unsupported"
+    assert rows["triton"]["successful_repeats"] == 0
+    assert rows["triton"]["error"]
 
 
 def test_run_embedding_bag_mean_benchmark_reports_cpu_cuembed_as_unsupported() -> None:
@@ -371,6 +395,54 @@ def test_benchmark_marks_tilelang_accuracy_failure_as_error(monkeypatch) -> None
     assert "close" in result.error.lower()
     assert result.max_abs_error is None
     assert result.max_rel_error is None
+
+
+def test_benchmark_marks_triton_accuracy_failure_as_error(monkeypatch) -> None:
+    args = parse_args(
+        [
+            "--device",
+            "cpu",
+            "--rows",
+            "4",
+            "--cols",
+            "8",
+            "--steps",
+            "1",
+            "--warmup-steps",
+            "0",
+            "--repeats",
+            "1",
+            "--backends",
+            "triton",
+            "--dtype",
+            "float32",
+            "--atol",
+            "1e-6",
+            "--rtol",
+            "1e-6",
+        ]
+    )
+    x = torch.ones((args.rows, args.cols), dtype=args.dtype)
+    weight = torch.ones((args.cols,), dtype=args.dtype)
+
+    monkeypatch.setattr(tilelang_benchmark, "_benchmark_callable", lambda *args, **kwargs: (0.1, 100.0))
+    monkeypatch.setattr(
+        tilelang_benchmark,
+        "_prepare_rms_norm_callable",
+        lambda **kwargs: (lambda: torch.full_like(x, 2.0), "triton", 0.25),
+    )
+
+    result = _benchmark_rms_norm_backend(
+        backend="triton",
+        args=args,
+        device=torch.device("cpu"),
+        x=x,
+        weight=weight,
+    )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert "close" in result.error.lower()
 
 
 def test_flash_attention_benchmark_marks_tilelang_accuracy_failure_as_error(monkeypatch) -> None:

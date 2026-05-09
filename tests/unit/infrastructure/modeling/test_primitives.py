@@ -36,6 +36,8 @@ def test_configure_rms_norm_runtime_validates_backend_and_block_rows() -> None:
         configure_rms_norm_runtime(backend="nope", block_rows=1)
     with pytest.raises(ValueError, match="rms_norm block_rows must be positive"):
         configure_rms_norm_runtime(backend="torch", block_rows=0)
+    configure_rms_norm_runtime(backend="triton", block_rows=2)
+    configure_rms_norm_runtime(backend="torch", block_rows=1)
 
 
 def test_configure_flash_attention_runtime_validates_backend() -> None:

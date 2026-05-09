@@ -12,9 +12,11 @@ import torch
 
 from taac2026.domain.config import (
     DENSE_LR_SCHEDULER_TYPE_CHOICES,
+    FLASH_ATTENTION_BACKEND_CHOICES,
     PCVR_DATA_SAMPLING_STRATEGY_CHOICES,
     PCVR_DATA_SPLIT_STRATEGY_CHOICES,
     PCVRTrainConfig,
+    RMS_NORM_BACKEND_CHOICES,
 )
 from taac2026.domain.model_contract import resolve_schema_path
 from taac2026.infrastructure.io.files import write_json
@@ -160,6 +162,13 @@ def build_pcvr_train_arg_parser(
         action=argparse.BooleanOptionalAction,
         default=default_values["compile"],
     )
+    parser.add_argument(
+        "--progress_log_interval_steps",
+        "--progress-log-interval-steps",
+        dest="progress_log_interval_steps",
+        type=int,
+        default=default_values["progress_log_interval_steps"],
+    )
 
     parser.add_argument(
         "--num_workers", type=int, default=default_values["num_workers"]
@@ -281,14 +290,14 @@ def build_pcvr_train_arg_parser(
         "--flash-attention-backend",
         dest="flash_attention_backend",
         default=default_values["flash_attention_backend"],
-        choices=["torch", "tilelang"],
+        choices=FLASH_ATTENTION_BACKEND_CHOICES,
     )
     parser.add_argument(
         "--rms_norm_backend",
         "--rms-norm-backend",
         dest="rms_norm_backend",
         default=default_values["rms_norm_backend"],
-        choices=["torch", "tilelang"],
+        choices=RMS_NORM_BACKEND_CHOICES,
     )
     parser.add_argument(
         "--rms_norm_block_rows",
@@ -423,6 +432,9 @@ def train_pcvr_model(
         amp=bool(args.amp),
         amp_dtype=str(args.amp_dtype),
         compile=bool(args.compile),
+        progress_log_interval_steps=int(
+            getattr(args, "progress_log_interval_steps", defaults.runtime.progress_log_interval_steps)
+        ),
     )
     logger.info(
         "Resolved PCVR training runtime: {}", runtime_execution.summary(args.device)

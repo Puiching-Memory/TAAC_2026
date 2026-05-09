@@ -21,9 +21,12 @@ flash_attention_ops = importlib.import_module("taac2026.infrastructure.accelerat
 attention_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.attention.kernels.tilelang")
 embedding_bag_ops = importlib.import_module("taac2026.infrastructure.accelerators.embedding.embedding_bag")
 embedding_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.embedding.kernels.tilelang")
+embedding_triton_kernels = importlib.import_module("taac2026.infrastructure.accelerators.embedding.kernels.triton")
 rms_norm_ops = importlib.import_module("taac2026.infrastructure.accelerators.normalization.rms_norm")
 normalization_tilelang_kernels = importlib.import_module("taac2026.infrastructure.accelerators.normalization.kernels.tilelang")
+normalization_triton_kernels = importlib.import_module("taac2026.infrastructure.accelerators.normalization.kernels.triton")
 tilelang_runtime = importlib.import_module("taac2026.infrastructure.accelerators.tilelang_runtime")
+triton_runtime = importlib.import_module("taac2026.infrastructure.accelerators.triton_runtime")
 
 
 def _causal_valid_mask(lengths: torch.Tensor, num_heads: int) -> torch.Tensor:
@@ -60,6 +63,18 @@ def test_tilelang_runtime_exports_shared_capability_helpers() -> None:
     )
 
 
+def test_triton_runtime_does_not_export_domain_kernel_builders() -> None:
+    assert "build_embedding_bag_mean_forward_kernel" not in triton_runtime.__all__
+    assert "build_rms_norm_forward_kernel" not in triton_runtime.__all__
+    assert not hasattr(triton_runtime, "build_embedding_bag_mean_forward_kernel")
+    assert not hasattr(triton_runtime, "build_rms_norm_forward_kernel")
+
+
+def test_triton_runtime_exports_shared_capability_helpers() -> None:
+    assert isinstance(triton_runtime.triton_available(), bool)
+    assert triton_runtime.triton_next_power_of_2(33) == 64
+
+
 def test_shared_tensor_validation_helpers_reject_cpu_for_cuda_ops() -> None:
     with pytest.raises(RuntimeError, match="sample_op requires CUDA tensors"):
         tilelang_ops.require_cuda_tensors("sample_op", torch.empty(1))
@@ -84,6 +99,15 @@ def test_tilelang_kernel_builders_are_domain_scoped() -> None:
         == embedding_tilelang_kernels.__name__
     )
     assert normalization_tilelang_kernels.build_rms_norm_forward_kernel.__module__ == normalization_tilelang_kernels.__name__
+
+
+def test_triton_kernel_builders_are_domain_scoped() -> None:
+    assert hasattr(embedding_triton_kernels, "build_embedding_bag_mean_forward_kernel")
+    assert hasattr(embedding_triton_kernels, "build_embedding_bag_mean_backward_kernel")
+    assert hasattr(normalization_triton_kernels, "build_rms_norm_forward_kernel")
+    assert hasattr(normalization_triton_kernels, "build_rms_norm_backward_kernel")
+    assert embedding_triton_kernels.build_embedding_bag_mean_forward_kernel.__module__ == embedding_triton_kernels.__name__
+    assert normalization_triton_kernels.build_rms_norm_forward_kernel.__module__ == normalization_triton_kernels.__name__
 
 
 def test_embedding_bag_mean_matches_reference_on_cpu_default_torch_backend() -> None:
@@ -205,6 +229,30 @@ def test_resolved_embedding_bag_mean_backend_rejects_tilelang_on_cpu(monkeypatch
 
     with pytest.raises(RuntimeError) as exc_info:
         resolved_embedding_bag_mean_backend(weight, values, "tilelang")
+
+    _assert_error_mentions(exc_info, "requires CUDA tensors")
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_triton_when_unavailable(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setattr(embedding_bag_ops, "triton_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_embedding_bag_mean_backend(weight, values, "triton")
+
+    _assert_error_mentions(exc_info, "triton", "not installed")
+
+
+def test_resolved_embedding_bag_mean_backend_rejects_triton_on_cpu(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setattr(embedding_bag_ops, "triton_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_embedding_bag_mean_backend(weight, values, "triton")
 
     _assert_error_mentions(exc_info, "requires CUDA tensors")
 
@@ -510,6 +558,28 @@ def test_resolved_rms_norm_backend_rejects_tilelang_on_cpu(monkeypatch) -> None:
     _assert_error_mentions(exc_info, "requires CUDA tensors")
 
 
+def test_resolved_rms_norm_backend_rejects_triton_when_unavailable(monkeypatch) -> None:
+    x = torch.randn(16, 64, dtype=torch.float32)
+
+    monkeypatch.setattr(rms_norm_ops, "triton_available", lambda: False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_rms_norm_backend(x, "triton")
+
+    _assert_error_mentions(exc_info, "triton", "not installed")
+
+
+def test_resolved_rms_norm_backend_rejects_triton_on_cpu(monkeypatch) -> None:
+    x = torch.randn(16, 64, dtype=torch.float32)
+
+    monkeypatch.setattr(rms_norm_ops, "triton_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        resolved_rms_norm_backend(x, "triton")
+
+    _assert_error_mentions(exc_info, "requires CUDA tensors")
+
+
 def test_ensure_tilelang_cuda_fp8_compatibility_patches_guard_when_cuda_lacks_e8m0(tmp_path) -> None:
     tilelang_header = tmp_path / "cuda_fp8.h"
     tilelang_header.write_text(
@@ -598,6 +668,21 @@ def test_embedding_bag_mean_tilelang_raises_when_tilelang_compile_fails(monkeypa
         embedding_bag_mean(weight, values, backend="tilelang")
 
 
+def test_embedding_bag_mean_triton_raises_when_triton_compile_fails(monkeypatch) -> None:
+    weight = torch.randn(8, 5, dtype=torch.float32)
+    values = torch.ones(3, 4, dtype=torch.long)
+
+    monkeypatch.setattr(embedding_bag_ops, "_resolve_embedding_bag_mean_backend", lambda *_args, **_kwargs: "triton")
+    monkeypatch.setattr(
+        embedding_bag_ops,
+        "compile_triton_embedding_bag_mean_kernel",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("compile failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="compile failed"):
+        embedding_bag_mean(weight, values, backend="triton")
+
+
 def test_rms_norm_tilelang_raises_when_tilelang_compile_fails(monkeypatch) -> None:
     x = torch.randn(4, 8, dtype=torch.float32)
     weight = torch.randn(8, dtype=torch.float32)
@@ -611,3 +696,18 @@ def test_rms_norm_tilelang_raises_when_tilelang_compile_fails(monkeypatch) -> No
 
     with pytest.raises(RuntimeError, match="compile failed"):
         rms_norm(x, weight, backend="tilelang")
+
+
+def test_rms_norm_triton_raises_when_triton_compile_fails(monkeypatch) -> None:
+    x = torch.randn(4, 8, dtype=torch.float32)
+    weight = torch.randn(8, dtype=torch.float32)
+
+    monkeypatch.setattr(rms_norm_ops, "resolved_rms_norm_backend", lambda *_args, **_kwargs: "triton")
+    monkeypatch.setattr(
+        rms_norm_ops,
+        "compile_triton_rms_norm_kernel",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("compile failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="compile failed"):
+        rms_norm(x, weight, backend="triton")

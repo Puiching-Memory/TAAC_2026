@@ -10,9 +10,10 @@ icon: lucide/table-properties
 - Torch reference：`F.embedding(values, weight, padding_idx=0)` 后忽略 id `0` 做 mean pooling。
 - TileLang forward 支持 CUDA 上 `float16`、`bfloat16`、`float32` weight，以及 `int32` / `int64` values。
 - backward 使用 `T.atomic_add` 累加到 `grad_weight`，训练态性能对 `embedding_dim` 和 `bag_size` 敏感。
+- Triton backend 支持 CUDA 上 `float16`、`bfloat16`、`float32` weight，以及 `int32` / `int64` values；forward/backward 均按固定 hotness 的 mean pooling 实现。
 - cuEmbed backend 是基于 NVIDIA cuEmbed fixed-hotness lookup 思路的项目内重写，运行时通过 PyTorch CUDA extension JIT 编译；当前只支持 forward-only、CUDA、`float16` / `float32` weight、`int32` / `int64` values。
-- 默认 `backend="torch"`；只有显式传 `backend="tilelang"` 或 `backend="cuembed"` 才启用对应 accelerator。训练态 TileLang backward 仍建议单独 benchmark 后再接入；cuEmbed backend 当前会拒绝 requires-grad 的 weight。
-- 主要源码：`src/taac2026/infrastructure/accelerators/embedding/embedding_bag.py`、`src/taac2026/infrastructure/accelerators/embedding/cuembed_runtime.py` 和 `src/taac2026/infrastructure/accelerators/embedding/kernels/cuembed_embedding_bag_mean.cu`。
+- 默认 `backend="torch"`；只有显式传 `backend="tilelang"`、`backend="triton"` 或 `backend="cuembed"` 才启用对应 accelerator。训练态 accelerator backward 仍建议单独 benchmark 后再接入；cuEmbed backend 当前会拒绝 requires-grad 的 weight。
+- 主要源码：`src/taac2026/infrastructure/accelerators/embedding/embedding_bag.py`、`src/taac2026/infrastructure/accelerators/embedding/kernels/tilelang.py`、`src/taac2026/infrastructure/accelerators/embedding/kernels/triton.py`、`src/taac2026/infrastructure/accelerators/embedding/cuembed_runtime.py` 和 `src/taac2026/infrastructure/accelerators/embedding/kernels/cuembed_embedding_bag_mean.cu`。
 
 ## 推荐命令
 
@@ -26,7 +27,7 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --embedding-bag-size 4 \
   --embedding-padding-prob 0.25 \
   --dtype float16 \
-  --backends torch,tilelang \
+  --backends torch,tilelang,triton \
   --steps 200 \
   --warmup-steps 50 \
   --repeats 3 \
@@ -46,7 +47,7 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --embedding-bag-size 4 \
   --embedding-padding-prob 0.25 \
   --dtype float16 \
-  --backends torch,tilelang,cuembed \
+  --backends torch,tilelang,triton,cuembed \
   --steps 200 \
   --warmup-steps 50 \
   --repeats 3 \
@@ -70,7 +71,7 @@ for dim in 32 64 128; do
       --embedding-bag-size "$bag" \
       --embedding-padding-prob 0.25 \
       --dtype float16 \
-      --backends torch,tilelang,cuembed \
+      --backends torch,tilelang,triton,cuembed \
       --steps 200 \
       --warmup-steps 50 \
       --repeats 3 \

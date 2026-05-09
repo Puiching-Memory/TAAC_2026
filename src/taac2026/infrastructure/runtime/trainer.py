@@ -39,12 +39,6 @@ def _use_interactive_progress() -> bool:
     return bool(isatty and isatty())
 
 
-def _progress_log_interval(total_batches: int) -> int:
-    if total_batches <= 0:
-        return 1
-    return max(1, total_batches // 20)
-
-
 def _should_log_progress(current_batch: int, total_batches: int, interval: int) -> bool:
     return current_batch == 1 or current_batch == total_batches or current_batch % interval == 0
 
@@ -215,7 +209,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         total_step = 0
         total_train_steps = self.max_steps if self.max_steps > 0 else self._logical_train_sweep_steps()
         use_tqdm = _use_interactive_progress()
-        log_interval = _progress_log_interval(total_train_steps)
+        log_interval = self.runtime_execution.progress_log_interval_steps
         loop_started_at = time.monotonic()
         eval_interval = self.eval_every_n_steps if self.eval_every_n_steps > 0 else self._logical_train_sweep_steps()
         if self.early_stopping.patience_unit == "steps":
@@ -346,7 +340,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
 
         total_valid_batches = len(self.valid_loader)
         use_tqdm = _use_interactive_progress()
-        log_interval = _progress_log_interval(total_valid_batches)
+        log_interval = self.runtime_execution.progress_log_interval_steps
         loop_started_at = time.monotonic()
         valid_iter = enumerate(self.valid_loader)
         pbar = (

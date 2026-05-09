@@ -23,6 +23,7 @@ from taac2026.infrastructure.experiments.module_loader import load_module_from_p
 from taac2026.infrastructure.io.json import loads
 from taac2026.application.training.workflow import PCVRTrainDataBundle, build_pcvr_train_hooks
 from taac2026.application.training.args import parse_pcvr_train_args, train_pcvr_model
+from taac2026.infrastructure.runtime.execution import RuntimeExecutionConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -224,7 +225,15 @@ def test_training_main_allows_explicit_dataset_for_bundle_pcvr_kind_experiment(
 
 def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
     args = parse_pcvr_train_args(
-        ["--amp", "--amp-dtype", "float16", "--compile", "--gradient-checkpointing"],
+        [
+            "--amp",
+            "--amp-dtype",
+            "float16",
+            "--compile",
+            "--progress-log-interval-steps",
+            "25",
+            "--gradient-checkpointing",
+        ],
         package_dir=tmp_path,
         defaults=PCVRTrainConfig(),
     )
@@ -232,17 +241,26 @@ def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
     assert args.amp is True
     assert args.amp_dtype == "float16"
     assert args.compile is True
+    assert args.progress_log_interval_steps == 25
     assert args.gradient_checkpointing is True
+
+
+def test_parse_pcvr_train_args_uses_runtime_progress_log_interval_default(tmp_path: Path) -> None:
+    defaults = PCVRTrainConfig(runtime=RuntimeExecutionConfig(progress_log_interval_steps=77))
+
+    args = parse_pcvr_train_args([], package_dir=tmp_path, defaults=defaults)
+
+    assert args.progress_log_interval_steps == 77
 
 
 def test_parse_pcvr_train_args_accepts_rms_norm_flags(tmp_path: Path) -> None:
     args = parse_pcvr_train_args(
-        ["--rms-norm-backend", "tilelang", "--rms-norm-block-rows", "8"],
+        ["--rms-norm-backend", "triton", "--rms-norm-block-rows", "8"],
         package_dir=tmp_path,
         defaults=PCVRTrainConfig(),
     )
 
-    assert args.rms_norm_backend == "tilelang"
+    assert args.rms_norm_backend == "triton"
     assert args.rms_norm_block_rows == 8
 
 
@@ -571,10 +589,10 @@ def test_pcvr_train_config_serializes_gradient_checkpointing_field() -> None:
 
 def test_pcvr_train_config_serializes_rms_norm_fields() -> None:
     flat_config = PCVRTrainConfig(
-        model=PCVRModelConfig(rms_norm_backend="tilelang", rms_norm_block_rows=8)
+        model=PCVRModelConfig(rms_norm_backend="triton", rms_norm_block_rows=8)
     ).to_flat_dict()
 
-    assert flat_config["rms_norm_backend"] == "tilelang"
+    assert flat_config["rms_norm_backend"] == "triton"
     assert flat_config["rms_norm_block_rows"] == 8
 
 

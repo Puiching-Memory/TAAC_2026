@@ -21,7 +21,7 @@ icon: lucide/gauge
 | ------------------ | -------------------- | --------------------------------------------- | ------------------------------------------------------- | ------------------------------------------- |
 | RMSNorm            | `rms_norm`           | normalization forward/backward microbenchmark | 由模型 runtime 的 RMSNorm backend 配置决定              | [RMSNorm](rms-norm.md)                      |
 | Flash Attention    | `flash_attention`    | attention forward/backward 和 mask 约束验证   | 由 sequence runtime 的 flash attention backend 配置决定 | [Flash Attention](flash-attention.md)       |
-| Embedding bag mean | `embedding_bag_mean` | non-sequential sparse feature mean pooling    | 默认 `torch`；显式传 `tilelang` 或 `cuembed` 才启用 accelerator | [Embedding Bag Mean](embedding-bag-mean.md) |
+| Embedding bag mean | `embedding_bag_mean` | non-sequential sparse feature mean pooling    | 默认 `torch`；显式传 `tilelang`、`triton` 或 `cuembed` 才启用 accelerator | [Embedding Bag Mean](embedding-bag-mean.md) |
 
 通用命令入口：
 
@@ -33,7 +33,7 @@ uv run taac-benchmark-pcvr-tilelang-ops --help
 
 | 字段                              | 含义                                                                        |
 | --------------------------------- | --------------------------------------------------------------------------- |
-| `status`                          | `ok`、`unsupported` 或 `error`；`unsupported` 常见于 CPU、缺 TileLang、缺 CUDA toolkit 或 cuEmbed JIT 不可用 |
+| `status`                          | `ok`、`unsupported` 或 `error`；`unsupported` 常见于 CPU、缺 TileLang、缺 Triton、缺 CUDA toolkit 或 cuEmbed JIT 不可用 |
 | `resolved_backend`                | 实际使用的 backend                                                          |
 | `step_time_ms_mean`               | 多次 repeat 后的平均单步耗时                                                |
 | `compile_sec`                     | accelerator 首次 JIT 编译时间，不应混入稳态吞吐判断                         |
@@ -53,7 +53,7 @@ icon: lucide/cpu
 ## 支持记录
 
 - Torch reference：...
-- TileLang backend：dtype、device、shape 和 mask 约束。
+- Accelerator backend：dtype、device、shape 和 mask 约束。
 - 自动启用策略：...
 
 ## 推荐命令
@@ -63,8 +63,8 @@ uv run taac-benchmark-pcvr-tilelang-ops \
   --operator ... \
   --device cuda \
   --dtype float16 \
-  --backends torch,tilelang \
-  > outputs/benchmarks/tilelang_....json
+  --backends torch,tilelang,triton \
+  > outputs/benchmarks/operator_accelerators.json
 ```
 
 ## 最近验收观察

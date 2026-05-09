@@ -37,6 +37,7 @@ _AMP_DTYPE_ALIASES = {
     "float16": "float16",
     "half": "float16",
 }
+DEFAULT_PROGRESS_LOG_INTERVAL_STEPS = 100
 
 
 def normalize_amp_dtype(value: str | None) -> str:
@@ -65,6 +66,13 @@ class RuntimeExecutionConfig:
     amp: bool = False
     amp_dtype: str = "bfloat16"
     compile: bool = False
+    progress_log_interval_steps: int = DEFAULT_PROGRESS_LOG_INTERVAL_STEPS
+
+    def __post_init__(self) -> None:
+        interval = int(self.progress_log_interval_steps)
+        if interval <= 0:
+            raise ValueError("progress_log_interval_steps must be positive")
+        object.__setattr__(self, "progress_log_interval_steps", interval)
 
     def normalized_amp_dtype(self) -> str:
         return normalize_amp_dtype(self.amp_dtype)
@@ -86,7 +94,8 @@ class RuntimeExecutionConfig:
     def summary(self, device: str | torch.device) -> str:
         return (
             f"amp={self.amp} (effective={self.amp_enabled_for(device)}), "
-            f"amp_dtype={self.normalized_amp_dtype()}, compile={self.compile}"
+            f"amp_dtype={self.normalized_amp_dtype()}, compile={self.compile}, "
+            f"progress_log_interval_steps={self.progress_log_interval_steps}"
         )
 
 

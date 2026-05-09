@@ -204,6 +204,30 @@ def test_rms_norm_tilelang_matches_torch_forward_and_backward_on_cuda() -> None:
     torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-2, rtol=1e-2)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for Triton kernel validation")
+def test_rms_norm_triton_matches_torch_forward_and_backward_on_cuda() -> None:
+    if not tilelang_ops.triton_available():
+        pytest.skip("triton is not installed")
+
+    tilelang_ops.clear_rms_norm_kernel_cache()
+    x = torch.randn(16, 48, dtype=torch.float16, device="cuda", requires_grad=True)
+    weight = torch.randn(48, dtype=torch.float16, device="cuda", requires_grad=True)
+    x_ref = x.detach().clone().requires_grad_(True)
+    weight_ref = weight.detach().clone().requires_grad_(True)
+
+    output = rms_norm(x, weight, backend="triton", block_rows=2)
+    reference = rms_norm(x_ref, weight_ref, backend="torch")
+
+    loss = output.float().square().mean()
+    reference_loss = reference.float().square().mean()
+    loss.backward()
+    reference_loss.backward()
+
+    torch.testing.assert_close(output.float(), reference.float(), atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(x.grad.float(), x_ref.grad.float(), atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-2, rtol=1e-2)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for TileLang kernel validation")
 def test_embedding_bag_mean_tilelang_matches_torch_forward_and_backward_on_cuda() -> None:
     if not tilelang_ops.tilelang_available():
@@ -232,6 +256,38 @@ def test_embedding_bag_mean_tilelang_matches_torch_forward_and_backward_on_cuda(
     reference_loss.backward()
 
     assert resolved_embedding_bag_mean_backend(weight.detach(), values, "tilelang") == "tilelang"
+    torch.testing.assert_close(output.float(), reference.float(), atol=1e-3, rtol=1e-3)
+    torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for Triton kernel validation")
+def test_embedding_bag_mean_triton_matches_torch_forward_and_backward_on_cuda() -> None:
+    if not tilelang_ops.triton_available():
+        pytest.skip("triton is not installed")
+
+    tilelang_ops.clear_embedding_bag_mean_kernel_cache()
+    weight = torch.randn(17, 16, dtype=torch.float16, device="cuda", requires_grad=True)
+    values = torch.tensor(
+        [
+            [1, 2, 0, 4],
+            [0, 0, 0, 0],
+            [3, 3, 7, 0],
+            [16, 5, 1, 0],
+        ],
+        dtype=torch.long,
+        device="cuda",
+    )
+    weight_ref = weight.detach().clone().requires_grad_(True)
+
+    output = embedding_bag_mean(weight, values, backend="triton", block_rows=1, block_cols=16)
+    reference = embedding_bag_mean(weight_ref, values, backend="torch")
+
+    loss = output.float().square().mean()
+    reference_loss = reference.float().square().mean()
+    loss.backward()
+    reference_loss.backward()
+
+    assert resolved_embedding_bag_mean_backend(weight.detach(), values, "triton") == "triton"
     torch.testing.assert_close(output.float(), reference.float(), atol=1e-3, rtol=1e-3)
     torch.testing.assert_close(weight.grad.float(), weight_ref.grad.float(), atol=1e-3, rtol=1e-3)
 
