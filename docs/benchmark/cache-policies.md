@@ -57,7 +57,7 @@ PCVR cache 存的是增强前的基础 batch。cache 命中后仍会 clone batch
 | 数据集  | `outputs/perf/pcvr_synthetic_300x/demo_300000.parquet`，约 12.0 GB |
 | schema  | `outputs/perf/pcvr_synthetic_300x/schema.json`                     |
 
-主测口径：`batch_size=256`、`cache_batches=512`、`max_batches=1500`、`warmup_batches=0`、`buffer_batches=1`、`torch_threads=4`、默认 shuffle。训练 split 为 270 Row Groups / 270,000 rows；1500 step 约等于 1.42 个逻辑 sweep，但访问顺序是带放回 step-random 抽样，不是 epoch 顺序扫描。
+主测口径：`batch_size=256`、`cache_batches=512`、`max_batches=1500`、`warmup_batches=0`、`buffer_batches=1`、`sampling_strategy=step_random`、`torch_threads=4`、默认 shuffle。训练 split 为 270 Row Groups / 270,000 rows；1500 step 约等于 1.42 个逻辑 sweep，但访问顺序是带放回 step-random 抽样，不是 epoch 顺序扫描。
 
 正式跑前预加载 native extension，避免 `torch.utils.cpp_extension.load` 首次编译进入任一策略的计时窗口：
 

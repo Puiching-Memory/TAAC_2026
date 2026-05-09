@@ -2,17 +2,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from torch.utils.data import IterableDataset
 
 import taac2026.infrastructure.data.dataset as pcvr_data
+import taac2026.infrastructure.data.observation as pcvr_observation
 from taac2026.infrastructure.io.json import dumps
 from taac2026.domain.config import (
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
     PCVRSequenceCropConfig,
 )
+from taac2026.infrastructure.data.step_dataset import (
+    PCVRStepDataset,
+    PCVRStepIndexSampler,
+)
+from taac2026.infrastructure.data.batch_converter import pad_list_offsets_values
 
 
 class _FakeDataset(IterableDataset):
@@ -57,7 +64,7 @@ class _FakeParquetFile:
 def _patch_parquet_runtime(monkeypatch, row_group_rows: list[int]) -> None:
     monkeypatch.setattr(pcvr_data, "PCVRParquetDataset", _FakeDataset)
     monkeypatch.setattr(
-        pcvr_data.pq,
+        pcvr_observation.pq,
         "ParquetFile",
         lambda path: _FakeParquetFile(path, row_group_rows),
     )
@@ -104,6 +111,9 @@ def _write_single_row_group_multi_batch_fixture(schema_path: Path, parquet_path:
     pq.write_table(
         pa.table(
             {
+                "timestamp": [100, 101, 102, 103],
+                "label_type": [2, 0, 2, 0],
+                "user_id": ["u0", "u1", "u2", "u3"],
                 "user_int_feats_1": [1, 2, 3, 4],
                 "user_int_feats_2": [[1, 2], [2, 3], [3, 4], [4, 5]],
                 "item_int_feats_3": [10, 11, 12, 13],
@@ -113,6 +123,21 @@ def _write_single_row_group_multi_batch_fixture(schema_path: Path, parquet_path:
         parquet_path,
         row_group_size=4,
     )
+
+
+def test_pad_list_offsets_values_handles_empty_and_truncated_rows() -> None:
+    values = pa.array([[1, 2, 3], [], [-1, 4], [5]], type=pa.list_(pa.int64()))
+
+    padded, lengths = pad_list_offsets_values(
+        values.offsets.to_numpy(),
+        values.values.to_numpy(),
+        row_count=4,
+        width=2,
+        dtype=np.int64,
+    )
+
+    assert lengths.tolist() == [2, 0, 2, 1]
+    assert padded.tolist() == [[1, 2], [0, 0], [-1, 4], [5, 0]]
 
 
 def test_get_pcvr_data_reuses_single_row_group_for_validation(
@@ -258,13 +283,18 @@ def test_get_pcvr_data_uses_shared_opt_cache_for_step_random_training(
         batch_size=1,
         valid_ratio=0.5,
         num_workers=2,
-        buffer_batches=1,
+        buffer_batches=20,
+        sampling_strategy="step_random",
         data_pipeline_config=data_pipeline_config,
         max_steps=12,
     )
 
     assert train_loader.dataset is train_dataset
+    assert isinstance(train_dataset, PCVRStepDataset)
     assert train_dataset.uses_step_random_sampling is True
+    assert train_dataset.buffer_batches == 1
+    assert train_dataset.logical_sweep_steps() == 12
+    assert _valid_loader.dataset.uses_step_random_sampling is False
     assert train_dataset.pipeline.cache.__class__.__name__ == "PCVRSharedBatchCache"
     assert getattr(train_dataset.pipeline.cache, "uses_global_access_trace", False) is True
     stats = train_dataset.pipeline.cache.stats()
@@ -305,11 +335,11 @@ def test_get_pcvr_data_uses_shared_native_cache_for_all_policies(tmp_path: Path)
         assert stats["trace_length"] == 0
 
 
-def test_step_random_sampler_draws_batches_with_replacement(tmp_path: Path) -> None:
+def test_step_dataset_draws_batches_with_replacement(tmp_path: Path) -> None:
     schema_path = tmp_path / "schema.json"
     parquet_path = tmp_path / "demo.parquet"
     _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
-    dataset = pcvr_data.PCVRParquetDataset(
+    source_dataset = pcvr_data.PCVRParquetDataset(
         parquet_path=str(parquet_path),
         schema_path=str(schema_path),
         batch_size=1,
@@ -318,19 +348,125 @@ def test_step_random_sampler_draws_batches_with_replacement(tmp_path: Path) -> N
         data_pipeline_config=PCVRDataPipelineConfig(),
         is_training=True,
         dataset_role="train",
-        sampling_seed=42,
     )
+    dataset = PCVRStepDataset(source_dataset, planned_steps=8, seed=42)
 
-    sampler = dataset._iter_step_random_batch_keys(worker_id=0, num_workers=1)
-    draws = [next(sampler)[1] for _ in range(8)]
+    draws = [dataset.plan_step(step_index).batch_key for step_index in range(8)]
 
-    assert len(dataset) == 4
+    assert len(dataset) == 8
     assert len(draws) == 8
     assert len(set(draws)) < len(draws)
-    assert len(set(draws[: len(dataset)])) < len(dataset)
 
 
-def test_global_batch_schedule_keeps_worker_batches_contiguous(tmp_path: Path) -> None:
+def test_step_dataset_keeps_one_optimizer_batch_after_multi_view_transform(
+    tmp_path: Path,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
+    source_dataset = pcvr_data.PCVRParquetDataset(
+        parquet_path=str(parquet_path),
+        schema_path=str(schema_path),
+        batch_size=2,
+        shuffle=True,
+        buffer_batches=0,
+        data_pipeline_config=PCVRDataPipelineConfig(
+            transforms=(PCVRSequenceCropConfig(views_per_row=2),),
+            seed=7,
+        ),
+        is_training=True,
+        dataset_role="train",
+    )
+    dataset = PCVRStepDataset(source_dataset, planned_steps=4, seed=42)
+
+    batch = dataset[0]
+
+    assert batch["label"].shape[0] == 2
+    assert batch["user_int_feats"].shape[0] == 2
+
+
+def test_get_pcvr_data_step_loader_materializes_optimizer_batches(
+    tmp_path: Path,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
+
+    train_loader, _valid_loader, train_dataset = pcvr_data.get_pcvr_data(
+        data_dir=str(parquet_path),
+        schema_path=str(schema_path),
+        batch_size=2,
+        num_workers=0,
+        buffer_batches=1,
+        sampling_strategy="step_random",
+        data_pipeline_config=PCVRDataPipelineConfig(
+            transforms=(PCVRSequenceCropConfig(views_per_row=2),),
+            seed=7,
+        ),
+        max_steps=3,
+    )
+
+    batch = next(iter(train_loader))
+
+    assert isinstance(train_dataset, PCVRStepDataset)
+    assert len(train_loader) == 3
+    assert batch["label"].shape[0] == 2
+    assert batch["user_int_feats"].shape[0] == 2
+
+
+def test_step_index_sampler_offsets_indices_by_epoch() -> None:
+    sampler = PCVRStepIndexSampler(steps_per_epoch=3)
+
+    assert list(sampler) == [0, 1, 2]
+
+    sampler.set_epoch(2)
+
+    assert list(sampler) == [6, 7, 8]
+
+
+def test_step_dataset_steps_per_epoch_overrides_planned_steps_for_loader_length(
+    tmp_path: Path,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
+    source_dataset = pcvr_data.PCVRParquetDataset(
+        parquet_path=str(parquet_path),
+        schema_path=str(schema_path),
+        batch_size=1,
+        shuffle=True,
+        buffer_batches=1,
+        data_pipeline_config=PCVRDataPipelineConfig(),
+        is_training=True,
+        dataset_role="train",
+    )
+    dataset = PCVRStepDataset(source_dataset, steps_per_epoch=2, planned_steps=5, seed=42)
+
+    assert len(dataset) == 2
+    assert dataset.logical_sweep_steps() == 2
+    assert list(dataset.iter_step_batch_keys(steps=5))
+
+
+def test_scan_dataset_does_not_use_step_random_sampling(tmp_path: Path) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
+    dataset = pcvr_data.PCVRParquetDataset(
+        parquet_path=str(parquet_path),
+        schema_path=str(schema_path),
+        batch_size=1,
+        shuffle=True,
+        buffer_batches=1,
+        data_pipeline_config=PCVRDataPipelineConfig(),
+        is_training=True,
+        dataset_role="train",
+    )
+
+    assert dataset.uses_step_random_sampling is False
+    assert dataset.logical_sweep_steps() == len(dataset)
+
+
+def test_scan_dataset_shared_opt_cache_uses_scan_trace(tmp_path: Path) -> None:
     schema_path = tmp_path / "schema.json"
     parquet_path = tmp_path / "demo.parquet"
     _write_single_row_group_multi_batch_fixture(schema_path, parquet_path)
@@ -346,40 +482,12 @@ def test_global_batch_schedule_keeps_worker_batches_contiguous(tmp_path: Path) -
         is_training=True,
         dataset_role="train",
     )
-    dataset.configure_global_batch_schedule(num_workers=2, cyclic=False)
+    cache = dataset.build_shared_batch_cache(num_workers=2)
 
-    worker0_keys = list(
-        dataset._iter_worker_scheduled_batch_keys(
-            worker_id=0,
-            num_workers=2,
-            cyclic=False,
-        )
-    )
-    worker1_keys = list(
-        dataset._iter_worker_scheduled_batch_keys(
-            worker_id=1,
-            num_workers=2,
-            cyclic=False,
-        )
-    )
-
-    assert [batch_position for batch_position, _batch_key in worker0_keys] == [0, 1]
-    assert [batch_position for batch_position, _batch_key in worker1_keys] == [2, 3]
-    assert [batch_key for _batch_position, batch_key in worker0_keys] == [
-        (str(parquet_path), 0, 0),
-        (str(parquet_path), 0, 1),
-    ]
-    assert [batch_key for _batch_position, batch_key in worker1_keys] == [
-        (str(parquet_path), 0, 2),
-        (str(parquet_path), 0, 3),
-    ]
-
-    assert list(dataset._iter_scheduled_global_access_trace(num_workers=2)) == [
-        (str(parquet_path), 0, 0),
-        (str(parquet_path), 0, 2),
-        (str(parquet_path), 0, 1),
-        (str(parquet_path), 0, 3),
-    ]
+    stats = cache.stats()
+    assert stats["policy"] == "opt"
+    assert stats["opt_active"] is True
+    assert stats["trace_length"] == len(dataset)
 
 
 def test_build_pcvr_observed_schema_report_respects_row_group_range(tmp_path: Path) -> None:

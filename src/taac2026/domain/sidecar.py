@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import field_validator
 
 from taac2026 import __version__
+from taac2026.domain.validation import TAACBoundaryModel
 
 
 PCVR_TRAIN_CONFIG_FORMAT = "taac2026-pcvr-train-config"
@@ -23,10 +24,8 @@ PCVR_TRAIN_CONFIG_METADATA_KEYS = frozenset(
 )
 
 
-class PCVRTrainConfigSidecar(BaseModel):
+class PCVRTrainConfigSidecar(TAACBoundaryModel):
     """Pydantic model for the current PCVR train_config payload."""
-
-    model_config = ConfigDict(extra="forbid")
 
     train_config_format: str
     train_config_version: int

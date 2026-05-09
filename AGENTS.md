@@ -243,6 +243,11 @@ When adding or moving docs:
 - Follow existing code style and local patterns.
 - Prefer `pathlib.Path` over raw string path manipulation.
 - Prefer structured parsers and typed config objects over ad hoc string parsing.
+- Use Pydantic for payloads that cross JSON, manifest, sidecar, platform, or
+  plugin boundaries. Inherit from `TAACBoundaryModel` so unknown fields are
+  rejected consistently. Keep internal hot-path contexts, tensor carriers, and
+  simple immutable defaults as dataclasses unless a boundary validator is
+  actually needed.
 - Keep comments short and useful.
 - Do not proactively suppress runtime warnings with `warnings.filterwarnings`,
   `warnings.simplefilter`, `PYTHONWARNINGS`, pytest warning filters, or blanket

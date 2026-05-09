@@ -12,6 +12,7 @@ import torch
 
 from taac2026.domain.config import (
     DENSE_LR_SCHEDULER_TYPE_CHOICES,
+    PCVR_DATA_SAMPLING_STRATEGY_CHOICES,
     PCVR_DATA_SPLIT_STRATEGY_CHOICES,
     PCVRTrainConfig,
 )
@@ -167,6 +168,13 @@ def build_pcvr_train_arg_parser(
         "--buffer_batches", type=int, default=default_values["buffer_batches"]
     )
     parser.add_argument(
+        "--steps_per_epoch",
+        "--steps-per-epoch",
+        dest="steps_per_epoch",
+        type=int,
+        default=default_values["steps_per_epoch"],
+    )
+    parser.add_argument(
         "--train_ratio", type=float, default=default_values["train_ratio"]
     )
     parser.add_argument(
@@ -178,6 +186,13 @@ def build_pcvr_train_arg_parser(
         dest="split_strategy",
         default=default_values["split_strategy"],
         choices=PCVR_DATA_SPLIT_STRATEGY_CHOICES,
+    )
+    parser.add_argument(
+        "--sampling_strategy",
+        "--sampling-strategy",
+        dest="sampling_strategy",
+        default=default_values["sampling_strategy"],
+        choices=PCVR_DATA_SAMPLING_STRATEGY_CHOICES,
     )
     parser.add_argument(
         "--train_timestamp_start",

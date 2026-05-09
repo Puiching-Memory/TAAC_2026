@@ -360,8 +360,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         with torch.no_grad():
             for step_index, batch in pbar:
                 logits, labels = self._evaluate_step(batch)
-                all_logits_list.append(logits.detach().cpu())
-                all_labels_list.append(labels.detach().cpu())
+                all_logits_list.append(logits.detach())
+                all_labels_list.append(labels.detach())
 
                 current_batch = step_index + 1
                 if not use_tqdm and _should_log_progress(current_batch, total_valid_batches, log_interval):
@@ -378,8 +378,16 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         all_logits = torch.cat(all_logits_list, dim=0).float()
         all_labels = torch.cat(all_labels_list, dim=0).long()
 
+        valid_logit_mask = ~torch.isnan(all_logits)
+        valid_logits = all_logits[valid_logit_mask]
+        valid_labels = all_labels[valid_logit_mask]
+        if len(valid_logits) > 0:
+            logloss = F.binary_cross_entropy_with_logits(valid_logits, valid_labels.float()).item()
+        else:
+            logloss = float("inf")
+
         probabilities = sigmoid_probabilities_numpy(all_logits)
-        labels_np = all_labels.numpy()
+        labels_np = all_labels.detach().cpu().numpy()
         nan_mask = np.isnan(probabilities)
         if nan_mask.any():
             n_nan = int(nan_mask.sum())
@@ -392,13 +400,6 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             auc = 0.0
         else:
             auc = float(roc_auc_score(labels_np, probabilities))
-
-        valid_logits = all_logits[~torch.isnan(all_logits)]
-        valid_labels = all_labels[~torch.isnan(all_logits)]
-        if len(valid_logits) > 0:
-            logloss = F.binary_cross_entropy_with_logits(valid_logits, valid_labels.float()).item()
-        else:
-            logloss = float("inf")
 
         self.last_eval_diagnostics = binary_score_diagnostics(labels_np, probabilities)
         logger.info(

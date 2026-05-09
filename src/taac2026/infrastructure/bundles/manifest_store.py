@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
 from taac2026 import __version__
+from taac2026.domain.validation import TAACBoundaryModel
 
 
 BundleKind = Literal["training", "inference"]
@@ -116,16 +117,12 @@ def _bundled_experiment_path(experiment_path: Path, root: Path) -> str:
     return relative_path
 
 
-class FrameworkMetadata(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class FrameworkMetadata(TAACBoundaryModel):
     name: str = "taac2026"
     version: str
 
 
-class BundleManifest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class BundleManifest(TAACBoundaryModel):
     manifest_version: int = BUNDLE_MANIFEST_VERSION
     kind: BundleKind = Field(alias="bundle_kind")
     bundle_format: str

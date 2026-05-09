@@ -291,6 +291,16 @@ def test_parse_pcvr_train_args_accepts_timestamp_split_flags(tmp_path: Path) -> 
     assert args.valid_timestamp_end == 1_772_600_400
 
 
+def test_parse_pcvr_train_args_accepts_sampling_strategy(tmp_path: Path) -> None:
+    args = parse_pcvr_train_args(
+        ["--sampling-strategy", "row_group_sweep"],
+        package_dir=tmp_path,
+        defaults=PCVRTrainConfig(),
+    )
+
+    assert args.sampling_strategy == "row_group_sweep"
+
+
 def test_parse_pcvr_train_args_uses_timestamp_split_defaults(tmp_path: Path) -> None:
     defaults = PCVRTrainConfig(
         data=PCVRDataConfig(

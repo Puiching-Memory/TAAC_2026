@@ -227,6 +227,18 @@ domain/ -> 标准库 / 轻量类型，不依赖 application 或 infrastructure
 
 `taac2026.api` 是给实验包的稳定门面。实验包直接 import 内部模块不是绝对禁止，但应该有明确理由。
 
+## 边界契约与 Pydantic
+
+Pydantic 在这个仓库里主要用于跨边界 payload，而不是替代所有内部类型。适合使用 Pydantic 的位置包括：
+
+- 需要读写 JSON 的持久化契约，例如 checkpoint sidecar。
+- 需要被平台或 bundle 消费的 manifest。
+- 插件、实验包或外部入口传入的结构化 payload。
+
+这些模型应继承 `taac2026.domain.validation.TAACBoundaryModel`，默认拒绝未知字段，避免平台或历史文件悄悄带入未定义配置。业务版本、格式号、路径范围、枚举兼容等规则应放在模型或紧邻模型的验证函数里。
+
+内部训练上下文、张量载体、轻量不可变默认配置和热路径对象仍优先使用 dataclass 或现有专用类型。不要为了“使用 Pydantic”而整体迁移 `PCVRTrainConfig` 这类实验默认配置；更好的做法是在它们序列化到 sidecar、manifest 或平台 payload 时做边界校验。
+
 ## 实验包是什么
 
 每个实验包通过 `EXPERIMENT` 暴露能力：

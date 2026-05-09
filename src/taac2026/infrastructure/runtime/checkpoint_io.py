@@ -124,13 +124,27 @@ class PCVRTrainerSupportMixin:
             self._save_step_checkpoint(total_step, is_best=True, skip_model_file=True)
 
     def _infinite_train_batches(self) -> Iterator[dict[str, Any]]:
+        epoch = 0
         while True:
+            self._set_train_loader_epoch(epoch)
             yielded = False
             for batch in self.train_loader:
                 yielded = True
                 yield batch
             if not yielded:
                 raise RuntimeError("train_loader produced no batches")
+            epoch += 1
+
+    def _set_train_loader_epoch(self, epoch: int) -> None:
+        sampler = getattr(self.train_loader, "sampler", None)
+        sampler_set_epoch = getattr(sampler, "set_epoch", None)
+        if callable(sampler_set_epoch):
+            sampler_set_epoch(epoch)
+            return
+        dataset = getattr(self.train_loader, "dataset", None)
+        dataset_set_epoch = getattr(dataset, "set_epoch", None)
+        if callable(dataset_set_epoch):
+            dataset_set_epoch(epoch)
 
     def _logical_train_sweep_steps(self) -> int:
         dataset = getattr(self.train_loader, "dataset", None)

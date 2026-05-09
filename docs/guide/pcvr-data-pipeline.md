@@ -6,6 +6,8 @@ icon: lucide/database-zap
 
 PCVR 数据管道负责把 parquet 数据变成训练 batch，并在需要时叠加 cache、增强、shuffle 和 observed schema 统计。数据管道不是一个单独命令，而是训练 workflow 通过 `PCVRTrainConfig.data_pipeline` 注入到 `get_pcvr_data()` 的运行时能力。
 
+训练路径现在优先使用 step-indexed map-style Dataset：PyTorch `DataLoader` 负责 worker、prefetch、pin memory 和 sampler 调度；仓库侧只负责把一个 step index 映射为一次有放回采样、cache 读取和 batch 组装。验证和推理仍使用顺序 scan 语义，不启用随机增强。
+
 ## 什么时候看这页
 
 - 你要解释 Baseline 和 Baseline+ 为什么数据侧行为不同。
@@ -83,11 +85,13 @@ PCVRDomainDropoutConfig(
 训练数据从 parquet 到模型输入大致经历这些阶段：
 
 1. `get_pcvr_data()` 解析 parquet 文件或目录，读取 schema。
-2. dataset 按 row group / batch 构造基础 PCVR batch。
+2. 训练端的 `PCVRStepDataset` 将 step index 映射为有放回采样的 parquet batch key。
 3. base batch cache 尝试命中；命中后返回 clone，避免增强污染缓存。
-4. transform 依次作用在 batch 上。
-5. shuffle / worker / prefetch 继续推进 dataloader。
+4. transform 依次作用在 batch 上；如果多视图增强产生超过一个 optimizer batch 的行数，step dataset 会重采样回单个训练 batch。
+5. PyTorch `DataLoader` 继续负责 worker / prefetch / pin memory。
 6. training workflow 把 batch 转成 `ModelInput`。
+
+`steps_per_epoch=0` 时，一个 epoch 的步数默认使用训练数据的逻辑 sweep 步数；如果显式设置 `--steps-per-epoch`，则 PyTorch sampler 会把 epoch 视为 step 空间上的窗口。`max_steps>0` 时，训练器仍按总 optimizer step 截断。
 
 验证和推理不应该启用随机增强。训练增强通过实验包默认配置进入，不应该在评估入口临时拼出来。
 
@@ -168,7 +172,8 @@ experiments/<name>/__init__.py
 - 配置对象：`src/taac2026/domain/config.py`
 - batch transform：`src/taac2026/infrastructure/data/transforms.py`
 - cache：`src/taac2026/infrastructure/data/cache.py`
-- 数据集读取：`src/taac2026/infrastructure/data/dataset.py`
+- 训练 step dataset：`src/taac2026/infrastructure/data/step_dataset.py`
+- scan 数据读取和 batch 转换：`src/taac2026/infrastructure/data/dataset.py`
 - batch 类型：`src/taac2026/infrastructure/data/batches.py`
 
 如果只是调整某个实验的增强策略，改实验包的 `TRAIN_DEFAULTS`。如果要新增一种 transform，再改 `domain/config.py` 和 `infrastructure/data/transforms.py`，并补测试。

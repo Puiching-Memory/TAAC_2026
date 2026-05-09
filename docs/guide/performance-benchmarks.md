@@ -75,6 +75,21 @@ done
 
 重点看 JSON 里的 `rows_per_sec`、`batches_per_sec`、`measured_rows`、`measured_batches` 和 `cache_impl`。如果 `measured_rows` 太小，结论通常不稳定。
 
+如果只想验证 Arrow `RecordBatch` 到 PCVR batch 的转换优化，使用 converter-only 模式。它会先把 Arrow batch 预加载到内存，再只计时 `_convert_batch()`，避免 parquet IO、DataLoader worker、shuffle buffer 和 cache 抖动掩盖 Python/NumPy 转换开销。
+
+```bash
+uv run taac-benchmark-pcvr-data-pipeline \
+  --dataset-path outputs/perf/pcvr_synthetic_300x/demo_300000.parquet \
+  --schema-path outputs/perf/pcvr_synthetic_300x/schema.json \
+  --benchmark-mode convert \
+  --preset none \
+  --converter-batches 256 \
+  --warmup-batches 16 \
+  > outputs/benchmarks/data_pipeline_convert_none.json
+```
+
+做转换层优化时，先在改动前保存一次 `benchmark_mode=convert` 的 JSON，再在改动后用同一命令重跑，优先比较 `rows_per_sec`、`batches_per_sec`、`measured_batches` 和 `strict_time_filter`。
+
 ## PCVR Smoke 诊断图
 
 本地只有 demo1000 时，不要把 AUC 当成主结论。训练和评估命令会写出 `training_telemetry.json`、`evaluation_telemetry.json` 和 `validation_predictions.jsonl`，可以直接生成运行成本、预测分布、模型相关性、样本分歧和稳定性图：

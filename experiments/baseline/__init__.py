@@ -23,9 +23,10 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     data=PCVRDataConfig(
         batch_size=256,
         num_workers=8,
-        buffer_batches=20,
+        buffer_batches=1,
         train_ratio=1.0,
         valid_ratio=0.1,
+        sampling_strategy="step_random",
         eval_every_n_steps=0,
         seq_max_lens="seq_a:256,seq_b:256,seq_c:512,seq_d:512",
     ),

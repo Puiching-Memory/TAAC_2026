@@ -199,6 +199,33 @@ def test_logical_train_sweep_steps_uses_dataset_without_calling_dataloader_len()
     assert TrainerSupport()._logical_train_sweep_steps() == 7
 
 
+def test_infinite_train_batches_advances_epoch_aware_sampler() -> None:
+    class EpochAwareSampler:
+        def __init__(self) -> None:
+            self.epochs: list[int] = []
+
+        def set_epoch(self, epoch: int) -> None:
+            self.epochs.append(epoch)
+
+    class OneBatchLoader:
+        sampler = EpochAwareSampler()
+
+        def __iter__(self):
+            return iter([{"label": torch.tensor([float(len(self.sampler.epochs))])}])
+
+    class TrainerSupport(PCVRTrainerSupportMixin):
+        train_loader = OneBatchLoader()
+
+    iterator = TrainerSupport()._infinite_train_batches()
+
+    first = next(iterator)
+    second = next(iterator)
+
+    assert TrainerSupport.train_loader.sampler.epochs == [0, 1]
+    assert first["label"].tolist() == [1.0]
+    assert second["label"].tolist() == [2.0]
+
+
 def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> None:
     trainer = PCVRPointwiseTrainer(
         model=_DummyModel(),

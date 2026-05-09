@@ -48,7 +48,7 @@ bash run.sh infer \
 
 | 配置块           | 当前默认                                                                   |
 | ---------------- | -------------------------------------------------------------------------- |
-| data             | `batch_size=256`，`num_workers=8`，`train_ratio=1.0`，`valid_ratio=0.1`    |
+| data             | `batch_size=256`，`num_workers=8`，`buffer_batches=1`，`sampling_strategy="step_random"`，`train_ratio=1.0`，`valid_ratio=0.1` |
 | seq length       | `seq_a:256,seq_b:256,seq_c:512,seq_d:512`                                  |
 | optimizer        | `lr=1e-4`，`dense_optimizer_type="adamw"`，scheduler 关闭                  |
 | runtime          | AMP 关闭，`torch.compile` 关闭                                             |

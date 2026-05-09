@@ -25,10 +25,10 @@ class PCVRShuffleBuffer:
 
     @property
     def requires_generator(self) -> bool:
-        return self.shuffle and self.buffer_batches > 1
+        return self.shuffle and self.buffer_batches > 0
 
     def push(self, batch: PCVRBatch, *, generator: torch.Generator | None = None) -> Iterator[PCVRBatch]:
-        if self.shuffle and self.buffer_batches > 1:
+        if self.shuffle and self.buffer_batches > 0:
             self._buffer.append(batch)
             if len(self._buffer) >= self.buffer_batches:
                 yield from self.flush(generator=generator)

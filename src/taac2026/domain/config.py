@@ -21,6 +21,7 @@ NSGroupingStrategy = Literal["explicit", "singleton"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
 PCVRDataCacheMode = Literal["none", "lru", "fifo", "lfu", "rr", "opt"]
 PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range"]
+PCVRDataSamplingStrategy = Literal["step_random", "row_group_sweep"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
 RMSNormBackend = Literal["torch", "tilelang"]
@@ -30,6 +31,7 @@ FlashAttentionBackend = Literal["torch", "tilelang"]
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
 PCVR_DATA_CACHE_MODE_CHOICES = ("none", "lru", "fifo", "lfu", "rr", "opt")
 PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_range")
+PCVR_DATA_SAMPLING_STRATEGY_CHOICES = ("step_random", "row_group_sweep")
 
 
 def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, list[int]]:
@@ -43,10 +45,12 @@ def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, li
 class PCVRDataConfig:
     batch_size: int = 256
     num_workers: int = 16
-    buffer_batches: int = 20
+    buffer_batches: int = 1
+    steps_per_epoch: int = 0
     train_ratio: float = 1.0
     valid_ratio: float = 0.1
     split_strategy: PCVRDataSplitStrategy = "row_group_tail"
+    sampling_strategy: PCVRDataSamplingStrategy = "step_random"
     train_timestamp_start: int = 0
     train_timestamp_end: int = 0
     valid_timestamp_start: int = 0
@@ -57,6 +61,10 @@ class PCVRDataConfig:
     def __post_init__(self) -> None:
         if self.split_strategy not in PCVR_DATA_SPLIT_STRATEGY_CHOICES:
             raise ValueError(f"unsupported PCVR data split strategy: {self.split_strategy}")
+        if self.sampling_strategy not in PCVR_DATA_SAMPLING_STRATEGY_CHOICES:
+            raise ValueError(f"unsupported PCVR data sampling strategy: {self.sampling_strategy}")
+        if self.steps_per_epoch < 0:
+            raise ValueError("steps_per_epoch must be non-negative")
         for field_name in (
             "train_timestamp_start",
             "train_timestamp_end",
@@ -275,9 +283,11 @@ class PCVRTrainConfig:
             "batch_size": self.data.batch_size,
             "num_workers": self.data.num_workers,
             "buffer_batches": self.data.buffer_batches,
+            "steps_per_epoch": self.data.steps_per_epoch,
             "train_ratio": self.data.train_ratio,
             "valid_ratio": self.data.valid_ratio,
             "split_strategy": self.data.split_strategy,
+            "sampling_strategy": self.data.sampling_strategy,
             "train_timestamp_start": self.data.train_timestamp_start,
             "train_timestamp_end": self.data.train_timestamp_end,
             "valid_timestamp_start": self.data.valid_timestamp_start,
@@ -328,6 +338,8 @@ class PCVRTrainConfig:
 REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())
 PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
     "split_strategy": "row_group_tail",
+    "sampling_strategy": "step_random",
+    "steps_per_epoch": 0,
     "train_timestamp_start": 0,
     "train_timestamp_end": 0,
     "valid_timestamp_start": 0,

@@ -16,6 +16,7 @@ from taac2026.infrastructure.data.batches import (
 from taac2026.infrastructure.data.cache import PCVRMemoryBatchCache, PCVRSharedBatchCache
 from taac2026.infrastructure.data.pipeline import PCVRDataPipeline, stable_pcvr_batch_seed, stable_pcvr_batch_seed_from_path_crc
 from taac2026.infrastructure.data.shuffle import PCVRShuffleBuffer
+from taac2026.infrastructure.data.step_dataset import PCVRStepDataset, PCVRStepIndexSampler, PCVRStepPlan
 from taac2026.infrastructure.data.transforms import (
 	PCVRDomainDropoutTransform,
 	PCVRFeatureMaskTransform,
@@ -36,6 +37,9 @@ __all__ = [
 	"PCVRSharedBatchCache",
 	"PCVRSharedTensorSpec",
 	"PCVRShuffleBuffer",
+	"PCVRStepDataset",
+	"PCVRStepIndexSampler",
+	"PCVRStepPlan",
 	"build_pcvr_batch_transform",
 	"build_pcvr_batch_transforms",
 	"clone_pcvr_batch",

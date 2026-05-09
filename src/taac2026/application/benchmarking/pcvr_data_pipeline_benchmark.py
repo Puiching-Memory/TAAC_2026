@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import pyarrow.parquet as pq
 
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.io.streams import write_stdout_line
@@ -20,7 +21,7 @@ from taac2026.domain.config import (
     PCVRFeatureMaskConfig,
     PCVRSequenceCropConfig,
 )
-from taac2026.infrastructure.data.dataset import get_pcvr_data
+from taac2026.infrastructure.data.dataset import PCVRParquetDataset, get_pcvr_data
 from taac2026.domain.model_contract import parse_seq_max_lens
 
 
@@ -126,6 +127,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         torch.set_num_threads(args.torch_threads)
 
     pipeline_config = _build_pipeline_config(args)
+    if args.benchmark_mode == "convert":
+        return _run_converter_benchmark(args, pipeline_config)
+
     train_loader, _valid_loader, train_dataset = get_pcvr_data(
         data_dir=str(args.dataset_path),
         schema_path=str(args.schema_path),
@@ -135,6 +139,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         num_workers=args.num_workers,
         buffer_batches=args.buffer_batches,
         shuffle_train=not args.no_shuffle,
+        sampling_strategy=args.sampling_strategy,
+        steps_per_epoch=args.steps_per_epoch,
         seed=args.seed,
         seq_max_lens=parse_seq_max_lens(args.seq_max_lens),
         data_pipeline_config=pipeline_config,
@@ -182,17 +188,20 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
     return {
         "dataset_path": str(args.dataset_path),
         "schema_path": str(args.schema_path),
+        "benchmark_mode": args.benchmark_mode,
         "pipeline_preset": args.pipeline_preset,
         "cache_mode": pipeline_config.cache.mode,
         "cache_impl": train_dataset.pipeline.cache.__class__.__name__,
         "shared_cache": train_dataset.pipeline.cache.__class__.__name__ == "PCVRSharedBatchCache",
         "data_cache_stats": cache_stats,
         "train_rows": train_dataset.num_rows,
-        "train_row_groups": len(train_dataset._rg_list),
+        "train_row_groups": len(train_dataset.row_groups),
         "batch_size": args.batch_size,
         "num_workers": args.num_workers,
         "buffer_batches": args.buffer_batches,
         "shuffle": not args.no_shuffle,
+        "sampling_strategy": args.sampling_strategy,
+        "steps_per_epoch": args.steps_per_epoch,
         "warmup_batches": args.warmup_batches,
         "warmup_rows": warmup_rows,
         "passes": args.passes,
@@ -203,6 +212,89 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
         "elapsed_sec": elapsed,
         "rows_per_sec": measured_rows / elapsed if elapsed > 0 else 0.0,
         "batches_per_sec": measured_batches / elapsed if elapsed > 0 else 0.0,
+    }
+
+
+def _collect_converter_batches(
+    dataset: PCVRParquetDataset,
+    batch_count: int,
+) -> list[object]:
+    record_batches: list[object] = []
+    for file_path, row_group_index, _row_count in dataset.row_groups:
+        parquet_file = pq.ParquetFile(file_path)
+        for record_batch in parquet_file.iter_batches(
+            batch_size=dataset.batch_size,
+            row_groups=[row_group_index],
+            columns=dataset.record_batch_columns(),
+        ):
+            record_batches.append(record_batch)
+            if len(record_batches) >= batch_count:
+                return record_batches
+    return record_batches
+
+
+def _run_converter_benchmark(
+    args: argparse.Namespace,
+    pipeline_config: PCVRDataPipelineConfig,
+) -> dict[str, object]:
+    dataset = PCVRParquetDataset(
+        parquet_path=str(args.dataset_path),
+        schema_path=str(args.schema_path),
+        batch_size=args.batch_size,
+        seq_max_lens=parse_seq_max_lens(args.seq_max_lens),
+        shuffle=False,
+        buffer_batches=0,
+        data_pipeline_config=pipeline_config,
+        is_training=True,
+        dataset_role="convert_benchmark",
+    )
+    measured_batches_target = args.max_batches if args.max_batches > 0 else args.converter_batches
+    measured_batches_target = max(1, int(measured_batches_target))
+    preload_batches = max(1, int(args.warmup_batches) + measured_batches_target)
+    record_batches = _collect_converter_batches(dataset, preload_batches)
+    if not record_batches:
+        return {
+            "dataset_path": str(args.dataset_path),
+            "schema_path": str(args.schema_path),
+            "benchmark_mode": args.benchmark_mode,
+            "pipeline_preset": args.pipeline_preset,
+            "train_rows": dataset.num_rows,
+            "measured_rows": 0,
+            "measured_batches": 0,
+            "warmup_batches": args.warmup_batches,
+            "elapsed_sec": 0.0,
+            "rows_per_sec": 0.0,
+            "batches_per_sec": 0.0,
+        }
+
+    for warmup_index in range(max(0, int(args.warmup_batches))):
+        dataset.convert_record_batch(record_batches[warmup_index % len(record_batches)])
+
+    measured_rows = 0
+    started = time.perf_counter()
+    for batch_index in range(measured_batches_target):
+        converted = dataset.convert_record_batch(
+            record_batches[batch_index % len(record_batches)]
+        )
+        measured_rows += int(converted["label"].shape[0])
+    elapsed = time.perf_counter() - started
+
+    return {
+        "dataset_path": str(args.dataset_path),
+        "schema_path": str(args.schema_path),
+        "benchmark_mode": args.benchmark_mode,
+        "pipeline_preset": args.pipeline_preset,
+        "train_rows": dataset.num_rows,
+        "train_row_groups": len(dataset.row_groups),
+        "batch_size": args.batch_size,
+        "preloaded_batches": len(record_batches),
+        "measured_rows": measured_rows,
+        "measured_batches": measured_batches_target,
+        "warmup_batches": args.warmup_batches,
+        "strict_time_filter": dataset.strict_time_filter_enabled,
+        "elapsed_sec": elapsed,
+        "rows_per_sec": measured_rows / elapsed if elapsed > 0 else 0.0,
+        "batches_per_sec": measured_batches_target / elapsed if elapsed > 0 else 0.0,
     }
 
 
@@ -224,6 +316,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--passes", type=int, default=1)
     parser.add_argument("--torch-threads", type=int, default=0)
     parser.add_argument("--no-shuffle", action="store_true")
+    parser.add_argument(
+        "--benchmark-mode",
+        choices=("loader", "convert"),
+        default="loader",
+    )
+    parser.add_argument("--converter-batches", type=int, default=128)
+    parser.add_argument(
+        "--sampling-strategy",
+        choices=("step_random", "row_group_sweep"),
+        default="step_random",
+    )
+    parser.add_argument("--steps-per-epoch", type=int, default=0)
     parser.add_argument(
         "--preset",
         dest="pipeline_preset",
