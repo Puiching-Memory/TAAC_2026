@@ -207,6 +207,7 @@ class PCVRExperimentRuntimeMixin:
         output_path: Path,
         dataset_role: str,
         row_group_range: tuple[int, int] | None = None,
+        timestamp_range: Any = None,
     ) -> Path:
         return self.runtime_hooks.write_observed_schema_report(
             self,
@@ -215,6 +216,7 @@ class PCVRExperimentRuntimeMixin:
             output_path=output_path,
             dataset_role=dataset_role,
             row_group_range=row_group_range,
+            timestamp_range=timestamp_range,
         )
 
     def _write_train_split_observed_schema_reports(
@@ -225,6 +227,11 @@ class PCVRExperimentRuntimeMixin:
         run_dir: Path,
         valid_ratio: float,
         train_ratio: float,
+        split_strategy: str = "row_group_tail",
+        train_timestamp_start: int = 0,
+        train_timestamp_end: int = 0,
+        valid_timestamp_start: int = 0,
+        valid_timestamp_end: int = 0,
     ) -> dict[str, Any]:
         return self.runtime_hooks.write_train_split_observed_schema_reports(
             self,
@@ -233,6 +240,11 @@ class PCVRExperimentRuntimeMixin:
             run_dir=run_dir,
             valid_ratio=valid_ratio,
             train_ratio=train_ratio,
+            split_strategy=split_strategy,
+            train_timestamp_start=train_timestamp_start,
+            train_timestamp_end=train_timestamp_end,
+            valid_timestamp_start=valid_timestamp_start,
+            valid_timestamp_end=valid_timestamp_end,
         )
 
     def _resolve_schema_path(self, dataset_path: Path, schema_path: Path | None, checkpoint_dir: Path) -> Path:

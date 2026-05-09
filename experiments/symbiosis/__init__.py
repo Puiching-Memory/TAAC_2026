@@ -14,14 +14,11 @@ from taac2026.api import (
     PCVRDataCacheConfig,
     PCVRDataConfig,
     PCVRDataPipelineConfig,
-    PCVRDomainDropoutConfig,
-    PCVRFeatureMaskConfig,
     PCVRLossConfig,
     PCVRLossTermConfig,
     PCVRModelConfig,
     PCVRNSConfig,
     PCVROptimizerConfig,
-    PCVRSequenceCropConfig,
     PCVRSparseOptimizerConfig,
     PCVRTrainConfig,
 )
@@ -195,25 +192,22 @@ def load_symbiosis_train_config(experiment: Any, checkpoint_dir: Path) -> dict[s
 
 TRAIN_DEFAULTS = PCVRTrainConfig(
     data=PCVRDataConfig(
-        batch_size=256,
-        num_workers=8,
+        batch_size=128,
+        num_workers=4,
         buffer_batches=20,
         train_ratio=1.0,
         valid_ratio=0.1,
+        split_strategy="row_group_tail",
+        train_timestamp_start=0,
+        train_timestamp_end=0,
+        valid_timestamp_start=0,
+        valid_timestamp_end=0,
         eval_every_n_steps=0,
         seq_max_lens="seq_a:256,seq_b:256,seq_c:512,seq_d:512",
     ),
     data_pipeline=PCVRDataPipelineConfig(
         cache=PCVRDataCacheConfig(mode="none", max_batches=0),
-        transforms=(
-            PCVRSequenceCropConfig(
-                views_per_row=2,
-                seq_window_mode="random_tail",
-                seq_window_min_len=8,
-            ),
-            PCVRFeatureMaskConfig(probability=0.03),
-            PCVRDomainDropoutConfig(probability=0.03),
-        ),
+        transforms=(),
         seed=42,
         strict_time_filter=True,
     ),

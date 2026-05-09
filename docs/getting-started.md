@@ -11,7 +11,7 @@ icon: lucide/rocket
 需要：
 
 - Linux
-- Python 3.10 - 3.14
+- Python 3.10 - 3.13
 - `uv`
 - Git
 - CUDA 12.6，本地 GPU 训练时需要

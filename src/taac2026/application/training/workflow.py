@@ -62,6 +62,11 @@ def default_build_train_data(context: PCVRTrainContext) -> PCVRTrainDataBundle:
         batch_size=context.args.batch_size,
         valid_ratio=context.args.valid_ratio,
         train_ratio=context.args.train_ratio,
+        split_strategy=getattr(context.args, "split_strategy", context.defaults.data.split_strategy),
+        train_timestamp_start=getattr(context.args, "train_timestamp_start", context.defaults.data.train_timestamp_start),
+        train_timestamp_end=getattr(context.args, "train_timestamp_end", context.defaults.data.train_timestamp_end),
+        valid_timestamp_start=getattr(context.args, "valid_timestamp_start", context.defaults.data.valid_timestamp_start),
+        valid_timestamp_end=getattr(context.args, "valid_timestamp_end", context.defaults.data.valid_timestamp_end),
         num_workers=context.args.num_workers,
         buffer_batches=context.args.buffer_batches,
         seed=context.args.seed,
@@ -174,6 +179,11 @@ def default_build_train_summary(
         "schema_path": str(context.schema_path),
         "train_ratio": float(context.args.train_ratio),
         "valid_ratio": float(context.args.valid_ratio),
+        "split_strategy": str(getattr(context.args, "split_strategy", context.defaults.data.split_strategy)),
+        "train_timestamp_start": int(getattr(context.args, "train_timestamp_start", context.defaults.data.train_timestamp_start)),
+        "train_timestamp_end": int(getattr(context.args, "train_timestamp_end", context.defaults.data.train_timestamp_end)),
+        "valid_timestamp_start": int(getattr(context.args, "valid_timestamp_start", context.defaults.data.valid_timestamp_start)),
+        "valid_timestamp_end": int(getattr(context.args, "valid_timestamp_end", context.defaults.data.valid_timestamp_end)),
     }
     train_loader = getattr(trainer, "train_loader", None)
     train_dataset = getattr(train_loader, "dataset", None)

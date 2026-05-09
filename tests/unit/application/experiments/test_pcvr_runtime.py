@@ -73,6 +73,7 @@ def _write_observed_schema_fixture(schema_path: Path, parquet_path: Path) -> Non
                 "user_dense_feats_4": [[0.1, 0.2], [0.3]],
                 "domain_a_seq_10": [[100, 101], [103]],
                 "domain_a_seq_11": [[5, 6], [6, 7, 7]],
+                "timestamp": [100, 200],
             }
         ),
         parquet_path,
@@ -215,6 +216,60 @@ def test_train_writes_split_observed_schema_reports(
     assert valid_report["schema"]["user_int"] == [[1, 1, 1], [2, 3, 3]]
 
 
+def test_train_writes_timestamp_split_observed_schema_reports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment = _make_experiment(tmp_path)
+    dataset_path = tmp_path / "train.parquet"
+    schema_path = tmp_path / "schema.json"
+    run_dir = tmp_path / "outputs"
+    _write_observed_schema_fixture(schema_path, dataset_path)
+
+    monkeypatch.setattr(
+        experiment_module,
+        "train_pcvr_model",
+        lambda **kwargs: {
+            "run_dir": str(run_dir.resolve()),
+            "checkpoint_root": str(run_dir.resolve()),
+            "schema_path": str(schema_path.resolve()),
+            "train_ratio": 1.0,
+            "valid_ratio": 0.1,
+            "split_strategy": "timestamp_range",
+            "train_timestamp_start": 0,
+            "train_timestamp_end": 150,
+            "valid_timestamp_start": 150,
+            "valid_timestamp_end": 250,
+        },
+    )
+
+    payload = experiment.train(
+        TrainRequest(
+            experiment="experiments/symbiosis",
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            run_dir=run_dir,
+        )
+    )
+
+    observed_paths = payload["observed_schema_paths"]
+    train_report = loads(Path(observed_paths["train_split"]).read_bytes())
+    valid_report = loads(Path(observed_paths["valid_split"]).read_bytes())
+    assert payload["data_split"] == {
+        "split_strategy": "timestamp_range",
+        "train_timestamp_range": {"start": None, "end": 150},
+        "valid_timestamp_range": {"start": 150, "end": 250},
+    }
+    assert payload["row_group_split"]["train_row_group_range"] == [0, 2]
+    assert payload["row_group_split"]["valid_row_group_range"] == [0, 2]
+    assert payload["row_group_split"]["train_rows"] == 1
+    assert payload["row_group_split"]["valid_rows"] == 1
+    assert train_report["timestamp_range"] == {"start": None, "end": 150}
+    assert valid_report["timestamp_range"] == {"start": 150, "end": 250}
+    assert train_report["schema"]["user_int"] == [[1, 1, 1], [2, 2, 2]]
+    assert valid_report["schema"]["user_int"] == [[1, 1, 1], [2, 3, 3]]
+
+
 def test_train_defaults_missing_dataset_to_hf_sample(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     experiment = _make_experiment(tmp_path)
     run_dir = tmp_path / "outputs"
@@ -334,6 +389,33 @@ def test_load_train_config_requires_complete_sidecar(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError, match="amp"):
         experiment._load_train_config(checkpoint_dir)
+
+
+def test_load_train_config_backfills_data_split_defaults(tmp_path: Path) -> None:
+    experiment = _make_experiment(tmp_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    checkpoint_dir.mkdir()
+    config = PCVRTrainConfig().to_flat_dict()
+    for key in (
+        "split_strategy",
+        "train_timestamp_start",
+        "train_timestamp_end",
+        "valid_timestamp_start",
+        "valid_timestamp_end",
+    ):
+        config.pop(key)
+    (checkpoint_dir / "train_config.json").write_text(
+        dumps(build_pcvr_train_config_sidecar(config)),
+        encoding="utf-8",
+    )
+
+    loaded = experiment._load_train_config(checkpoint_dir)
+
+    assert loaded["split_strategy"] == "row_group_tail"
+    assert loaded["train_timestamp_start"] == 0
+    assert loaded["train_timestamp_end"] == 0
+    assert loaded["valid_timestamp_start"] == 0
+    assert loaded["valid_timestamp_end"] == 0
 
 
 def test_infer_uses_train_config_runtime_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

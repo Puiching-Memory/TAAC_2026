@@ -20,13 +20,16 @@ class _FakeDataset(IterableDataset):
         self,
         *_args,
         row_group_range: tuple[int, int] | None = None,
+        timestamp_range: tuple[int | None, int | None] | None = None,
         data_pipeline_config: PCVRDataPipelineConfig | None = None,
         dataset_role: str = "dataset",
         **_kwargs,
     ) -> None:
         self.row_group_range = row_group_range
+        self.timestamp_range = timestamp_range
         self.data_pipeline_config = data_pipeline_config
         self.dataset_role = dataset_role
+        self.num_rows = 0
 
     def __iter__(self):
         return iter(())
@@ -173,6 +176,40 @@ def test_get_pcvr_data_keeps_disjoint_ranges_when_multiple_row_groups(
     assert split_plan.is_l1_ready is True
     assert split_plan.train_rows == 700
     assert split_plan.valid_rows == 300
+
+
+def test_get_pcvr_data_supports_timestamp_range_split(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _patch_parquet_runtime(monkeypatch, [400, 300, 300])
+    monkeypatch.setattr(
+        pcvr_data,
+        "count_pcvr_rows_in_timestamp_range",
+        lambda _row_groups, timestamp_range: {
+            (None, 200): 700,
+            (200, 400): 300,
+        }[timestamp_range],
+    )
+    parquet_path = tmp_path / "demo.parquet"
+    parquet_path.write_text("placeholder", encoding="utf-8")
+
+    train_loader, valid_loader, train_dataset = pcvr_data.get_pcvr_data(
+        data_dir=str(parquet_path),
+        schema_path=str(tmp_path / "schema.json"),
+        batch_size=8,
+        split_strategy="timestamp_range",
+        train_timestamp_end=200,
+        valid_timestamp_start=200,
+        valid_timestamp_end=400,
+        num_workers=0,
+        buffer_batches=1,
+    )
+
+    assert train_dataset.row_group_range == (0, 3)
+    assert train_dataset.timestamp_range == (None, 200)
+    assert train_loader.dataset.timestamp_range == (None, 200)
+    assert valid_loader.dataset.row_group_range == (0, 3)
+    assert valid_loader.dataset.timestamp_range == (200, 400)
 
 
 def test_get_pcvr_data_applies_augmentation_only_to_train_dataset(

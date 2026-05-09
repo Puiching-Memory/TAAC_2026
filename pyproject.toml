@@ -7,7 +7,7 @@ name = "taac2026"
 dynamic = ["version"]
 description = "TAAC 2026 experiment workspace"
 readme = "README.md"
-requires-python = ">=3.10,<3.15"
+requires-python = ">=3.10,<3.14"
 classifiers = [
 	"Operating System :: POSIX :: Linux",
 ]

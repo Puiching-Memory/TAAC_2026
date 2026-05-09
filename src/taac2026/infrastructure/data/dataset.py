@@ -31,8 +31,12 @@ from taac2026.domain.config import PCVRDataPipelineConfig
 from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.data.observation import (
     PCVRRowGroupSplitPlan,
+    PCVRTimestampRange,
     build_pcvr_observed_schema_report,
     collect_pcvr_row_groups,
+    count_pcvr_rows_in_timestamp_range,
+    normalize_pcvr_timestamp_range,
+    pcvr_timestamp_range_to_dict,
     plan_pcvr_row_group_split,
 )
 from taac2026.infrastructure.data.pipeline import (
@@ -71,6 +75,7 @@ class PCVRParquetDataset(IterableDataset):
         shuffle: bool = True,
         buffer_batches: int = 20,
         row_group_range: tuple[int, int] | None = None,
+        timestamp_range: PCVRTimestampRange | None = None,
         clip_vocab: bool = True,
         is_training: bool = True,
         data_pipeline_config: PCVRDataPipelineConfig | None = None,
@@ -92,6 +97,9 @@ class PCVRParquetDataset(IterableDataset):
             buffer_batches: shuffle buffer size in units of batches.
             row_group_range: ``(start, end)`` slice of Row Groups; ``None`` to
                 use all Row Groups.
+            timestamp_range: optional ``(start, end)`` filter on the sample
+                ``timestamp`` column. Bounds are inclusive start and exclusive
+                end; ``None`` bounds are open.
             clip_vocab: if True, clip out-of-bound ids to 0; if False, raise.
             is_training: if True, derive ``label`` from ``label_type == 2``;
                 if False, return an all-zeros label column.
@@ -120,6 +128,7 @@ class PCVRParquetDataset(IterableDataset):
         self.is_training = is_training
         self.dataset_role = str(dataset_role).strip() or "dataset"
         self.row_group_range = row_group_range
+        self.timestamp_range = timestamp_range
         self.schema_path = Path(schema_path).expanduser().resolve()
         self.data_pipeline_config = data_pipeline_config or PCVRDataPipelineConfig()
         self.sampling_seed = int(sampling_seed)
@@ -144,7 +153,10 @@ class PCVRParquetDataset(IterableDataset):
             start, end = row_group_range
             self._rg_list = self._rg_list[start:end]
 
-        self.num_rows = sum(r[2] for r in self._rg_list)
+        self.num_rows = count_pcvr_rows_in_timestamp_range(
+            self._rg_list,
+            self.timestamp_range,
+        )
         self._global_batch_keys: tuple[tuple[str, int, int], ...] | None = None
         self._global_batch_cumulative_rows: tuple[int, ...] | None = None
         self._scheduled_num_workers: int | None = None
@@ -220,7 +232,8 @@ class PCVRParquetDataset(IterableDataset):
         logger.info(
             f"PCVRParquetDataset: {self.num_rows} rows from "
             f"{len(self._parquet_files)} file(s), batch_size={batch_size}, "
-            f"buffer_batches={buffer_batches}, shuffle={shuffle}"
+            f"buffer_batches={buffer_batches}, shuffle={shuffle}, "
+            f"timestamp_range={pcvr_timestamp_range_to_dict(self.timestamp_range)}"
         )
 
         pipeline_transforms = list(transforms or [])
@@ -313,17 +326,43 @@ class PCVRParquetDataset(IterableDataset):
         )
 
     def __len__(self) -> int:
-        # Ceiling per Row Group; this is an upper bound on the true batch count.
-        return sum(
-            (n + self.batch_size - 1) // self.batch_size for _, _, n in self._rg_list
-        )
+        return (self.num_rows + self.batch_size - 1) // self.batch_size
 
     def logical_sweep_steps(self) -> int:
         return max(1, len(self))
 
     @property
     def uses_step_random_sampling(self) -> bool:
-        return bool(self.is_training and self.shuffle)
+        return bool(self.is_training and self.shuffle and self.timestamp_range is None)
+
+    def _filter_batch_by_timestamp_range(
+        self,
+        batch_dict: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if self.timestamp_range is None:
+            return batch_dict
+        timestamps = batch_dict["timestamp"]
+        row_count = int(timestamps.shape[0])
+        mask = torch.ones(row_count, dtype=torch.bool)
+        start, end = self.timestamp_range
+        if start is not None:
+            mask &= timestamps >= start
+        if end is not None:
+            mask &= timestamps < end
+        if bool(mask.all()):
+            return batch_dict
+        if not bool(mask.any()):
+            return None
+        filtered: dict[str, Any] = {}
+        keep = mask.tolist()
+        for key, value in batch_dict.items():
+            if key == "user_id":
+                filtered[key] = [item for item, should_keep in zip(value, keep, strict=True) if should_keep]
+            elif isinstance(value, torch.Tensor) and value.ndim > 0 and value.shape[0] == row_count:
+                filtered[key] = value[mask]
+            else:
+                filtered[key] = value
+        return filtered
 
     def _base_random_seed(self) -> int:
         if self.data_pipeline_config.seed is not None:
@@ -683,6 +722,9 @@ class PCVRParquetDataset(IterableDataset):
                         )
                     ),
                 )
+                batch_dict = self._filter_batch_by_timestamp_range(batch_dict)
+                if batch_dict is None:
+                    continue
                 batch_dict = self.pipeline.apply_transforms(
                     batch_dict, generator=generator
                 )
@@ -725,6 +767,9 @@ class PCVRParquetDataset(IterableDataset):
                 batch_dict = self.pipeline.read_base_batch(
                     cache_key, lambda batch=batch: self._convert_batch(batch)
                 )
+                batch_dict = self._filter_batch_by_timestamp_range(batch_dict)
+                if batch_dict is None:
+                    continue
                 batch_dict = self.pipeline.apply_transforms(
                     batch_dict, generator=generator
                 )
@@ -1096,6 +1141,11 @@ def get_pcvr_data(
     batch_size: int = 256,
     valid_ratio: float = 0.1,
     train_ratio: float = 1.0,
+    split_strategy: str = "row_group_tail",
+    train_timestamp_start: int = 0,
+    train_timestamp_end: int = 0,
+    valid_timestamp_start: int = 0,
+    valid_timestamp_end: int = 0,
     num_workers: int = 16,
     buffer_batches: int = 20,
     shuffle_train: bool = True,
@@ -1107,8 +1157,10 @@ def get_pcvr_data(
 ) -> tuple[DataLoader, DataLoader, PCVRParquetDataset]:
     """Create train / valid DataLoaders from raw multi-column Parquet files.
 
-    The validation split is taken as the last ``valid_ratio`` fraction of Row
-    Groups (in the file order returned by ``glob``).
+    By default, the validation split is taken as the last ``valid_ratio``
+    fraction of Row Groups (in the file order returned by ``glob``). With
+    ``split_strategy='timestamp_range'``, train and validation read all Row
+    Groups and filter rows by their configured timestamp ranges.
 
     Returns:
         A tuple ``(train_loader, valid_loader, train_dataset)``. The third
@@ -1119,9 +1171,49 @@ def get_pcvr_data(
     random.seed(seed)
 
     rg_info = collect_pcvr_row_groups(data_dir)
+    if split_strategy not in {"row_group_tail", "timestamp_range"}:
+        raise ValueError(f"unsupported split_strategy={split_strategy!r}")
+
     split_plan = plan_pcvr_row_group_split(
         rg_info, valid_ratio=valid_ratio, train_ratio=train_ratio
     )
+    train_timestamp_range: PCVRTimestampRange | None = None
+    valid_timestamp_range: PCVRTimestampRange | None = None
+    if split_strategy == "timestamp_range":
+        train_timestamp_range = normalize_pcvr_timestamp_range(
+            train_timestamp_start,
+            train_timestamp_end,
+            label="train_timestamp_range",
+        )
+        valid_timestamp_range = normalize_pcvr_timestamp_range(
+            valid_timestamp_start,
+            valid_timestamp_end,
+            label="valid_timestamp_range",
+        )
+        if train_timestamp_range is None or valid_timestamp_range is None:
+            raise ValueError(
+                "timestamp_range split requires non-empty train and valid timestamp ranges"
+            )
+        split_plan = PCVRRowGroupSplitPlan(
+            total_row_groups=len(rg_info),
+            train_row_groups=len(rg_info),
+            valid_row_groups=len(rg_info),
+            train_row_group_range=(0, len(rg_info)),
+            valid_row_group_range=(0, len(rg_info)),
+            train_rows=count_pcvr_rows_in_timestamp_range(rg_info, train_timestamp_range),
+            valid_rows=count_pcvr_rows_in_timestamp_range(rg_info, valid_timestamp_range),
+            reuse_train_for_valid=False,
+        )
+        if split_plan.train_rows <= 0 or split_plan.valid_rows <= 0:
+            raise ValueError(
+                "timestamp_range split produced an empty train or valid dataset: "
+                f"train_rows={split_plan.train_rows}, valid_rows={split_plan.valid_rows}"
+            )
+        logger.info(
+            "Timestamp split: train={}, valid={}",
+            pcvr_timestamp_range_to_dict(train_timestamp_range),
+            pcvr_timestamp_range_to_dict(valid_timestamp_range),
+        )
 
     # train_ratio: use only the first N% of the training Row Groups.
     if train_ratio < 1.0 and not split_plan.reuse_train_for_valid:
@@ -1151,6 +1243,7 @@ def get_pcvr_data(
         shuffle=shuffle_train,
         buffer_batches=buffer_batches,
         row_group_range=split_plan.train_row_group_range,
+        timestamp_range=train_timestamp_range,
         clip_vocab=clip_vocab,
         data_pipeline_config=train_pipeline_config,
         is_training=True,
@@ -1191,6 +1284,7 @@ def get_pcvr_data(
         shuffle=False,
         buffer_batches=0,
         row_group_range=split_plan.valid_row_group_range,
+        timestamp_range=valid_timestamp_range,
         clip_vocab=clip_vocab,
         data_pipeline_config=valid_pipeline_config,
         is_training=True,
@@ -1219,8 +1313,12 @@ __all__ = [
     "FeatureSchema",
     "PCVRParquetDataset",
     "PCVRRowGroupSplitPlan",
+    "PCVRTimestampRange",
     "build_pcvr_observed_schema_report",
     "collect_pcvr_row_groups",
+    "count_pcvr_rows_in_timestamp_range",
     "get_pcvr_data",
+    "normalize_pcvr_timestamp_range",
+    "pcvr_timestamp_range_to_dict",
     "plan_pcvr_row_group_split",
 ]

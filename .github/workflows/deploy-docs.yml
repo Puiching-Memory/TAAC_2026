@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 env:
-  DOCS_PYTHON_VERSION: "3.14"
+  DOCS_PYTHON_VERSION: "3.13"
 
 concurrency:
   group: deploy-docs-${{ github.ref }}
@@ -58,10 +58,10 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
 
       - name: 同步文档工具环境
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --python "${{ env.DOCS_PYTHON_VERSION }}"
 
       - name: 严格构建 Zensical 站点
-        run: uv run zensical build --strict --clean
+        run: uv run --python "${{ env.DOCS_PYTHON_VERSION }}" zensical build --strict --clean
 
   classify-deploy:
     name: 分类部署触发器
@@ -151,10 +151,10 @@ jobs:
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
 
       - name: 同步文档工具环境
-        run: uv sync --locked --extra dev
+        run: uv sync --locked --extra dev --python "${{ env.DOCS_PYTHON_VERSION }}"
 
       - name: 严格构建 Zensical 站点
-        run: uv run zensical build --strict --clean
+        run: uv run --python "${{ env.DOCS_PYTHON_VERSION }}" zensical build --strict --clean
 
       - name: 上传站点制品
         uses: actions/upload-pages-artifact@v5

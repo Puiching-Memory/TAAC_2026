@@ -16,6 +16,7 @@ from taac2026.infrastructure.logging import logger
 
 
 DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE = 1024
+PCVRTimestampRange = tuple[int | None, int | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,11 +93,101 @@ def _list_positive_values(array: pa.Array) -> NDArray[np.int64]:
     return array.values.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
 
 
+def normalize_pcvr_timestamp_range(
+    start: int | None,
+    end: int | None,
+    *,
+    label: str = "timestamp_range",
+) -> PCVRTimestampRange | None:
+    start_value = int(start or 0)
+    end_value = int(end or 0)
+    if start_value < 0 or end_value < 0:
+        raise ValueError(f"{label} bounds must be non-negative")
+    if start_value == 0 and end_value == 0:
+        return None
+    if end_value and start_value >= end_value:
+        raise ValueError(f"{label} start must be < end")
+    return (start_value or None, end_value or None)
+
+
+def pcvr_timestamp_range_to_dict(
+    timestamp_range: PCVRTimestampRange | None,
+) -> dict[str, int | None] | None:
+    if timestamp_range is None:
+        return None
+    start, end = timestamp_range
+    return {"start": start, "end": end}
+
+
+def _timestamp_mask(
+    timestamps: NDArray[np.int64],
+    timestamp_range: PCVRTimestampRange | None,
+) -> NDArray[np.bool_]:
+    mask = np.ones(timestamps.shape[0], dtype=np.bool_)
+    if timestamp_range is None:
+        return mask
+    start, end = timestamp_range
+    if start is not None:
+        mask &= timestamps >= start
+    if end is not None:
+        mask &= timestamps < end
+    return mask
+
+
+def filter_pcvr_record_batch_by_timestamp_range(
+    batch: pa.RecordBatch,
+    timestamp_range: PCVRTimestampRange | None,
+    *,
+    timestamp_column: str = "timestamp",
+) -> pa.RecordBatch | None:
+    if timestamp_range is None:
+        return batch
+    timestamp_index = batch.schema.get_field_index(timestamp_column)
+    if timestamp_index < 0:
+        raise KeyError(f"timestamp column {timestamp_column!r} not found in parquet batch")
+    timestamps = batch.column(timestamp_index).to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+    mask = _timestamp_mask(timestamps, timestamp_range)
+    if bool(mask.all()):
+        return batch
+    if not bool(mask.any()):
+        return None
+    return batch.filter(pa.array(mask))
+
+
+def count_pcvr_rows_in_timestamp_range(
+    row_groups: list[tuple[str, int, int]],
+    timestamp_range: PCVRTimestampRange | None,
+    *,
+    batch_size: int = DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE,
+) -> int:
+    if timestamp_range is None:
+        return int(sum(num_rows for _file_path, _row_group_index, num_rows in row_groups))
+
+    row_count = 0
+    current_file_path: str | None = None
+    current_parquet_file: pq.ParquetFile | None = None
+    for file_path, row_group_index, _num_rows in row_groups:
+        if file_path != current_file_path:
+            current_file_path = file_path
+            current_parquet_file = pq.ParquetFile(file_path)
+        if current_parquet_file is None:
+            continue
+        for batch in current_parquet_file.iter_batches(
+            batch_size=batch_size,
+            row_groups=[row_group_index],
+            columns=["timestamp"],
+        ):
+            timestamps = batch.column(0).to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+            row_count += int(_timestamp_mask(timestamps, timestamp_range).sum())
+    return row_count
+
+
 def build_pcvr_observed_schema_report(
     data_dir: str | Path,
     schema_path: str | Path,
     *,
     row_group_range: tuple[int, int] | None = None,
+    timestamp_range: PCVRTimestampRange | None = None,
     batch_size: int = DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE,
     dataset_role: str = "dataset",
 ) -> dict[str, Any]:
@@ -183,7 +274,10 @@ def build_pcvr_observed_schema_report(
     requested_columns.extend(spec["column"] for spec in user_dense_specs)
     for config in seq_specs.values():
         requested_columns.extend(feature["column"] for feature in config["features"])
+    if timestamp_range is not None and "timestamp" not in requested_columns:
+        requested_columns.append("timestamp")
 
+    observed_row_count = 0
     current_file_path: str | None = None
     current_parquet_file: pq.ParquetFile | None = None
     for file_path, row_group_index, _num_rows in selected_row_groups:
@@ -197,6 +291,10 @@ def build_pcvr_observed_schema_report(
             row_groups=[row_group_index],
             columns=requested_columns,
         ):
+            batch = filter_pcvr_record_batch_by_timestamp_range(batch, timestamp_range)
+            if batch is None:
+                continue
+            observed_row_count += batch.num_rows
             column_index = {name: index for index, name in enumerate(batch.schema.names)}
 
             for spec in user_int_specs:
@@ -269,8 +367,13 @@ def build_pcvr_observed_schema_report(
         "dataset_path": str(resolved_dataset_path),
         "schema_path": str(resolved_schema_path),
         "row_group_range": [start_index, end_index],
+        "timestamp_range": pcvr_timestamp_range_to_dict(timestamp_range),
         "row_group_count": len(selected_row_groups),
-        "row_count": int(sum(num_rows for _file_path, _rg_index, num_rows in selected_row_groups)),
+        "row_count": int(
+            observed_row_count
+            if timestamp_range is not None
+            else sum(num_rows for _file_path, _rg_index, num_rows in selected_row_groups)
+        ),
         "schema": observed_schema,
     }
     logger.info(
@@ -349,7 +452,12 @@ def plan_pcvr_row_group_split(
 __all__ = [
     "DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE",
     "PCVRRowGroupSplitPlan",
+    "PCVRTimestampRange",
     "build_pcvr_observed_schema_report",
     "collect_pcvr_row_groups",
+    "count_pcvr_rows_in_timestamp_range",
+    "filter_pcvr_record_batch_by_timestamp_range",
+    "normalize_pcvr_timestamp_range",
+    "pcvr_timestamp_range_to_dict",
     "plan_pcvr_row_group_split",
 ]

@@ -73,8 +73,8 @@ uv run zensical build --strict
 
 以 `.github/workflows/ci.yml` 为准，当前 CI 主要做三件事：
 
-- Python 3.10 到 3.14 的 Ruff 检查。
-- Python 3.10 到 3.14 的 CPU 测试：`unit`、`contract`、`integration` 和 `benchmark_cpu`，排除 `gpu` / `benchmark_gpu`。
+- Python 3.13 的 Ruff 检查。
+- Python 3.10 到 3.13 的 CPU 测试：`unit`、`contract`、`integration` 和 `benchmark_cpu`，排除 `gpu` / `benchmark_gpu`。
 - 在规范 Python 版本上采集全 `src/taac2026` 覆盖率，并对指定核心模块做覆盖率门控。
 
 CI 只会被这些路径触发：
@@ -88,12 +88,12 @@ pyproject.toml
 uv.lock
 ```
 
-纯 `docs/**` 改动不跑 CI；文档部署由 Pages workflow 处理。
+纯 `docs/**` 改动不跑 CI；文档部署由 Pages workflow 处理。CI 的 `uv sync` 和 `uv run` 都会显式传 `--python`，避免本地 `.python-version` 覆盖 workflow matrix。
 
 本地复现 CPU 单测口径：
 
 ```bash
-uv run --with torch==2.7.1 --with coverage \
+uv run --python 3.13 --with torch==2.7.1 --with coverage \
   coverage run --data-file=.coverage.cpu --source=src/taac2026 \
   -m pytest -m "(unit or contract or integration or benchmark_cpu) and not gpu and not benchmark_gpu" -v
 ```
@@ -102,7 +102,7 @@ uv run --with torch==2.7.1 --with coverage \
 
 ```bash
 cp .coverage.cpu .coverage
-uv run --with coverage coverage report --fail-under=70 \
+uv run --python 3.13 --with coverage coverage report --fail-under=70 \
   --include='src/taac2026/domain/*,src/taac2026/application/training/__init__.py,src/taac2026/application/training/args.py,src/taac2026/application/training/cli.py,src/taac2026/application/training/workflow.py'
 ```
 

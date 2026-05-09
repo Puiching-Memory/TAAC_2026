@@ -11,7 +11,10 @@ from taac2026.domain.requests import EvalRequest, InferRequest
 from taac2026.infrastructure.checkpoints import resolve_checkpoint_path
 from taac2026.infrastructure.io.files import read_json, write_json
 import taac2026.infrastructure.data.dataset as pcvr_data
-from taac2026.domain.config import REQUIRED_PCVR_TRAIN_CONFIG_KEYS
+from taac2026.domain.config import (
+    PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS,
+    REQUIRED_PCVR_TRAIN_CONFIG_KEYS,
+)
 from taac2026.infrastructure.logging import logger
 from taac2026.domain.sidecar import load_pcvr_train_config_sidecar
 from taac2026.domain.model_contract import resolve_schema_path
@@ -39,6 +42,8 @@ def default_load_train_config(experiment: Any, checkpoint_dir: Path) -> dict[str
     if not config_path.exists():
         raise FileNotFoundError(f"PCVR train_config.json not found in checkpoint directory: {checkpoint_dir}")
     config = load_pcvr_train_config_sidecar(read_json(config_path))
+    for key, value in PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS.items():
+        config.setdefault(key, value)
     missing_keys = sorted(REQUIRED_PCVR_TRAIN_CONFIG_KEYS - set(config))
     if missing_keys:
         joined = ", ".join(missing_keys)
@@ -107,11 +112,13 @@ def default_write_observed_schema_report(
     output_path: Path,
     dataset_role: str,
     row_group_range: tuple[int, int] | None = None,
+    timestamp_range: pcvr_data.PCVRTimestampRange | None = None,
 ) -> Path:
     report = pcvr_data.build_pcvr_observed_schema_report(
         dataset_path,
         schema_path,
         row_group_range=row_group_range,
+        timestamp_range=timestamp_range,
         dataset_role=dataset_role,
     )
     write_json(output_path, report)
@@ -127,6 +134,11 @@ def default_write_train_split_observed_schema_reports(
     run_dir: Path,
     valid_ratio: float,
     train_ratio: float,
+    split_strategy: str = "row_group_tail",
+    train_timestamp_start: int = 0,
+    train_timestamp_end: int = 0,
+    valid_timestamp_start: int = 0,
+    valid_timestamp_end: int = 0,
 ) -> dict[str, Any]:
     rg_info = pcvr_data.collect_pcvr_row_groups(dataset_path)
     split_plan = pcvr_data.plan_pcvr_row_group_split(
@@ -134,6 +146,41 @@ def default_write_train_split_observed_schema_reports(
         valid_ratio=valid_ratio,
         train_ratio=train_ratio,
     )
+    train_timestamp_range = None
+    valid_timestamp_range = None
+    if split_strategy == "timestamp_range":
+        train_timestamp_range = pcvr_data.normalize_pcvr_timestamp_range(
+            train_timestamp_start,
+            train_timestamp_end,
+            label="train_timestamp_range",
+        )
+        valid_timestamp_range = pcvr_data.normalize_pcvr_timestamp_range(
+            valid_timestamp_start,
+            valid_timestamp_end,
+            label="valid_timestamp_range",
+        )
+        if train_timestamp_range is None or valid_timestamp_range is None:
+            raise ValueError(
+                "timestamp_range split requires non-empty train and valid timestamp ranges"
+            )
+        split_plan = pcvr_data.PCVRRowGroupSplitPlan(
+            total_row_groups=len(rg_info),
+            train_row_groups=len(rg_info),
+            valid_row_groups=len(rg_info),
+            train_row_group_range=(0, len(rg_info)),
+            valid_row_group_range=(0, len(rg_info)),
+            train_rows=pcvr_data.count_pcvr_rows_in_timestamp_range(
+                rg_info,
+                train_timestamp_range,
+            ),
+            valid_rows=pcvr_data.count_pcvr_rows_in_timestamp_range(
+                rg_info,
+                valid_timestamp_range,
+            ),
+            reuse_train_for_valid=False,
+        )
+    elif split_strategy != "row_group_tail":
+        raise ValueError(f"unsupported split_strategy={split_strategy!r}")
     observed_schema_paths = {
         "train_split": str(
             experiment.runtime_hooks.write_observed_schema_report(
@@ -143,6 +190,7 @@ def default_write_train_split_observed_schema_reports(
                 output_path=run_dir / "train_split_observed_schema.json",
                 dataset_role="train_split",
                 row_group_range=split_plan.train_row_group_range,
+                timestamp_range=train_timestamp_range,
             )
         ),
         "valid_split": str(
@@ -153,11 +201,21 @@ def default_write_train_split_observed_schema_reports(
                 output_path=run_dir / "valid_split_observed_schema.json",
                 dataset_role="valid_split",
                 row_group_range=split_plan.valid_row_group_range,
+                timestamp_range=valid_timestamp_range,
             )
         ),
     }
     return {
         "observed_schema_paths": observed_schema_paths,
+        "data_split": {
+            "split_strategy": split_strategy,
+            "train_timestamp_range": pcvr_data.pcvr_timestamp_range_to_dict(
+                train_timestamp_range,
+            ),
+            "valid_timestamp_range": pcvr_data.pcvr_timestamp_range_to_dict(
+                valid_timestamp_range,
+            ),
+        },
         "row_group_split": {
             "train_row_groups": split_plan.train_row_groups,
             "valid_row_groups": split_plan.valid_row_groups,

@@ -7,6 +7,7 @@ import pytest
 
 from taac2026.domain.config import (
     PCVRDataCacheConfig,
+    PCVRDataConfig,
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
@@ -267,6 +268,47 @@ def test_parse_pcvr_train_args_can_disable_default_rope(tmp_path: Path) -> None:
     assert args.use_rope is False
 
 
+def test_parse_pcvr_train_args_accepts_timestamp_split_flags(tmp_path: Path) -> None:
+    args = parse_pcvr_train_args(
+        [
+            "--split-strategy",
+            "timestamp_range",
+            "--train-timestamp-end",
+            "1772582400",
+            "--valid-timestamp-start",
+            "1772582400",
+            "--valid-timestamp-end",
+            "1772600400",
+        ],
+        package_dir=tmp_path,
+        defaults=PCVRTrainConfig(),
+    )
+
+    assert args.split_strategy == "timestamp_range"
+    assert args.train_timestamp_start == 0
+    assert args.train_timestamp_end == 1_772_582_400
+    assert args.valid_timestamp_start == 1_772_582_400
+    assert args.valid_timestamp_end == 1_772_600_400
+
+
+def test_parse_pcvr_train_args_uses_timestamp_split_defaults(tmp_path: Path) -> None:
+    defaults = PCVRTrainConfig(
+        data=PCVRDataConfig(
+            split_strategy="timestamp_range",
+            train_timestamp_end=10,
+            valid_timestamp_start=10,
+            valid_timestamp_end=20,
+        )
+    )
+
+    args = parse_pcvr_train_args([], package_dir=tmp_path, defaults=defaults)
+
+    assert args.split_strategy == "timestamp_range"
+    assert args.train_timestamp_end == 10
+    assert args.valid_timestamp_start == 10
+    assert args.valid_timestamp_end == 20
+
+
 def test_parse_pcvr_train_args_honors_platform_path_env_overrides(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -490,6 +532,23 @@ def test_pcvr_train_config_serializes_optimizer_schedule_fields() -> None:
     assert flat_config["scheduler_type"] == "cosine"
     assert flat_config["warmup_steps"] == 64
     assert flat_config["min_lr_ratio"] == pytest.approx(0.2)
+
+
+def test_pcvr_train_config_serializes_data_split_fields() -> None:
+    flat_config = PCVRTrainConfig(
+        data=PCVRDataConfig(
+            split_strategy="timestamp_range",
+            train_timestamp_end=10,
+            valid_timestamp_start=10,
+            valid_timestamp_end=20,
+        )
+    ).to_flat_dict()
+
+    assert flat_config["split_strategy"] == "timestamp_range"
+    assert flat_config["train_timestamp_start"] == 0
+    assert flat_config["train_timestamp_end"] == 10
+    assert flat_config["valid_timestamp_start"] == 10
+    assert flat_config["valid_timestamp_end"] == 20
 
 
 def test_pcvr_train_config_serializes_gradient_checkpointing_field() -> None:

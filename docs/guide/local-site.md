@@ -62,14 +62,11 @@ rm -rf site/
 校验和部署 job 都使用 Python 3.13，并同步锁定的 dev 依赖：
 
 ```bash
-uv sync --locked --extra dev
+uv sync --locked --extra dev --python 3.13
+uv run --python 3.13 zensical build --strict --clean
 ```
 
-构建站点时使用 lockfile 中的 Zensical 版本，并开启严格检查：
-
-```bash
-uv run zensical build --strict --clean
-```
+构建站点时使用 lockfile 中的 Zensical 版本，并开启严格检查。
 
 所以判断“文档会不会部署”时，看 workflow 事件路径，不要只看本地 `site/` 有没有变化。
 

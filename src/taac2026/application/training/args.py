@@ -10,7 +10,11 @@ from typing import Any
 
 import torch
 
-from taac2026.domain.config import DENSE_LR_SCHEDULER_TYPE_CHOICES, PCVRTrainConfig
+from taac2026.domain.config import (
+    DENSE_LR_SCHEDULER_TYPE_CHOICES,
+    PCVR_DATA_SPLIT_STRATEGY_CHOICES,
+    PCVRTrainConfig,
+)
 from taac2026.domain.model_contract import resolve_schema_path
 from taac2026.infrastructure.io.files import write_json
 from taac2026.infrastructure.logging import logger
@@ -167,6 +171,41 @@ def build_pcvr_train_arg_parser(
     )
     parser.add_argument(
         "--valid_ratio", type=float, default=default_values["valid_ratio"]
+    )
+    parser.add_argument(
+        "--split_strategy",
+        "--split-strategy",
+        dest="split_strategy",
+        default=default_values["split_strategy"],
+        choices=PCVR_DATA_SPLIT_STRATEGY_CHOICES,
+    )
+    parser.add_argument(
+        "--train_timestamp_start",
+        "--train-timestamp-start",
+        dest="train_timestamp_start",
+        type=int,
+        default=default_values["train_timestamp_start"],
+    )
+    parser.add_argument(
+        "--train_timestamp_end",
+        "--train-timestamp-end",
+        dest="train_timestamp_end",
+        type=int,
+        default=default_values["train_timestamp_end"],
+    )
+    parser.add_argument(
+        "--valid_timestamp_start",
+        "--valid-timestamp-start",
+        dest="valid_timestamp_start",
+        type=int,
+        default=default_values["valid_timestamp_start"],
+    )
+    parser.add_argument(
+        "--valid_timestamp_end",
+        "--valid-timestamp-end",
+        dest="valid_timestamp_end",
+        type=int,
+        default=default_values["valid_timestamp_end"],
     )
     parser.add_argument(
         "--eval_every_n_steps", type=int, default=default_values["eval_every_n_steps"]

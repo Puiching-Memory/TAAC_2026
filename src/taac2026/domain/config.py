@@ -20,6 +20,7 @@ NSTokenizerType = Literal["group", "rankmixer"]
 NSGroupingStrategy = Literal["explicit", "singleton"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
 PCVRDataCacheMode = Literal["none", "lru", "fifo", "lfu", "rr", "opt"]
+PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
 RMSNormBackend = Literal["torch", "tilelang"]
@@ -28,6 +29,7 @@ FlashAttentionBackend = Literal["torch", "tilelang"]
 
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
 PCVR_DATA_CACHE_MODE_CHOICES = ("none", "lru", "fifo", "lfu", "rr", "opt")
+PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_range")
 
 
 def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, list[int]]:
@@ -44,8 +46,30 @@ class PCVRDataConfig:
     buffer_batches: int = 20
     train_ratio: float = 1.0
     valid_ratio: float = 0.1
+    split_strategy: PCVRDataSplitStrategy = "row_group_tail"
+    train_timestamp_start: int = 0
+    train_timestamp_end: int = 0
+    valid_timestamp_start: int = 0
+    valid_timestamp_end: int = 0
     eval_every_n_steps: int = 0
     seq_max_lens: str = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
+
+    def __post_init__(self) -> None:
+        if self.split_strategy not in PCVR_DATA_SPLIT_STRATEGY_CHOICES:
+            raise ValueError(f"unsupported PCVR data split strategy: {self.split_strategy}")
+        for field_name in (
+            "train_timestamp_start",
+            "train_timestamp_end",
+            "valid_timestamp_start",
+            "valid_timestamp_end",
+        ):
+            value = int(getattr(self, field_name))
+            if value < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+        if self.train_timestamp_end and self.train_timestamp_start >= self.train_timestamp_end:
+            raise ValueError("train_timestamp_start must be < train_timestamp_end")
+        if self.valid_timestamp_end and self.valid_timestamp_start >= self.valid_timestamp_end:
+            raise ValueError("valid_timestamp_start must be < valid_timestamp_end")
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +277,11 @@ class PCVRTrainConfig:
             "buffer_batches": self.data.buffer_batches,
             "train_ratio": self.data.train_ratio,
             "valid_ratio": self.data.valid_ratio,
+            "split_strategy": self.data.split_strategy,
+            "train_timestamp_start": self.data.train_timestamp_start,
+            "train_timestamp_end": self.data.train_timestamp_end,
+            "valid_timestamp_start": self.data.valid_timestamp_start,
+            "valid_timestamp_end": self.data.valid_timestamp_end,
             "eval_every_n_steps": self.data.eval_every_n_steps,
             "seq_max_lens": self.data.seq_max_lens,
             **self.data_pipeline.to_flat_dict(),
@@ -297,3 +326,10 @@ class PCVRTrainConfig:
             **self.ns.to_flat_dict(),
         }
 REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())
+PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
+    "split_strategy": "row_group_tail",
+    "train_timestamp_start": 0,
+    "train_timestamp_end": 0,
+    "valid_timestamp_start": 0,
+    "valid_timestamp_end": 0,
+}
