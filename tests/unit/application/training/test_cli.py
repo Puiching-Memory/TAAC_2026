@@ -97,6 +97,7 @@ def test_training_main_allows_experiment_without_dataset_path(
         str(experiment_dir),
         "--run-dir",
         str(tmp_path / "outputs"),
+        "--json",
     ])
 
     captured = capsys.readouterr()
@@ -144,6 +145,7 @@ def test_training_main_allows_missing_dataset_for_pcvr_kind_experiment(
         str(experiment_dir),
         "--run-dir",
         str(tmp_path / "outputs"),
+        "--json",
     ])
 
     captured = capsys.readouterr()
@@ -215,6 +217,7 @@ def test_training_main_allows_explicit_dataset_for_bundle_pcvr_kind_experiment(
         str(experiment_dir),
         "--dataset-path",
         "/tmp/custom.parquet",
+        "--json",
     ])
 
     captured = capsys.readouterr()

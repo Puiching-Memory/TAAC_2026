@@ -80,6 +80,7 @@ def test_run_sh_train_cpu_smoke_uses_repository_runtime(tmp_path: Path) -> None:
             str(experiment_dir),
             "--run-dir",
             str(run_dir),
+            "--json",
         ],
         cwd=project_dir,
         check=True,

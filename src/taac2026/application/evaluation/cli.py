@@ -2,29 +2,84 @@
 
 from __future__ import annotations
 
-import argparse
 import os
+import sys
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Annotated, Any, Literal
 
 import torch
+import tyro
 
 from taac2026.domain.requests import EvalRequest, InferRequest, default_run_dir
 from taac2026.application.experiments.registry import load_experiment_package
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.infrastructure.logging import configure_logging
-from taac2026.infrastructure.runtime.execution import AMP_DTYPE_CHOICES
+
+
+AMPDType = Literal["bfloat16", "float16"]
 
 
 def _default_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def _add_runtime_execution_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--amp-dtype", default=None, choices=AMP_DTYPE_CHOICES)
-    parser.add_argument("--compile", action=argparse.BooleanOptionalAction, default=None)
+@dataclass(frozen=True, slots=True)
+class EvalSingleCLIArgs:
+    command: Literal["single"] = field(init=False, default="single")
+    experiment: str
+    dataset_path: str | None = None
+    schema_path: str | None = None
+    run_dir: str | None = None
+    checkpoint: str | None = None
+    output: str | None = None
+    predictions_path: str | None = None
+    batch_size: int = 256
+    num_workers: int = 0
+    device: str = field(default_factory=_default_device)
+    amp: bool | None = None
+    amp_dtype: AMPDType | None = None
+    compile: bool | None = None
+    json: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EvalInferCLIArgs:
+    command: Literal["infer"] = field(init=False, default="infer")
+    experiment: str
+    result_dir: str
+    dataset_path: str | None = None
+    schema_path: str | None = None
+    checkpoint: str | None = None
+    batch_size: int = 256
+    num_workers: int = 0
+    device: str = field(default_factory=_default_device)
+    amp: bool | None = None
+    amp_dtype: AMPDType | None = None
+    compile: bool | None = None
+    json: bool = False
+
+
+EvalCLIArgs = (
+    Annotated[EvalSingleCLIArgs, tyro.conf.subcommand(name="single")]
+    | Annotated[EvalInferCLIArgs, tyro.conf.subcommand(name="infer")]
+)
+
+
+_OPTIONAL_RUNTIME_BOOL_FLAG_VALUES = {
+    "--amp": "--amp=True",
+    "--no-amp": "--amp=False",
+    "--compile": "--compile=True",
+    "--no-compile": "--compile=False",
+}
+
+
+def _normalize_optional_runtime_bool_args(argv: Sequence[str] | None) -> Sequence[str]:
+    raw_argv = tuple(sys.argv[1:] if argv is None else argv)
+    return tuple(_OPTIONAL_RUNTIME_BOOL_FLAG_VALUES.get(arg, arg) for arg in raw_argv)
 
 
 def _experiment_requires_dataset(experiment: object) -> bool:
@@ -47,34 +102,29 @@ def _is_bundle_mode() -> bool:
     return os.environ.get("TAAC_BUNDLE_MODE") == "1"
 
 
-def parse_eval_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate or run inference for a TAAC 2026 experiment")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+def parse_eval_args(argv: Sequence[str] | None = None) -> EvalCLIArgs:
+    return tyro.cli(
+        EvalCLIArgs,
+        description="Evaluate or run inference for a TAAC 2026 experiment",
+        args=_normalize_optional_runtime_bool_args(argv),
+    )
 
-    single = subparsers.add_parser("single", help="evaluate one checkpoint on a labeled parquet dataset")
-    single.add_argument("--experiment", required=True)
-    single.add_argument("--dataset-path", default=None)
-    single.add_argument("--schema-path", default=None)
-    single.add_argument("--run-dir", default=None)
-    single.add_argument("--checkpoint", default=None)
-    single.add_argument("--output", default=None)
-    single.add_argument("--predictions-path", default=None)
-    single.add_argument("--batch-size", type=int, default=256)
-    single.add_argument("--num-workers", type=int, default=0)
-    single.add_argument("--device", default=_default_device())
-    _add_runtime_execution_args(single)
 
-    infer = subparsers.add_parser("infer", help="write platform predictions.json")
-    infer.add_argument("--experiment", required=True)
-    infer.add_argument("--dataset-path", default=None)
-    infer.add_argument("--schema-path", default=None)
-    infer.add_argument("--checkpoint", default=None)
-    infer.add_argument("--result-dir", required=True)
-    infer.add_argument("--batch-size", type=int, default=256)
-    infer.add_argument("--num-workers", type=int, default=0)
-    infer.add_argument("--device", default=_default_device())
-    _add_runtime_execution_args(infer)
-    return parser.parse_args(argv)
+def _format_eval_summary(payload: dict[str, Any], *, title: str) -> None:
+    skip = {"telemetry", "training_telemetry", "evaluation_telemetry", "inference_telemetry", "metrics"}
+    fields = []
+    for key, value in payload.items():
+        if key in skip or isinstance(value, (dict, list)):
+            continue
+        label = key.replace("_", " ").title()
+        fields.append((label, str(value)))
+    metrics = payload.get("metrics") or {}
+    sections = []
+    if isinstance(metrics, dict):
+        metric_fields = [(k, f"{v:.5f}" if isinstance(v, float) else str(v)) for k, v in metrics.items() if not isinstance(v, (dict, list))]
+        if metric_fields:
+            sections.append(("Metrics", metric_fields))
+    print_rich_summary(title, fields, sections=sections, border_style="cyan")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -104,6 +154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             compile=args.compile,
         )
         payload = experiment.evaluate(request)
+        title = "Evaluation complete"
     else:
         result_dir = Path(args.result_dir)
         result_dir.mkdir(parents=True, exist_ok=True)
@@ -122,8 +173,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             compile=args.compile,
         )
         payload = experiment.infer(request)
+        title = "Inference complete"
 
-    write_stdout_line(dumps(payload))
+    if args.json:
+        write_stdout_line(dumps(payload))
+    else:
+        _format_eval_summary(payload, title=title)
     return 0
 
 

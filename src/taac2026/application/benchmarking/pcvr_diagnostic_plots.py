@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
 from matplotlib.gridspec import GridSpec
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, Literal
 
 import matplotlib
 import numpy as np
+import tyro
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from taac2026.infrastructure.io.files import write_json
 from taac2026.infrastructure.io.json import dumps, loads, read_path
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 
 
@@ -35,6 +36,18 @@ TEXT = "#d8dee9"
 SUBTEXT = "#9aa7b8"
 COLORS = ["#4c8bf5", "#00b894", "#f6c85f", "#ef6f6c", "#9b8cff", "#4dd0e1", "#ff9f43"]
 MODEL_COLORS = ["#6baed6", "#f6bd60", "#7fc97f", "#f28e8c", "#b39ddb", "#80cbc4", "#ffcc80"]
+DiagnosticGroupBy = Literal["experiment", "label", "label-prefix"]
+
+
+@dataclass(slots=True)
+class PCVRDiagnosticPlotArgs:
+    run: list[str]
+    output_dir: Path = Path("figures/pcvr_diagnostics")
+    bins: int = 24
+    top_disagreement: int = 20
+    allow_partial: bool = False
+    json: bool = False
+    group_by: DiagnosticGroupBy = "experiment"
 
 
 @dataclass(slots=True)
@@ -815,7 +828,7 @@ def _run_summary(run: DiagnosticRun) -> dict[str, Any]:
     }
 
 
-def run_diagnostics(args: argparse.Namespace) -> dict[str, Any]:
+def run_diagnostics(args: PCVRDiagnosticPlotArgs) -> dict[str, Any]:
     output_dir = args.output_dir.expanduser().resolve()
     runs = [_load_run(spec, group_by=args.group_by) for spec in args.run]
     if not args.allow_partial:
@@ -838,26 +851,34 @@ def run_diagnostics(args: argparse.Namespace) -> dict[str, Any]:
     return summary
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--run",
-        action="append",
-        required=True,
-        help="Run directory or label=run_directory. Repeat for multiple models/seeds.",
+def _normalize_repeated_run_args(argv: Sequence[str] | None) -> Sequence[str]:
+    raw_argv = tuple(sys.argv[1:] if argv is None else argv)
+    runs: list[str] = []
+    normalized: list[str] = []
+    index = 0
+    while index < len(raw_argv):
+        arg = raw_argv[index]
+        if arg == "--run" and index + 1 < len(raw_argv):
+            runs.append(raw_argv[index + 1])
+            index += 2
+            continue
+        if arg.startswith("--run="):
+            runs.append(arg.split("=", 1)[1])
+            index += 1
+            continue
+        normalized.append(arg)
+        index += 1
+    if runs:
+        normalized.extend(("--run", *runs))
+    return tuple(normalized)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> PCVRDiagnosticPlotArgs:
+    return tyro.cli(
+        PCVRDiagnosticPlotArgs,
+        description=__doc__,
+        args=_normalize_repeated_run_args(argv),
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("figures/pcvr_diagnostics"))
-    parser.add_argument("--bins", type=int, default=24)
-    parser.add_argument("--top-disagreement", type=int, default=20)
-    parser.add_argument("--allow-partial", action="store_true", help="Write placeholder figures even when some run outputs are missing.")
-    parser.add_argument("--json", action="store_true", help="Print the full summary JSON instead of the human-readable report.")
-    parser.add_argument(
-        "--group-by",
-        choices=("experiment", "label", "label-prefix"),
-        default="experiment",
-        help="Grouping used by the stability plot.",
-    )
-    return parser.parse_args(argv)
 
 
 def _format_seconds(value: Any) -> str:
@@ -917,6 +938,47 @@ def format_summary(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_diagnostic_summary(summary: dict[str, Any]) -> None:
+    figures = summary.get("figures") or {}
+    fields = [("Output dir", str(summary.get("output_dir", "<unknown>")))]
+    for name, path in figures.items():
+        fields.append((name, str(path)))
+    sections = []
+    for run in summary.get("runs", []):
+        if not isinstance(run, dict):
+            continue
+        label = run.get("label", "<unknown>")
+        metrics = _dict_value(run, "metrics")
+        telemetry = _dict_value(run, "telemetry")
+        train_telemetry = _dict_value(telemetry, "training")
+        eval_telemetry = _dict_value(telemetry, "evaluation")
+        missing = run.get("missing_required_inputs") or []
+        status = "ok" if not missing else "partial"
+        run_fields = [("Status", status)]
+        auc = metrics.get("auc")
+        logloss = metrics.get("logloss")
+        if auc is not None:
+            run_fields.append(("AUC", f"{auc:.5f}"))
+        if logloss is not None:
+            run_fields.append(("LogLoss", f"{logloss:.5f}"))
+        train_sec = train_telemetry.get("elapsed_sec")
+        eval_sec = eval_telemetry.get("elapsed_sec")
+        if train_sec is not None:
+            run_fields.append(("Train", f"{train_sec:.2f}s"))
+        if eval_sec is not None:
+            run_fields.append(("Eval", f"{eval_sec:.2f}s"))
+        for warning in run.get("warnings") or []:
+            run_fields.append(("Warning", str(warning)))
+        sections.append((label, run_fields))
+    print_rich_summary(
+        "PCVR diagnostics generated",
+        fields,
+        sections=sections,
+        subtitle=f"Summary JSON: {summary.get('summary_path', '<unknown>')}",
+        border_style="magenta",
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
@@ -927,7 +989,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         write_stdout_line(dumps(summary, indent=2))
     else:
-        write_stdout_line(format_summary(summary))
+        _format_diagnostic_summary(summary)
     return 0
 
 

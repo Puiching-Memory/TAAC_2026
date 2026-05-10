@@ -79,6 +79,7 @@ class PCVRParquetDataset(IterableDataset):
         )
         self._global_batch_keys: tuple[tuple[str, int, int], ...] | None = None
         self._global_batch_cumulative_rows: tuple[int, ...] | None = None
+        self._actual_len: int | None = None
 
         self.layout = load_pcvr_schema_layout(self.schema_path, seq_max_lens or {})
         first_file = pq.ParquetFile(self._parquet_files[0])
@@ -153,7 +154,27 @@ class PCVRParquetDataset(IterableDataset):
         )
 
     def __len__(self) -> int:
-        return (self.num_rows + self.batch_size - 1) // self.batch_size
+        if self._actual_len is None:
+            self._actual_len = self._count_iter_batches()
+        return self._actual_len
+
+    def _count_iter_batches(self) -> int:
+        total = 0
+        current_file_path: str | None = None
+        current_parquet_file: pq.ParquetFile | None = None
+        for file_path, row_group_index, _row_count in self._row_groups:
+            if file_path != current_file_path:
+                current_file_path = file_path
+                current_parquet_file = pq.ParquetFile(file_path)
+            if current_parquet_file is None:
+                continue
+            for _ in current_parquet_file.iter_batches(
+                batch_size=self.batch_size,
+                row_groups=[row_group_index],
+                columns=["timestamp"],
+            ):
+                total += 1
+        return max(1, total)
 
     def logical_sweep_steps(self) -> int:
         return max(1, len(self))

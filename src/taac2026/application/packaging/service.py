@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
+
+import tyro
 
 from taac2026.application.experiments.registry import load_experiment_package
 from taac2026.infrastructure.bundles.zip_writer import (
     BundleResult,
     bundle_payload,
-    format_bundle_summary,
     write_workspace_code_package,
 )
 from taac2026.infrastructure.bundles.manifest_store import BundleKind, build_bundle_manifest, get_bundle_definition
 from taac2026.infrastructure.io.files import repo_root
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 
 
@@ -43,6 +45,14 @@ class BundleCommand:
     output_subdir: str
     output_suffix: str
     write_entrypoint: EntryPointWriter
+
+
+@dataclass(frozen=True, slots=True)
+class BundleCLIArgs:
+    experiment: str = "experiments/baseline"
+    output_dir: Annotated[Path | None, tyro.conf.arg(aliases=("--output",))] = None
+    force: bool = True
+    json: bool = False
 
 
 def build_bundle(
@@ -100,30 +110,49 @@ def build_bundle(
     )
 
 
+def print_bundle_summary(result: BundleResult, *, kind: BundleKind) -> None:
+    definition = get_bundle_definition(kind)
+    manifest = result.manifest
+    runtime_env = manifest.get("runtime_env", {})
+
+    fields = [
+        ("Experiment", str(manifest.get("bundled_experiment_path", "<unknown>"))),
+        ("Output dir", str(result.output_dir)),
+        (definition.entrypoint, str(result.run_script_path)),
+        ("code_package", str(result.code_package_path)),
+        ("Bundle format", str(manifest.get("bundle_format", "<unknown>"))),
+    ]
+    sections = []
+    if isinstance(runtime_env, dict):
+        sections.append(
+            ("Runtime env", [(label, str(runtime_env.get(key, "<unknown>"))) for label, key in definition.summary_runtime_fields])
+        )
+    print_rich_summary(
+        f"Built TAAC online {kind} bundle",
+        fields,
+        sections=sections,
+        subtitle=f"Upload: {definition.entrypoint} and code_package.zip",
+    )
+
+
 def run_bundle_cli(
     argv: Sequence[str] | None,
     *,
     command: BundleCommand,
     builder: Callable[..., BundleResult],
 ) -> int:
-    parser = argparse.ArgumentParser(description=command.description)
-    parser.add_argument("--experiment", default="experiments/baseline")
-    parser.add_argument("--output-dir", "--output", dest="output_dir", default=None)
-    parser.add_argument("--force", dest="force", action="store_true", default=True)
-    parser.add_argument("--no-force", dest="force", action="store_false")
-    parser.add_argument("--json", action="store_true")
-    args = parser.parse_args(argv)
+    args = tyro.cli(BundleCLIArgs, description=command.description, args=argv)
 
     result = builder(
         args.experiment,
-        output_dir=Path(args.output_dir) if args.output_dir else None,
+        output_dir=args.output_dir,
         force=args.force,
     )
     if args.json:
         write_stdout_line(dumps(bundle_payload(result), indent=2))
     else:
-        write_stdout_line(format_bundle_summary(result, kind=command.kind))
+        print_bundle_summary(result, kind=command.kind)
     return 0
 
 
-__all__ = ["BundleCommand", "build_bundle", "resolve_experiment_path", "run_bundle_cli"]
+__all__ = ["BundleCommand", "build_bundle", "print_bundle_summary", "resolve_experiment_path", "run_bundle_cli"]

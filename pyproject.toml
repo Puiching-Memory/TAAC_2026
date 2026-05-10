@@ -28,6 +28,7 @@ dependencies = [
 	"tomli==2.4.0",
 	"tqdm==4.67.3",
 	"triton==3.3.1",
+	"tyro==1.0.13",
 ]
 
 [project.optional-dependencies]

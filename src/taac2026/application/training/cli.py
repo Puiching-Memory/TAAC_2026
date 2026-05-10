@@ -2,24 +2,37 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import tyro
 
 from taac2026.domain.requests import TrainRequest, default_run_dir
 from taac2026.application.experiments.registry import load_experiment_package
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 
 
-def parse_train_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
-    parser = argparse.ArgumentParser(description="Train a TAAC 2026 experiment package")
-    parser.add_argument("--experiment", required=True, help="experiment package path or module")
-    parser.add_argument("--dataset-path", default=None, help="parquet file or parquet directory; required for data-driven experiments")
-    parser.add_argument("--schema-path", default=None, help="schema.json path; defaults to the dataset directory")
-    parser.add_argument("--run-dir", default=None, help="checkpoint/output directory")
-    return parser.parse_known_args(argv)
+@dataclass(frozen=True, slots=True)
+class TrainCLIArgs:
+    experiment: str
+    dataset_path: str | None = None
+    schema_path: str | None = None
+    run_dir: str | None = None
+    json: bool = False
+
+
+def parse_train_args(argv: Sequence[str] | None = None) -> tuple[TrainCLIArgs, list[str]]:
+    return tyro.cli(
+        TrainCLIArgs,
+        description="Train a TAAC 2026 experiment package",
+        args=argv,
+        return_unknown_args=True,
+    )
 
 
 def _experiment_requires_dataset(experiment: object) -> bool:
@@ -42,6 +55,26 @@ def _is_bundle_mode() -> bool:
     return os.environ.get("TAAC_BUNDLE_MODE") == "1"
 
 
+def _format_train_summary(summary: dict[str, Any], *, experiment: str) -> None:
+    skip = {"telemetry", "training_telemetry", "evaluation_telemetry"}
+    fields = [("Experiment", experiment)]
+    for key, value in summary.items():
+        if key in skip or isinstance(value, (dict, list)):
+            continue
+        label = key.replace("_", " ").title()
+        fields.append((label, str(value)))
+    telemetry = summary.get("telemetry") or summary.get("training_telemetry") or {}
+    sections = []
+    if isinstance(telemetry, dict):
+        env_fields = []
+        for env_key in ("device", "model_parameters", "elapsed_sec", "steps"):
+            if env_key in telemetry:
+                env_fields.append((env_key.replace("_", " "), str(telemetry[env_key])))
+        if env_fields:
+            sections.append(("Telemetry", env_fields))
+    print_rich_summary("Training complete", fields, sections=sections, border_style="green")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args, extra_args = parse_train_args(argv)
     experiment = load_experiment_package(args.experiment)
@@ -58,7 +91,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         extra_args=tuple(extra_args),
     )
     summary = experiment.train(request) or {"run_dir": str(run_dir)}
-    write_stdout_line(dumps(summary))
+    if args.json:
+        write_stdout_line(dumps(summary))
+    else:
+        _format_train_summary(summary, experiment=args.experiment)
     return 0
 
 

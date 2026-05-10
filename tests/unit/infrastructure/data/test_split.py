@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from torch.utils.data import IterableDataset
+from torch.utils.data import DataLoader, IterableDataset
 
 import taac2026.infrastructure.data.dataset as pcvr_data
 import taac2026.infrastructure.data.observation as pcvr_observation
@@ -122,6 +123,37 @@ def _write_single_row_group_multi_batch_fixture(schema_path: Path, parquet_path:
         ),
         parquet_path,
         row_group_size=4,
+    )
+
+
+def _write_multi_row_group_partial_batch_fixture(schema_path: Path, parquet_path: Path) -> None:
+    schema = {
+        "user_int": [[1, 10, 1], [2, 20, 2]],
+        "item_int": [[3, 10, 1]],
+        "user_dense": [[4, 2]],
+        "seq": {},
+    }
+    schema_path.write_text(dumps(schema), encoding="utf-8")
+    pq.write_table(
+        pa.table(
+            {
+                "timestamp": [100, 101, 102, 103, 104],
+                "label_type": [2, 0, 2, 0, 2],
+                "user_id": ["u0", "u1", "u2", "u3", "u4"],
+                "user_int_feats_1": [1, 2, 3, 4, 5],
+                "user_int_feats_2": [[1, 2], [2, 3], [3, 4], [4, 5], [5, 6]],
+                "item_int_feats_3": [10, 11, 12, 13, 14],
+                "user_dense_feats_4": [
+                    [0.1, 0.2],
+                    [0.2, 0.3],
+                    [0.3, 0.4],
+                    [0.4, 0.5],
+                    [0.5, 0.6],
+                ],
+            }
+        ),
+        parquet_path,
+        row_group_size=2,
     )
 
 
@@ -464,6 +496,31 @@ def test_scan_dataset_does_not_use_step_random_sampling(tmp_path: Path) -> None:
 
     assert dataset.uses_step_random_sampling is False
     assert dataset.logical_sweep_steps() == len(dataset)
+
+
+def test_scan_dataset_len_counts_row_group_partial_batches(tmp_path: Path) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_multi_row_group_partial_batch_fixture(schema_path, parquet_path)
+    dataset = pcvr_data.PCVRParquetDataset(
+        parquet_path=str(parquet_path),
+        schema_path=str(schema_path),
+        batch_size=3,
+        shuffle=False,
+        buffer_batches=0,
+        data_pipeline_config=PCVRDataPipelineConfig(),
+        is_training=True,
+        dataset_role="valid",
+    )
+    loader = DataLoader(dataset, batch_size=None, num_workers=0)
+
+    with warnings.catch_warnings(record=True) as caught:
+        batches = list(loader)
+
+    assert len(dataset) == 3
+    assert len(loader) == 3
+    assert len(batches) == 3
+    assert not any("Length of IterableDataset" in str(warning.message) for warning in caught)
 
 
 def test_scan_dataset_shared_opt_cache_uses_scan_trace(tmp_path: Path) -> None:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 import math
@@ -11,13 +10,15 @@ import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import tyro
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.runtime.execution import (
@@ -33,6 +34,28 @@ DEFAULT_BENCHMARK_OPTIMIZERS: tuple[str, ...] = (
     "orthogonal_adamw",
     "muon",
 )
+
+AMPDType = Literal["bfloat16", "float16"]
+
+
+@dataclass(slots=True)
+class PCVROptimizerBenchmarkArgs:
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    batch_size: int = 512
+    feature_dim: int = 128
+    hidden_dim: int = 512
+    depth: int = 4
+    steps: int = 50
+    warmup_steps: int = 10
+    repeats: int = 5
+    lr: float = 1e-3
+    seed: int = 42
+    torch_threads: int = 0
+    optimizers: str | tuple[str, ...] = ",".join(DEFAULT_BENCHMARK_OPTIMIZERS)
+    amp: bool = False
+    amp_dtype: AMPDType = "bfloat16"
+    compile: bool = False
+    json: bool = False
 
 
 class ModelInput(NamedTuple):
@@ -236,7 +259,7 @@ def _summarize_optimizer_runs(
 def _benchmark_optimizer(
     *,
     optimizer_name: str,
-    args: argparse.Namespace,
+    args: PCVROptimizerBenchmarkArgs,
     device: torch.device,
     base_state: dict[str, Any],
     batch: dict[str, object],
@@ -308,7 +331,7 @@ def _benchmark_optimizer(
     )
 
 
-def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
+def run_benchmark(args: PCVROptimizerBenchmarkArgs) -> dict[str, object]:
     if args.steps < 1:
         raise ValueError("steps must be >= 1")
     if args.warmup_steps < 0:
@@ -376,46 +399,47 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--device",
-        default="cuda" if torch.cuda.is_available() else "cpu",
-    )
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--feature-dim", type=int, default=128)
-    parser.add_argument("--hidden-dim", type=int, default=512)
-    parser.add_argument("--depth", type=int, default=4)
-    parser.add_argument("--steps", type=int, default=50)
-    parser.add_argument("--warmup-steps", type=int, default=10)
-    parser.add_argument("--repeats", type=int, default=5)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--torch-threads", type=int, default=0)
-    parser.add_argument(
-        "--optimizers",
-        default=",".join(DEFAULT_BENCHMARK_OPTIMIZERS),
-        help="comma-separated subset of dense optimizers to benchmark",
-    )
-    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument(
-        "--amp-dtype",
-        dest="amp_dtype",
-        choices=("bfloat16", "float16"),
-        default="bfloat16",
-    )
-    parser.add_argument(
-        "--compile",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-    )
-    args = parser.parse_args(argv)
+def parse_args(argv: Sequence[str] | None = None) -> PCVROptimizerBenchmarkArgs:
+    args = tyro.cli(PCVROptimizerBenchmarkArgs, description=__doc__, args=argv)
     args.optimizers = _parse_optimizer_names(args.optimizers)
     return args
 
 
+def _format_optimizer_summary(summary: dict[str, object]) -> None:
+    fields = [
+        ("Device", str(summary.get("device", "<unknown>"))),
+        ("Batch size", str(summary.get("batch_size", 0))),
+        ("Feature dim", str(summary.get("feature_dim", 0))),
+        ("Hidden dim", str(summary.get("hidden_dim", 0))),
+        ("Depth", str(summary.get("depth", 0))),
+        ("Steps", str(summary.get("steps", 0))),
+        ("Repeats", str(summary.get("repeats", 0))),
+        ("AMP", str(summary.get("amp", False))),
+    ]
+    sections = []
+    for result in summary.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        name = result.get("optimizer", "<unknown>")
+        status = result.get("status", "<unknown>")
+        if status != "ok":
+            sections.append((name, [("Status", str(status)), ("Error", str(result.get("error", "")))]))
+            continue
+        sections.append((name, [
+            ("Status", "ok"),
+            ("Step time", f"{result.get('step_time_ms_median', 0.0):.3f} ms (p95: {result.get('step_time_ms_p95', 0.0):.3f})"),
+            ("Steps/sec", f"{result.get('steps_per_sec_median', 0.0):.1f} (p95: {result.get('steps_per_sec_p95', 0.0):.1f})"),
+        ]))
+    print_rich_summary("PCVR optimizer benchmark", fields, sections=sections, border_style="blue")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    write_stdout_line(dumps(run_benchmark(parse_args(argv)), indent=2))
+    args = parse_args(argv)
+    summary = run_benchmark(args)
+    if args.json:
+        write_stdout_line(dumps(summary, indent=2))
+    else:
+        _format_optimizer_summary(summary)
     return 0
 
 

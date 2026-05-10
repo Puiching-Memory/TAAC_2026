@@ -36,14 +36,6 @@
 > 我们的目标是提供一个开箱即用、便于扩展和回归验证的实验工作区，
 > 以促进社区在统一序列建模与特征交互方向上的研究和创新。
 
-> [!IMPORTANT]
-> 感谢各位的支持，本项目会继续维护，但需要提前说明：
-> 1. 我们无法保证 API 长期稳定。
-> 2. 各子模型的研究与复现状态并不等于 100% 官方还原。
-> 3. 当前仓库仅支持 Linux；Windows 和 macOS 用户请优先使用 Docker 或 Dev Container。
-
-这是一个面向 TAAC 2026 的实验工作区。当前仓库把共享训练底座、目录式实验包、线上 Bundle 打包和回归测试放进同一套工程里，核心约定如下：
-
 ## 比赛简介
 
 推荐系统作为大规模内容平台（信息流、短视频等）与数字广告（点击率/转化率预估等）的核心引擎，直接决定了用户体验、参与度及平台商业收益。面对海量并发请求与严苛的实时响应约束，现代推荐系统每日需完成数十亿次在线决策，支撑起规模庞大的数字广告生态。  
@@ -57,6 +49,17 @@
 ------
 
 ## 我们的工作
+
+- **分层架构与依赖倒置** — Domain / Application / Infrastructure 三层单向依赖；核心度量与配置校验独立于 PyTorch，可纯 CPU 测试
+- **插件式实验包** — 仅需 `__init__.py` + `model.py` 即接入完整训练/评估/推理/打包链路，`importlib` 动态加载，实验间零耦合
+- **钩子驱动的可组合流程** — 训练/预测拆为可替换钩子（`build_data` / `build_model` / `build_trainer` …），只覆盖差异部分，其余复用默认实现
+- **冻结 dataclass 配置** — `frozen=True, slots=True` 保证不可变与零 dict 开销，可安全传入多进程 worker；自动兼容旧配置键名
+- **版本化边界契约** — sidecar / manifest 携带格式+版本号，Pydantic `extra="forbid"` 严格校验，版本不匹配直接报错
+- **GPU 内核注册表** — FlashAttention / RMSNorm / EmbeddingBag 三类算子后端（torch / Triton / TileLang）一行配置切换，编译结果自动缓存
+- **Step 级采样管线** — 以 optimizer step 为索引而非 epoch；缓存层（6 种策略）+ 变换层（裁剪/遮蔽/域丢弃）可组合，确定性种子保证全链路可复现
+- **稀疏/密集双优化器** — Embedding 走 Adagrad，其余走 AdamW / Fused / Orthogonal / Muon，支持定期重建稀疏优化器
+- **版本化 Bundle 打包** — 一键生成 `code_package.zip` + 入口脚本 + manifest，打包与线上环境通过 manifest 契约校验一致性
+- **分层测试标记** — unit / contract / integration / gpu / benchmark 六级 pytest marker，CI 按层级运行，覆盖率门槛 70%
 
 ![PCVR Runtime Resources](figures/pcvr_diagnostics/pcvr_runtime_resources.svg)
 

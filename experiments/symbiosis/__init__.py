@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,7 +81,7 @@ SYMBIOSIS_MODEL_DEFAULTS = SymbiosisModelDefaults()
 SYMBIOSIS_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
 
 
-def _add_symbiosis_train_args(parser: argparse.ArgumentParser) -> None:
+def _add_symbiosis_train_args(parser: Any) -> None:
     add_flat_config_arguments(parser, SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
 
 
@@ -91,7 +90,7 @@ def parse_symbiosis_train_args(
     *,
     package_dir: Path,
     defaults: PCVRTrainConfig,
-) -> argparse.Namespace:
+) -> Any:
     parser = build_pcvr_train_arg_parser(package_dir=package_dir, defaults=defaults)
     _add_symbiosis_train_args(parser)
     args = apply_pcvr_train_arg_env_overrides(parser.parse_args(argv))
@@ -203,7 +202,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         train_timestamp_end=0,
         valid_timestamp_start=0,
         valid_timestamp_end=0,
-        eval_every_n_steps=5_000,
+        eval_every_n_steps=1_000,
         seq_max_lens="seq_a:256,seq_b:256,seq_c:512,seq_d:512",
     ),
     data_pipeline=PCVRDataPipelineConfig(
@@ -215,7 +214,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     optimizer=PCVROptimizerConfig(
         lr=1e-4,
         max_steps=100_000,
-        patience_steps=25_000,
+        patience_steps=5_000,
         seed=42,
         device=None,
         dense_optimizer_type="muon",

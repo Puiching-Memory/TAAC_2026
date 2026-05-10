@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-import argparse
 import math
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import torch
 import pyarrow.parquet as pq
+import tyro
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.domain.config import (
+    PCVRDataCacheMode,
     PCVRDataCacheConfig,
     PCVRDataPipelineConfig,
+    PCVRDataSamplingStrategy,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
     PCVRSequenceCropConfig,
@@ -25,7 +29,42 @@ from taac2026.infrastructure.data.dataset import PCVRParquetDataset, get_pcvr_da
 from taac2026.domain.model_contract import parse_seq_max_lens
 
 
-def _build_pipeline_config(args: argparse.Namespace) -> PCVRDataPipelineConfig:
+BenchmarkMode = Literal["loader", "convert"]
+PipelinePreset = Literal["none", "cache", "opt", "augment", "opt-augment"]
+
+
+@dataclass(slots=True)
+class PCVRDataPipelineBenchmarkArgs:
+    dataset_path: Path
+    schema_path: Path
+    batch_size: int = 256
+    num_workers: int = 0
+    buffer_batches: int = 1
+    valid_ratio: float = 0.1
+    train_ratio: float = 1.0
+    seed: int = 42
+    seq_max_lens: str = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
+    max_batches: int = 0
+    warmup_batches: int = 5
+    passes: int = 1
+    torch_threads: int = 0
+    no_shuffle: bool = False
+    benchmark_mode: BenchmarkMode = "loader"
+    converter_batches: int = 128
+    sampling_strategy: PCVRDataSamplingStrategy = "step_random"
+    train_steps_per_sweep: int = 0
+    pipeline_preset: Annotated[PipelinePreset, tyro.conf.arg(aliases=("--preset",))] = "none"
+    cache_mode: PCVRDataCacheMode | None = None
+    cache_batches: int = 512
+    views_per_row: int = 2
+    seq_window_min_len: int = 8
+    feature_mask_probability: float = 0.05
+    domain_dropout_probability: float = 0.05
+    strict_time_filter: bool = True
+    json: bool = False
+
+
+def _build_pipeline_config(args: Any) -> PCVRDataPipelineConfig:
     transforms = []
     cache_mode = getattr(args, "cache_mode", None)
     if cache_mode is None:
@@ -122,7 +161,7 @@ def _estimated_batches_per_pass(
     return max(1, math.ceil((train_rows * row_multiplier) / max(1, batch_size)))
 
 
-def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
+def run_benchmark(args: PCVRDataPipelineBenchmarkArgs) -> dict[str, object]:
     if args.torch_threads > 0:
         torch.set_num_threads(args.torch_threads)
 
@@ -234,7 +273,7 @@ def _collect_converter_batches(
 
 
 def _run_converter_benchmark(
-    args: argparse.Namespace,
+    args: PCVRDataPipelineBenchmarkArgs,
     pipeline_config: PCVRDataPipelineConfig,
 ) -> dict[str, object]:
     dataset = PCVRParquetDataset(
@@ -298,71 +337,39 @@ def _run_converter_benchmark(
     }
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset-path", type=Path, required=True)
-    parser.add_argument("--schema-path", type=Path, required=True)
-    parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--buffer-batches", type=int, default=1)
-    parser.add_argument("--valid-ratio", type=float, default=0.1)
-    parser.add_argument("--train-ratio", type=float, default=1.0)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--seq-max-lens", default="seq_a:256,seq_b:256,seq_c:512,seq_d:512"
-    )
-    parser.add_argument("--max-batches", type=int, default=0)
-    parser.add_argument("--warmup-batches", type=int, default=5)
-    parser.add_argument("--passes", type=int, default=1)
-    parser.add_argument("--torch-threads", type=int, default=0)
-    parser.add_argument("--no-shuffle", action="store_true")
-    parser.add_argument(
-        "--benchmark-mode",
-        choices=("loader", "convert"),
-        default="loader",
-    )
-    parser.add_argument("--converter-batches", type=int, default=128)
-    parser.add_argument(
-        "--sampling-strategy",
-        choices=("step_random", "row_group_sweep"),
-        default="step_random",
-    )
-    parser.add_argument("--train-steps-per-sweep", type=int, default=0)
-    parser.add_argument(
-        "--preset",
-        dest="pipeline_preset",
-        choices=("none", "cache", "opt", "augment", "opt-augment"),
-        default="none",
-        help="alias of --pipeline-preset",
-    )
-    parser.add_argument(
-        "--pipeline-preset",
-        choices=("none", "cache", "opt", "augment", "opt-augment"),
-        default=None,
-    )
-    parser.add_argument(
-        "--cache-mode",
-        choices=("none", "lru", "fifo", "lfu", "rr", "opt"),
-        default=None,
-        help="override cache mode while keeping the selected transform preset",
-    )
-    parser.add_argument("--cache-batches", type=int, default=512)
-    parser.add_argument("--views-per-row", type=int, default=2)
-    parser.add_argument("--seq-window-min-len", type=int, default=8)
-    parser.add_argument("--feature-mask-probability", type=float, default=0.05)
-    parser.add_argument("--domain-dropout-probability", type=float, default=0.05)
-    parser.add_argument(
-        "--strict-time-filter", action=argparse.BooleanOptionalAction, default=True
-    )
-    args = parser.parse_args(argv)
-    if args.pipeline_preset is None:
-        args.pipeline_preset = args.preset
-    return args
+def parse_args(argv: Sequence[str] | None = None) -> PCVRDataPipelineBenchmarkArgs:
+    return tyro.cli(PCVRDataPipelineBenchmarkArgs, description=__doc__, args=argv)
+
+
+def _format_pipeline_summary(summary: dict[str, object]) -> None:
+    fields = [
+        ("Dataset", str(summary.get("dataset_path", "<unknown>"))),
+        ("Schema", str(summary.get("schema_path", "<unknown>"))),
+        ("Mode", str(summary.get("benchmark_mode", "<unknown>"))),
+        ("Preset", str(summary.get("pipeline_preset", "<unknown>"))),
+        ("Cache mode", str(summary.get("cache_mode", "<unknown>"))),
+        ("Train rows", f"{summary.get('train_rows', 0):,}"),
+        ("Batch size", str(summary.get("batch_size", 0))),
+    ]
+    sections = [
+        ("Results", [
+            ("Measured rows", f"{summary.get('measured_rows', 0):,}"),
+            ("Measured batches", str(summary.get("measured_batches", 0))),
+            ("Elapsed", f"{summary.get('elapsed_sec', 0.0):.3f}s"),
+            ("Rows/sec", f"{summary.get('rows_per_sec', 0.0):.1f}"),
+            ("Batches/sec", f"{summary.get('batches_per_sec', 0.0):.1f}"),
+        ]),
+    ]
+    print_rich_summary("PCVR data pipeline benchmark", fields, sections=sections, border_style="blue")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    summary = run_benchmark(parse_args(argv))
-    write_stdout_line(dumps(summary, indent=2))
+    args = parse_args(argv)
+    summary = run_benchmark(args)
+    if args.json:
+        write_stdout_line(dumps(summary, indent=2))
+    else:
+        _format_pipeline_summary(summary)
     return 0
 
 

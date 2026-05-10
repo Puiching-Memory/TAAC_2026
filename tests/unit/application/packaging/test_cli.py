@@ -85,10 +85,10 @@ def test_package_main_prints_human_readable_summary_by_default(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert f"Built TAAC online {case.name} bundle" in captured.out
-    assert "Experiment: experiments/baseline" in captured.out
-    assert f"{case.entrypoint_name}: {result.run_script_path}" in captured.out
-    assert f"code_package.zip: {result.code_package_path}" in captured.out
-    assert f"Upload the two files above: {case.entrypoint_name} and code_package.zip" in captured.out
+    assert "experiments/baseline" in captured.out
+    assert case.entrypoint_name in captured.out
+    assert "code_package" in captured.out
+    assert "Upload:" in captured.out
 
 
 @pytest.mark.parametrize("case,force_flag", [(case, True) for case in CASES] + [(case, False) for case in CASES], ids=lambda item: item.name if isinstance(item, BundleCliCase) else str(item))

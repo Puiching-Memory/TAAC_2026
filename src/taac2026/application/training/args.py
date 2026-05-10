@@ -5,18 +5,24 @@ from __future__ import annotations
 import argparse
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field, fields, make_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import torch
+import tyro
 
 from taac2026.domain.config import (
-    DENSE_LR_SCHEDULER_TYPE_CHOICES,
-    FLASH_ATTENTION_BACKEND_CHOICES,
-    PCVR_DATA_SAMPLING_STRATEGY_CHOICES,
-    PCVR_DATA_SPLIT_STRATEGY_CHOICES,
+    DenseLRSchedulerType,
+    DenseOptimizerType,
+    FlashAttentionBackend,
+    NSTokenizerType,
+    PCVRDataSamplingStrategy,
+    PCVRDataSplitStrategy,
     PCVRTrainConfig,
-    RMS_NORM_BACKEND_CHOICES,
+    RMSNormBackend,
+    RankMixerMode,
+    SeqEncoderType,
 )
 from taac2026.domain.model_contract import resolve_schema_path
 from taac2026.infrastructure.io.files import write_json
@@ -27,40 +33,233 @@ from taac2026.application.training.workflow import (
 )
 from taac2026.infrastructure.runtime.telemetry import RuntimeTelemetry
 from taac2026.infrastructure.runtime.execution import (
-    AMP_DTYPE_CHOICES,
-    DENSE_OPTIMIZER_TYPE_CHOICES,
     PCVRLossConfig,
     RuntimeExecutionConfig,
     create_logger,
-    parse_pcvr_loss_config_arg,
     set_seed,
 )
 
 
-def _argument_flags(name: str) -> list[str]:
-    flags = [f"--{name}"]
-    hyphenated = name.replace("_", "-")
-    if hyphenated != name:
-        flags.append(f"--{hyphenated}")
-    return flags
+AMPDType = Literal["bfloat16", "float16"]
 
 
-def add_flat_config_arguments(parser: argparse.ArgumentParser, defaults: Mapping[str, Any]) -> None:
-    for name, default in defaults.items():
-        flags = _argument_flags(name)
-        if isinstance(default, bool):
-            parser.add_argument(*flags, dest=name, action=argparse.BooleanOptionalAction, default=default)
+def _arg(*aliases: str) -> object:
+    return tyro.conf.arg(aliases=tuple(aliases) or None)
+
+
+def _hyphen_alias(name: str) -> str:
+    return f"--{name.replace('_', '-')}"
+
+
+@dataclass(frozen=True, slots=True)
+class PCVRTrainCLIArgs:
+    data_dir: Annotated[str | None, _arg("--data-dir")] = None
+    schema_path: Annotated[str | None, _arg("--schema-path")] = None
+    ckpt_dir: Annotated[str | None, _arg("--ckpt-dir")] = None
+    log_dir: Annotated[str | None, _arg("--log-dir")] = None
+    tf_events_dir: Annotated[str | None, _arg("--tf-events-dir")] = None
+
+    batch_size: Annotated[int, _arg("--batch-size")] = 256
+    lr: float = 1e-4
+    max_steps: Annotated[int, _arg("--max-steps")] = 0
+    patience_steps: Annotated[int, _arg("--patience-steps")] = 25_000
+    seed: int = 42
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    dense_optimizer_type: Annotated[DenseOptimizerType, _arg("--dense-optimizer-type")] = "adamw"
+    scheduler_type: Annotated[DenseLRSchedulerType, _arg("--scheduler-type")] = "none"
+    warmup_steps: Annotated[int, _arg("--warmup-steps")] = 0
+    min_lr_ratio: Annotated[float, _arg("--min-lr-ratio")] = 0.0
+    amp: bool = False
+    amp_dtype: Annotated[AMPDType, _arg("--amp-dtype")] = "bfloat16"
+    compile: bool = False
+    progress_log_interval_steps: Annotated[int, _arg("--progress-log-interval-steps")] = 100
+
+    num_workers: Annotated[int, _arg("--num-workers")] = 16
+    buffer_batches: Annotated[int, _arg("--buffer-batches")] = 1
+    train_steps_per_sweep: Annotated[int, _arg("--train-steps-per-sweep")] = 0
+    train_ratio: Annotated[float, _arg("--train-ratio")] = 1.0
+    valid_ratio: Annotated[float, _arg("--valid-ratio")] = 0.1
+    split_strategy: Annotated[PCVRDataSplitStrategy, _arg("--split-strategy")] = "row_group_tail"
+    sampling_strategy: Annotated[PCVRDataSamplingStrategy, _arg("--sampling-strategy")] = "step_random"
+    train_timestamp_start: Annotated[int, _arg("--train-timestamp-start")] = 0
+    train_timestamp_end: Annotated[int, _arg("--train-timestamp-end")] = 0
+    valid_timestamp_start: Annotated[int, _arg("--valid-timestamp-start")] = 0
+    valid_timestamp_end: Annotated[int, _arg("--valid-timestamp-end")] = 0
+    eval_every_n_steps: Annotated[int, _arg("--eval-every-n-steps")] = 5_000
+    seq_max_lens: Annotated[str, _arg("--seq-max-lens")] = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
+
+    d_model: Annotated[int, _arg("--d-model")] = 64
+    emb_dim: Annotated[int, _arg("--emb-dim")] = 64
+    num_queries: Annotated[int, _arg("--num-queries")] = 1
+    num_blocks: Annotated[int, _arg("--num-blocks")] = 2
+    num_heads: Annotated[int, _arg("--num-heads")] = 4
+    seq_encoder_type: Annotated[SeqEncoderType, _arg("--seq-encoder-type")] = "transformer"
+    hidden_mult: Annotated[int, _arg("--hidden-mult")] = 4
+    dropout_rate: Annotated[float, _arg("--dropout-rate")] = 0.01
+    seq_top_k: Annotated[int, _arg("--seq-top-k")] = 50
+    seq_causal: Annotated[bool, _arg("--seq-causal")] = False
+    action_num: Annotated[int, _arg("--action-num")] = 1
+    use_time_buckets: Annotated[bool, _arg("--use-time-buckets")] = True
+    rank_mixer_mode: Annotated[RankMixerMode, _arg("--rank-mixer-mode")] = "full"
+    use_rope: Annotated[bool, _arg("--use-rope")] = False
+    rope_base: Annotated[float, _arg("--rope-base")] = 10000.0
+    emb_skip_threshold: Annotated[int, _arg("--emb-skip-threshold")] = 0
+    seq_id_threshold: Annotated[int, _arg("--seq-id-threshold")] = 10000
+    gradient_checkpointing: Annotated[bool, _arg("--gradient-checkpointing")] = False
+    flash_attention_backend: Annotated[FlashAttentionBackend, _arg("--flash-attention-backend")] = "torch"
+    rms_norm_backend: Annotated[RMSNormBackend, _arg("--rms-norm-backend")] = "torch"
+    rms_norm_block_rows: Annotated[int, _arg("--rms-norm-block-rows")] = 1
+
+    loss_terms: Annotated[str | None, _arg("--loss-terms")] = None
+    loss_weight_overrides: Annotated[str, _arg("--loss-weight-overrides")] = ""
+
+    sparse_lr: Annotated[float, _arg("--sparse-lr")] = 0.05
+    sparse_weight_decay: Annotated[float, _arg("--sparse-weight-decay")] = 0.0
+    reinit_sparse_every_n_steps: Annotated[int, _arg("--reinit-sparse-every-n-steps")] = 0
+    reinit_cardinality_threshold: Annotated[int, _arg("--reinit-cardinality-threshold")] = 0
+
+    ns_tokenizer_type: Annotated[NSTokenizerType, _arg("--ns-tokenizer-type")] = "rankmixer"
+    user_ns_tokens: Annotated[int, _arg("--user-ns-tokens")] = 0
+    item_ns_tokens: Annotated[int, _arg("--item-ns-tokens")] = 0
+
+
+_PATH_CLI_FIELD_NAMES = frozenset({"data_dir", "schema_path", "ckpt_dir", "log_dir", "tf_events_dir"})
+_SPECIAL_CLI_FIELD_NAMES = _PATH_CLI_FIELD_NAMES | frozenset({"loss_terms", "loss_weight_overrides"})
+_BASE_CLI_FIELD_NAMES = frozenset(item.name for item in fields(PCVRTrainCLIArgs))
+_LEGACY_BOOLEAN_FLAG_ALIASES = {
+    "--no_time_buckets": "--no-use_time_buckets",
+    "--no-time-buckets": "--no-use-time-buckets",
+}
+
+
+def _normalize_legacy_boolean_flags(argv: Sequence[str] | None) -> Sequence[str] | None:
+    if argv is None:
+        return None
+    return tuple(_LEGACY_BOOLEAN_FLAG_ALIASES.get(arg, arg) for arg in argv)
+
+
+def _flat_config_value_type(default: Any) -> type[Any] | object:
+    if isinstance(default, bool):
+        return bool
+    if isinstance(default, int):
+        return int
+    if isinstance(default, float):
+        return float
+    if isinstance(default, str):
+        return str
+    if default is None:
+        return str | None
+    raise TypeError(f"unsupported flat config default: {type(default).__name__}")
+
+
+def _flat_config_field(name: str, default: Any) -> tuple[str, object, Any]:
+    aliases = (_hyphen_alias(name),) if "_" in name else ()
+    return (
+        name,
+        Annotated[_flat_config_value_type(default), _arg(*aliases)],
+        field(default=default),
+    )
+
+
+def _pcvr_train_cli_type(extra_config_defaults: Mapping[str, Any] | None) -> type[PCVRTrainCLIArgs]:
+    if not extra_config_defaults:
+        return PCVRTrainCLIArgs
+    duplicates = sorted(set(extra_config_defaults).intersection(_BASE_CLI_FIELD_NAMES))
+    if duplicates:
+        joined = ", ".join(duplicates)
+        raise ValueError(f"extra PCVR train CLI config duplicates built-in field(s): {joined}")
+    return make_dataclass(
+        "PCVRTrainCLIArgsWithExtraConfig",
+        [_flat_config_field(name, default) for name, default in extra_config_defaults.items()],
+        bases=(PCVRTrainCLIArgs,),
+        frozen=True,
+        slots=True,
+    )
+
+
+def _pcvr_train_cli_default(
+    parser_type: type[PCVRTrainCLIArgs],
+    *,
+    defaults: PCVRTrainConfig,
+    extra_config_defaults: Mapping[str, Any] | None,
+) -> PCVRTrainCLIArgs:
+    flat_defaults = defaults.to_flat_dict()
+    kwargs: dict[str, Any] = {}
+    for item in fields(PCVRTrainCLIArgs):
+        if item.name in _SPECIAL_CLI_FIELD_NAMES:
             continue
-        kwargs: dict[str, Any] = {"dest": name, "default": default}
-        if isinstance(default, int):
-            kwargs["type"] = int
-        elif isinstance(default, float):
-            kwargs["type"] = float
-        elif isinstance(default, str):
-            kwargs["type"] = str
-        elif default is not None:
-            raise TypeError(f"unsupported flat config default for {name}: {type(default).__name__}")
-        parser.add_argument(*flags, **kwargs)
+        if item.name == "device":
+            kwargs[item.name] = flat_defaults[item.name] or ("cuda" if torch.cuda.is_available() else "cpu")
+            continue
+        kwargs[item.name] = flat_defaults[item.name]
+    kwargs.update(extra_config_defaults or {})
+    return parser_type(**kwargs)
+
+
+def _parse_pcvr_train_cli_args(
+    argv: Sequence[str] | None,
+    *,
+    defaults: PCVRTrainConfig,
+    extra_config_defaults: Mapping[str, Any] | None = None,
+) -> argparse.Namespace:
+    parser_type = _pcvr_train_cli_type(extra_config_defaults)
+    parsed = tyro.cli(
+        parser_type,
+        description="Train a PCVR experiment",
+        args=_normalize_legacy_boolean_flags(argv),
+        default=_pcvr_train_cli_default(
+            parser_type,
+            defaults=defaults,
+            extra_config_defaults=extra_config_defaults,
+        ),
+        use_underscores=True,
+    )
+    return argparse.Namespace(**asdict(parsed))
+
+
+@dataclass(slots=True)
+class TyroFlatArgParser:
+    defaults: PCVRTrainConfig
+    extra_config_defaults: dict[str, Any] = field(default_factory=dict)
+
+    def add_flat_config_arguments(self, defaults: Mapping[str, Any]) -> None:
+        requested = set(defaults)
+        duplicates = sorted(
+            requested.intersection(_BASE_CLI_FIELD_NAMES)
+            | requested.intersection(self.extra_config_defaults)
+        )
+        if duplicates:
+            joined = ", ".join(duplicates)
+            raise ValueError(f"duplicate flat CLI config field(s): {joined}")
+        for name, default in defaults.items():
+            _flat_config_value_type(default)
+            self.extra_config_defaults[name] = default
+
+    def parse_args(self, argv: Sequence[str] | None = None) -> argparse.Namespace:
+        return _parse_pcvr_train_cli_args(
+            argv,
+            defaults=self.defaults,
+            extra_config_defaults=self.extra_config_defaults,
+        )
+
+
+def add_flat_config_arguments(parser: Any, defaults: Mapping[str, Any]) -> None:
+    add_flat_defaults = getattr(parser, "add_flat_config_arguments", None)
+    if not callable(add_flat_defaults):
+        raise TypeError("parser does not support typed flat config arguments")
+    add_flat_defaults(defaults)
+
+
+def _coerce_flat_config_value(value: Any, default: Any) -> Any:
+    if isinstance(default, bool):
+        return bool(value)
+    if isinstance(default, int):
+        return int(value)
+    if isinstance(default, float):
+        return float(value)
+    if isinstance(default, str):
+        return str(value)
+    return value
 
 
 def resolve_flat_config_values(
@@ -74,300 +273,19 @@ def resolve_flat_config_values(
         joined = ", ".join(missing_keys)
         raise KeyError(f"{config_name} is missing required key(s): {joined}")
 
-    resolved: dict[str, Any] = {}
-    for key, default in defaults.items():
-        value = config[key]
-        if isinstance(default, bool):
-            resolved[key] = bool(value)
-        elif isinstance(default, int):
-            resolved[key] = int(value)
-        elif isinstance(default, float):
-            resolved[key] = float(value)
-        elif isinstance(default, str):
-            resolved[key] = str(value)
-        else:
-            resolved[key] = value
-    return resolved
+    return {
+        key: _coerce_flat_config_value(config[key], default)
+        for key, default in defaults.items()
+    }
 
 
 def build_pcvr_train_arg_parser(
     *,
     package_dir: Path,
     defaults: PCVRTrainConfig,
-) -> argparse.ArgumentParser:
+) -> TyroFlatArgParser:
     del package_dir
-    default_values = defaults.to_flat_dict()
-    parser = argparse.ArgumentParser(description="Train a PCVR experiment")
-
-    parser.add_argument("--data_dir", "--data-dir", dest="data_dir", default=None)
-    parser.add_argument(
-        "--schema_path", "--schema-path", dest="schema_path", default=None
-    )
-    parser.add_argument("--ckpt_dir", "--ckpt-dir", dest="ckpt_dir", default=None)
-    parser.add_argument("--log_dir", "--log-dir", dest="log_dir", default=None)
-    parser.add_argument(
-        "--tf_events_dir", "--tf-events-dir", dest="tf_events_dir", default=None
-    )
-
-    parser.add_argument("--batch_size", type=int, default=default_values["batch_size"])
-    parser.add_argument("--lr", type=float, default=default_values["lr"])
-    parser.add_argument("--max_steps", type=int, default=default_values["max_steps"])
-    parser.add_argument(
-        "--patience_steps",
-        "--patience-steps",
-        dest="patience_steps",
-        type=int,
-        default=default_values["patience_steps"],
-    )
-    parser.add_argument("--seed", type=int, default=default_values["seed"])
-    parser.add_argument(
-        "--device",
-        default=default_values["device"]
-        or ("cuda" if torch.cuda.is_available() else "cpu"),
-    )
-    parser.add_argument(
-        "--dense_optimizer_type",
-        "--dense-optimizer-type",
-        dest="dense_optimizer_type",
-        default=default_values["dense_optimizer_type"],
-        choices=DENSE_OPTIMIZER_TYPE_CHOICES,
-    )
-    parser.add_argument(
-        "--scheduler_type",
-        "--scheduler-type",
-        dest="scheduler_type",
-        default=default_values["scheduler_type"],
-        choices=DENSE_LR_SCHEDULER_TYPE_CHOICES,
-    )
-    parser.add_argument(
-        "--warmup_steps",
-        "--warmup-steps",
-        dest="warmup_steps",
-        type=int,
-        default=default_values["warmup_steps"],
-    )
-    parser.add_argument(
-        "--min_lr_ratio",
-        "--min-lr-ratio",
-        dest="min_lr_ratio",
-        type=float,
-        default=default_values["min_lr_ratio"],
-    )
-    parser.add_argument(
-        "--amp", action=argparse.BooleanOptionalAction, default=default_values["amp"]
-    )
-    parser.add_argument(
-        "--amp_dtype",
-        "--amp-dtype",
-        dest="amp_dtype",
-        default=default_values["amp_dtype"],
-        choices=AMP_DTYPE_CHOICES,
-    )
-    parser.add_argument(
-        "--compile",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["compile"],
-    )
-    parser.add_argument(
-        "--progress_log_interval_steps",
-        "--progress-log-interval-steps",
-        dest="progress_log_interval_steps",
-        type=int,
-        default=default_values["progress_log_interval_steps"],
-    )
-
-    parser.add_argument(
-        "--num_workers", type=int, default=default_values["num_workers"]
-    )
-    parser.add_argument(
-        "--buffer_batches", type=int, default=default_values["buffer_batches"]
-    )
-    parser.add_argument(
-        "--train_steps_per_sweep",
-        "--train-steps-per-sweep",
-        dest="train_steps_per_sweep",
-        type=int,
-        default=default_values["train_steps_per_sweep"],
-    )
-    parser.add_argument(
-        "--train_ratio", type=float, default=default_values["train_ratio"]
-    )
-    parser.add_argument(
-        "--valid_ratio", type=float, default=default_values["valid_ratio"]
-    )
-    parser.add_argument(
-        "--split_strategy",
-        "--split-strategy",
-        dest="split_strategy",
-        default=default_values["split_strategy"],
-        choices=PCVR_DATA_SPLIT_STRATEGY_CHOICES,
-    )
-    parser.add_argument(
-        "--sampling_strategy",
-        "--sampling-strategy",
-        dest="sampling_strategy",
-        default=default_values["sampling_strategy"],
-        choices=PCVR_DATA_SAMPLING_STRATEGY_CHOICES,
-    )
-    parser.add_argument(
-        "--train_timestamp_start",
-        "--train-timestamp-start",
-        dest="train_timestamp_start",
-        type=int,
-        default=default_values["train_timestamp_start"],
-    )
-    parser.add_argument(
-        "--train_timestamp_end",
-        "--train-timestamp-end",
-        dest="train_timestamp_end",
-        type=int,
-        default=default_values["train_timestamp_end"],
-    )
-    parser.add_argument(
-        "--valid_timestamp_start",
-        "--valid-timestamp-start",
-        dest="valid_timestamp_start",
-        type=int,
-        default=default_values["valid_timestamp_start"],
-    )
-    parser.add_argument(
-        "--valid_timestamp_end",
-        "--valid-timestamp-end",
-        dest="valid_timestamp_end",
-        type=int,
-        default=default_values["valid_timestamp_end"],
-    )
-    parser.add_argument(
-        "--eval_every_n_steps",
-        "--eval-every-n-steps",
-        dest="eval_every_n_steps",
-        type=int,
-        default=default_values["eval_every_n_steps"],
-    )
-    parser.add_argument("--seq_max_lens", default=default_values["seq_max_lens"])
-
-    parser.add_argument("--d_model", type=int, default=default_values["d_model"])
-    parser.add_argument("--emb_dim", type=int, default=default_values["emb_dim"])
-    parser.add_argument(
-        "--num_queries", type=int, default=default_values["num_queries"]
-    )
-    parser.add_argument("--num_blocks", type=int, default=default_values["num_blocks"])
-    parser.add_argument("--num_heads", type=int, default=default_values["num_heads"])
-    parser.add_argument(
-        "--seq_encoder_type",
-        default=default_values["seq_encoder_type"],
-        choices=["swiglu", "transformer", "longer"],
-    )
-    parser.add_argument(
-        "--hidden_mult", type=int, default=default_values["hidden_mult"]
-    )
-    parser.add_argument(
-        "--dropout_rate", type=float, default=default_values["dropout_rate"]
-    )
-    parser.add_argument("--seq_top_k", type=int, default=default_values["seq_top_k"])
-    parser.add_argument(
-        "--seq_causal", action="store_true", default=default_values["seq_causal"]
-    )
-    parser.add_argument("--action_num", type=int, default=default_values["action_num"])
-    parser.add_argument(
-        "--use_time_buckets",
-        action="store_true",
-        default=default_values["use_time_buckets"],
-    )
-    parser.add_argument(
-        "--no_time_buckets", dest="use_time_buckets", action="store_false"
-    )
-    parser.add_argument(
-        "--rank_mixer_mode",
-        default=default_values["rank_mixer_mode"],
-        choices=["full", "ffn_only", "none"],
-    )
-    parser.add_argument(
-        "--use_rope",
-        "--use-rope",
-        dest="use_rope",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["use_rope"],
-    )
-    parser.add_argument("--rope_base", type=float, default=default_values["rope_base"])
-    parser.add_argument(
-        "--gradient-checkpointing",
-        action=argparse.BooleanOptionalAction,
-        default=default_values["gradient_checkpointing"],
-    )
-    parser.add_argument(
-        "--flash_attention_backend",
-        "--flash-attention-backend",
-        dest="flash_attention_backend",
-        default=default_values["flash_attention_backend"],
-        choices=FLASH_ATTENTION_BACKEND_CHOICES,
-    )
-    parser.add_argument(
-        "--rms_norm_backend",
-        "--rms-norm-backend",
-        dest="rms_norm_backend",
-        default=default_values["rms_norm_backend"],
-        choices=RMS_NORM_BACKEND_CHOICES,
-    )
-    parser.add_argument(
-        "--rms_norm_block_rows",
-        "--rms-norm-block-rows",
-        dest="rms_norm_block_rows",
-        type=int,
-        default=default_values["rms_norm_block_rows"],
-    )
-
-    parser.add_argument(
-        "--loss_terms",
-        "--loss-terms",
-        dest="loss_terms",
-        type=parse_pcvr_loss_config_arg,
-        default=default_values["loss_terms"],
-    )
-    parser.add_argument(
-        "--loss_weight_overrides",
-        "--loss-weight-overrides",
-        dest="loss_weight_overrides",
-        default="",
-    )
-
-    parser.add_argument("--sparse_lr", type=float, default=default_values["sparse_lr"])
-    parser.add_argument(
-        "--sparse_weight_decay",
-        type=float,
-        default=default_values["sparse_weight_decay"],
-    )
-    parser.add_argument(
-        "--reinit_sparse_every_n_steps",
-        type=int,
-        default=default_values["reinit_sparse_every_n_steps"],
-    )
-    parser.add_argument(
-        "--reinit_cardinality_threshold",
-        type=int,
-        default=default_values["reinit_cardinality_threshold"],
-    )
-
-    parser.add_argument(
-        "--emb_skip_threshold", type=int, default=default_values["emb_skip_threshold"]
-    )
-    parser.add_argument(
-        "--seq_id_threshold", type=int, default=default_values["seq_id_threshold"]
-    )
-
-    parser.add_argument(
-        "--ns_tokenizer_type",
-        default=default_values["ns_tokenizer_type"],
-        choices=["group", "rankmixer"],
-    )
-    parser.add_argument(
-        "--user_ns_tokens", type=int, default=default_values["user_ns_tokens"]
-    )
-    parser.add_argument(
-        "--item_ns_tokens", type=int, default=default_values["item_ns_tokens"]
-    )
-
-    return parser
+    return TyroFlatArgParser(defaults=defaults)
 
 
 def apply_pcvr_train_arg_env_overrides(args: argparse.Namespace) -> argparse.Namespace:
@@ -389,7 +307,8 @@ def apply_pcvr_train_non_cli_defaults(
     args.user_ns_groups = ns_defaults["user_ns_groups"]
     args.item_ns_groups = ns_defaults["item_ns_groups"]
     if hasattr(args, "loss_terms"):
-        loss_config = PCVRLossConfig.from_value(args.loss_terms).with_weight_overrides(args.loss_weight_overrides)
+        loss_terms = defaults.loss if args.loss_terms is None else args.loss_terms
+        loss_config = PCVRLossConfig.from_value(loss_terms).with_weight_overrides(args.loss_weight_overrides)
         args.loss_terms = loss_config.to_list()
     return args
 

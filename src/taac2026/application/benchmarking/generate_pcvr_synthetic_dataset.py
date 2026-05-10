@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
-import argparse
 import shutil
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
+import tyro
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 
 MIN_SYNTHETIC_MULTIPLIER = 300
+
+
+@dataclass(slots=True)
+class GeneratePCVRSyntheticDatasetArgs:
+    source_dir: Path = Path("data/sample_1000_raw")
+    output_dir: Path = Path("outputs/perf/pcvr_synthetic_300x")
+    multiplier: int = MIN_SYNTHETIC_MULTIPLIER
+    row_group_size: int = 0
+    compression: str = "snappy"
+    no_jitter_ids: bool = False
+    force: bool = False
+    json: bool = False
 
 
 def _replace_column(table: pa.Table, name: str, values: pa.ChunkedArray) -> pa.Table:
@@ -107,26 +121,23 @@ def generate_dataset(
     }
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--source-dir",
-        type=Path,
-        default=Path("data/sample_1000_raw"),
-        help="Directory containing demo_1000.parquet and schema.json.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("outputs/perf/pcvr_synthetic_300x"),
-        help="Directory to create for the amplified dataset.",
-    )
-    parser.add_argument("--multiplier", type=int, default=MIN_SYNTHETIC_MULTIPLIER)
-    parser.add_argument("--row-group-size", type=int, default=0)
-    parser.add_argument("--compression", default="snappy")
-    parser.add_argument("--no-jitter-ids", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    return parser.parse_args(argv)
+def parse_args(argv: Sequence[str] | None = None) -> GeneratePCVRSyntheticDatasetArgs:
+    return tyro.cli(GeneratePCVRSyntheticDatasetArgs, description=__doc__, args=argv)
+
+
+def _format_dataset_summary(summary: dict[str, object]) -> None:
+    fields = [
+        ("Output dir", str(summary.get("output_dir", "<unknown>"))),
+        ("Parquet", str(summary.get("parquet_path", "<unknown>"))),
+        ("Schema", str(summary.get("schema_path", "<unknown>"))),
+        ("Rows", f"{summary.get('rows', 0):,}"),
+        ("Row groups", str(summary.get("row_groups", 0))),
+        ("Source rows", f"{summary.get('source_rows', 0):,}"),
+        ("Multiplier", f"{summary.get('multiplier', 0)}x"),
+        ("Row group sz", str(summary.get("row_group_size", 0))),
+        ("Compression", str(summary.get("compression", "<unknown>"))),
+    ]
+    print_rich_summary("PCVR synthetic dataset generated", fields, border_style="blue")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -140,7 +151,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         jitter_ids=not args.no_jitter_ids,
         force=args.force,
     )
-    write_stdout_line(dumps(summary, indent=2))
+    if args.json:
+        write_stdout_line(dumps(summary, indent=2))
+    else:
+        _format_dataset_summary(summary)
     return 0
 
 

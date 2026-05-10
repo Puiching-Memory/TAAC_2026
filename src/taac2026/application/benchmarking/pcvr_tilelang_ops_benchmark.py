@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import asdict, dataclass
 import os
 import statistics
@@ -13,8 +12,10 @@ from typing import Any, Literal
 
 import torch
 import torch.nn.functional as F
+import tyro
 
 from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
 from taac2026.infrastructure.accelerators import (
     clear_embedding_bag_mean_kernel_cache,
@@ -36,8 +37,41 @@ from taac2026.infrastructure.accelerators import (
 
 
 BenchmarkBackend = Literal["torch", "tilelang", "triton", "cuembed"]
+BenchmarkDType = Literal["float16", "bfloat16", "float32"]
+BenchmarkOperator = Literal["rms_norm", "flash_attention", "embedding_bag_mean"]
 DEFAULT_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang", "triton")
 SUPPORTED_BACKENDS: tuple[BenchmarkBackend, ...] = ("torch", "tilelang", "triton", "cuembed")
+
+
+@dataclass(slots=True)
+class PCVRTileLangOpsBenchmarkArgs:
+    operator: BenchmarkOperator = "rms_norm"
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    rows: int = 8192
+    cols: int = 128
+    batch: int = 8
+    heads: int = 8
+    query_len: int = 128
+    kv_len: int = 128
+    head_dim: int = 64
+    embedding_vocab_size: int = 1_000_000
+    embedding_dim: int = 64
+    embedding_bag_size: int = 4
+    embedding_padding_prob: float = 0.25
+    is_causal: bool = False
+    steps: int = 100
+    warmup_steps: int = 20
+    repeats: int = 5
+    eps: float = 1e-6
+    seed: int = 42
+    block_rows: int | None = None
+    block_cols: int | None = None
+    torch_threads: int = 0
+    dtype: Any = "float16" if torch.cuda.is_available() else "float32"
+    backends: str | tuple[BenchmarkBackend, ...] = ",".join(DEFAULT_BACKENDS)
+    atol: float | None = None
+    rtol: float | None = None
+    json: bool = False
 
 
 @dataclass(slots=True)
@@ -213,7 +247,7 @@ def _benchmark_callable(
 def _prepare_rms_norm_callable(
     *,
     backend: BenchmarkBackend,
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
     x: torch.Tensor,
     weight: torch.Tensor,
@@ -252,7 +286,7 @@ def _prepare_rms_norm_callable(
 def _prepare_flash_attention_callable(
     *,
     backend: BenchmarkBackend,
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
     q: torch.Tensor,
     k: torch.Tensor,
@@ -286,7 +320,7 @@ def _prepare_flash_attention_callable(
 def _prepare_embedding_bag_mean_callable(
     *,
     backend: BenchmarkBackend,
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
     embedding_weight: torch.Tensor,
     values: torch.Tensor,
@@ -355,7 +389,7 @@ def _prepare_embedding_bag_mean_callable(
     return lambda: kernel(embedding_weight, values), resolved_backend, compile_sec
 
 
-def _build_inputs(args: argparse.Namespace, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+def _build_inputs(args: PCVRTileLangOpsBenchmarkArgs, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
     generator.manual_seed(args.seed)
     x = torch.randn((args.rows, args.cols), generator=generator, dtype=args.dtype).to(device)
@@ -364,7 +398,7 @@ def _build_inputs(args: argparse.Namespace, device: torch.device) -> tuple[torch
 
 
 def _build_flash_attention_inputs(
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
@@ -376,7 +410,7 @@ def _build_flash_attention_inputs(
 
 
 def _build_embedding_bag_mean_inputs(
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     generator = torch.Generator(device="cpu")
@@ -402,7 +436,7 @@ def _build_embedding_bag_mean_inputs(
 def _benchmark_rms_norm_backend(
     *,
     backend: BenchmarkBackend,
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
     x: torch.Tensor,
     weight: torch.Tensor,
@@ -464,7 +498,7 @@ def _benchmark_rms_norm_backend(
 def _benchmark_flash_attention_backend(
     *,
     backend: BenchmarkBackend,
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
     q: torch.Tensor,
     k: torch.Tensor,
@@ -528,7 +562,7 @@ def _benchmark_flash_attention_backend(
 def _benchmark_embedding_bag_mean_backend(
     *,
     backend: BenchmarkBackend,
-    args: argparse.Namespace,
+    args: PCVRTileLangOpsBenchmarkArgs,
     device: torch.device,
     embedding_weight: torch.Tensor,
     values: torch.Tensor,
@@ -657,7 +691,7 @@ def _summarize_runs(
     )
 
 
-def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
+def run_benchmark(args: PCVRTileLangOpsBenchmarkArgs) -> dict[str, object]:
     os.environ.setdefault("TILELANG_PRINT_ON_COMPILATION", "0")
     if args.steps < 1:
         raise ValueError("steps must be >= 1")
@@ -767,44 +801,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, object]:
     return summary
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> PCVRTileLangOpsBenchmarkArgs:
     raw_argv = tuple(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--operator", choices=("rms_norm", "flash_attention", "embedding_bag_mean"), default="rms_norm")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--rows", type=int, default=8192)
-    parser.add_argument("--cols", type=int, default=128)
-    parser.add_argument("--batch", type=int, default=8)
-    parser.add_argument("--heads", type=int, default=8)
-    parser.add_argument("--query-len", type=int, default=128)
-    parser.add_argument("--kv-len", type=int, default=128)
-    parser.add_argument("--head-dim", type=int, default=64)
-    parser.add_argument("--embedding-vocab-size", type=int, default=1_000_000)
-    parser.add_argument("--embedding-dim", type=int, default=64)
-    parser.add_argument("--embedding-bag-size", type=int, default=4)
-    parser.add_argument("--embedding-padding-prob", type=float, default=0.25)
-    parser.add_argument("--is-causal", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--steps", type=int, default=100)
-    parser.add_argument("--warmup-steps", type=int, default=20)
-    parser.add_argument("--repeats", type=int, default=5)
-    parser.add_argument("--eps", type=float, default=1e-6)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--block-rows", type=int, default=None)
-    parser.add_argument("--block-cols", type=int, default=None)
-    parser.add_argument("--torch-threads", type=int, default=0)
-    parser.add_argument(
-        "--dtype",
-        choices=("float16", "bfloat16", "float32"),
-        default="float16" if torch.cuda.is_available() else "float32",
-    )
-    parser.add_argument(
-        "--backends",
-        default=",".join(DEFAULT_BACKENDS),
-        help="comma-separated subset of torch,tilelang,triton,cuembed; cuembed is valid only for embedding_bag_mean",
-    )
-    parser.add_argument("--atol", type=float, default=None, help="absolute tolerance for accuracy checks")
-    parser.add_argument("--rtol", type=float, default=None, help="relative tolerance for accuracy checks")
-    args = parser.parse_args(raw_argv)
+    args = tyro.cli(PCVRTileLangOpsBenchmarkArgs, description=__doc__, args=raw_argv)
     args.backends = _parse_backend_names(args.backends)
     args.dtype = getattr(torch, args.dtype)
     if args.operator == "flash_attention" and "triton" in args.backends:
@@ -820,8 +819,51 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _format_tilelang_summary(summary: dict[str, object]) -> None:
+    op_name = str(summary.get("operator", "<unknown>"))
+    fields = [
+        ("Operator", op_name),
+        ("Device", str(summary.get("device", "<unknown>"))),
+        ("Dtype", str(summary.get("dtype", "<unknown>"))),
+        ("Steps", str(summary.get("steps", 0))),
+        ("Warmup", str(summary.get("warmup_steps", 0))),
+        ("Repeats", str(summary.get("repeats", 0))),
+    ]
+    for shape_key in ("rows", "cols", "batch", "heads", "query_len", "kv_len", "head_dim",
+                       "embedding_vocab_size", "embedding_dim", "embedding_bag_size"):
+        if shape_key in summary:
+            fields.append((shape_key.replace("_", " "), str(summary[shape_key])))
+    sections = []
+    for result in summary.get("results", []):
+        if not isinstance(result, dict):
+            continue
+        backend = result.get("backend", "<unknown>")
+        status = result.get("status", "<unknown>")
+        if status != "ok":
+            sections.append((backend, [("Status", str(status)), ("Error", str(result.get("error", "")))]))
+            continue
+        section_fields = [("Status", "ok")]
+        compile_sec = result.get("compile_sec")
+        if compile_sec is not None:
+            section_fields.append(("Compile", f"{compile_sec:.3f}s"))
+        section_fields.extend([
+            ("Step time", f"{result.get('step_time_ms_median', 0.0):.3f} ms (p95: {result.get('step_time_ms_p95', 0.0):.3f})"),
+            ("Ops/sec", f"{result.get('ops_per_sec_median', 0.0):.1f} (p95: {result.get('ops_per_sec_p95', 0.0):.1f})"),
+        ])
+        max_abs = result.get("max_abs_error")
+        if max_abs is not None:
+            section_fields.append(("Max abs err", f"{max_abs:.6f}"))
+        sections.append((backend, section_fields))
+    print_rich_summary(f"PCVR {op_name} benchmark", fields, sections=sections, border_style="blue")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    write_stdout_line(dumps(run_benchmark(parse_args(argv)), indent=2))
+    args = parse_args(argv)
+    summary = run_benchmark(args)
+    if args.json:
+        write_stdout_line(dumps(summary, indent=2))
+    else:
+        _format_tilelang_summary(summary)
     return 0
 
 

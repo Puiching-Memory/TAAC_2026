@@ -56,6 +56,7 @@ def test_main_output_is_compact_single_line(monkeypatch, capsys) -> None:
             "/tmp/eval.parquet",
             "--result-dir",
             "/tmp/results",
+            "--json",
         ]
     )
 
@@ -90,6 +91,7 @@ def test_evaluation_main_allows_missing_dataset_for_pcvr_kind_experiment(monkeyp
             "experiments/baseline",
             "--result-dir",
             "/tmp/results",
+            "--json",
         ]
     )
 
@@ -150,6 +152,7 @@ def test_evaluation_main_allows_explicit_dataset_for_bundle_pcvr_kind_experiment
             "/tmp/custom.parquet",
             "--result-dir",
             "/tmp/results",
+            "--json",
         ]
     )
 
