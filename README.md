@@ -24,7 +24,7 @@
   <a href="docs/getting-started.md">Quick Start</a> ·
   <a href="docs/experiments/index.md">Experiments</a> ·
   <a href="https://puiching-memory.github.io/TAAC_2026/">Online Docs</a> ·
-  <a href="#交流讨论">QQ 群</a>
+  <a href="#社区">QQ 群</a>
 </p>
 
 <p align="center">
