@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 from taac2026.application.evaluation.cli import main as evaluation_main
@@ -20,6 +21,21 @@ def _read_optional_bool_env(name: str) -> bool | None:
     raise RuntimeError(f"{name} must be one of 1/0/true/false/yes/no/on/off")
 
 
+@contextmanager
+def _temporary_default_env(name: str, value: str):
+    had_original = name in os.environ
+    original = os.environ.get(name)
+    if not had_original:
+        os.environ[name] = value
+    try:
+        yield
+    finally:
+        if not had_original:
+            os.environ.pop(name, None)
+        elif original is not None:
+            os.environ[name] = original
+
+
 def main() -> None:
     dataset_path = os.environ.get("EVAL_DATA_PATH")
     result_path = os.environ.get("EVAL_RESULT_PATH")
@@ -35,7 +51,6 @@ def main() -> None:
         raise RuntimeError("EVAL_DATA_PATH is required")
     if not result_path:
         raise RuntimeError("EVAL_RESULT_PATH is required")
-    os.environ.setdefault("TAAC_BUNDLE_MODE", "1")
     argv = [
         "infer",
     ]
@@ -65,7 +80,8 @@ def main() -> None:
         argv.append("--compile")
     elif infer_compile is False:
         argv.append("--no-compile")
-    evaluation_main(argv)
+    with _temporary_default_env("TAAC_BUNDLE_MODE", "1"):
+        evaluation_main(argv)
 
 
 if __name__ == "__main__":

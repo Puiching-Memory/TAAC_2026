@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import os
 
 import pytest
 
@@ -94,3 +95,20 @@ def test_infer_entrypoint_passes_explicit_runtime_disables(monkeypatch: pytest.M
         "--no-amp",
         "--no-compile",
     ]]
+
+
+def test_infer_entrypoint_scopes_bundle_mode_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TAAC_BUNDLE_MODE", raising=False)
+    monkeypatch.setenv("EVAL_DATA_PATH", "/tmp/eval.parquet")
+    monkeypatch.setenv("EVAL_RESULT_PATH", "/tmp/results")
+    captured_bundle_modes: list[str | None] = []
+
+    def fake_evaluation_main(argv: Sequence[str]) -> None:
+        captured_bundle_modes.append(os.environ.get("TAAC_BUNDLE_MODE"))
+
+    monkeypatch.setattr(infer_entrypoint, "evaluation_main", fake_evaluation_main)
+
+    infer_entrypoint.main()
+
+    assert captured_bundle_modes == ["1"]
+    assert "TAAC_BUNDLE_MODE" not in os.environ
