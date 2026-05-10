@@ -25,6 +25,23 @@ from taac2026.infrastructure.data.pipeline import stable_pcvr_batch_seed_from_pa
 
 
 _STEP_RANDOM_MAX_OPEN_PARQUET_FILES = 32
+_DELEGATED_SOURCE_DATASET_ATTRIBUTES = frozenset(
+    {
+        "row_groups",
+        "user_int_schema",
+        "item_int_schema",
+        "user_dense_schema",
+        "item_dense_schema",
+        "user_int_vocab_sizes",
+        "item_int_vocab_sizes",
+        "seq_domains",
+        "seq_feature_ids",
+        "seq_vocab_sizes",
+        "seq_domain_vocab_sizes",
+        "ts_fids",
+        "sideinfo_fids",
+    }
+)
 
 
 PCVRBatchKey = tuple[str, int, int]
@@ -98,57 +115,10 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
     def __len__(self) -> int:
         return self.logical_sweep_steps()
 
-    @property
-    def row_groups(self) -> tuple[tuple[str, int, int], ...]:
-        return self.source_dataset.row_groups
-
-    @property
-    def user_int_schema(self) -> Any:
-        return self.source_dataset.user_int_schema
-
-    @property
-    def item_int_schema(self) -> Any:
-        return self.source_dataset.item_int_schema
-
-    @property
-    def user_dense_schema(self) -> Any:
-        return self.source_dataset.user_dense_schema
-
-    @property
-    def item_dense_schema(self) -> Any:
-        return self.source_dataset.item_dense_schema
-
-    @property
-    def user_int_vocab_sizes(self) -> list[int]:
-        return self.source_dataset.user_int_vocab_sizes
-
-    @property
-    def item_int_vocab_sizes(self) -> list[int]:
-        return self.source_dataset.item_int_vocab_sizes
-
-    @property
-    def seq_domains(self) -> list[str]:
-        return self.source_dataset.seq_domains
-
-    @property
-    def seq_feature_ids(self) -> dict[str, list[int]]:
-        return self.source_dataset.seq_feature_ids
-
-    @property
-    def seq_vocab_sizes(self) -> dict[str, dict[int, int]]:
-        return self.source_dataset.seq_vocab_sizes
-
-    @property
-    def seq_domain_vocab_sizes(self) -> dict[str, list[int]]:
-        return self.source_dataset.seq_domain_vocab_sizes
-
-    @property
-    def ts_fids(self) -> dict[str, int | None]:
-        return self.source_dataset.ts_fids
-
-    @property
-    def sideinfo_fids(self) -> dict[str, list[int]]:
-        return self.source_dataset.sideinfo_fids
+    def __getattr__(self, name: str) -> Any:
+        if name in _DELEGATED_SOURCE_DATASET_ATTRIBUTES:
+            return getattr(self.source_dataset, name)
+        raise AttributeError(name)
 
     @property
     def uses_step_random_sampling(self) -> bool:
@@ -190,15 +160,12 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
                 batch_index=batch_index,
             )
         )
-        batch = self._read_base_batch(step_plan.batch_key)
-        batch = self.source_dataset.filter_batch_by_timestamp_range(batch)
+        batch = self._read_base_batch(step_plan.batch_key, generator=generator)
         if batch is None:
             raise RuntimeError(
                 "step-indexed sampling produced an empty timestamp-filtered batch; "
                 "use scan sampling for timestamp_range splits"
             )
-        if self.pipeline is not None:
-            batch = self.pipeline.apply_transforms(batch, generator=generator)
         return self._fit_step_batch(batch, global_step=global_step, generator=generator)
 
     def plan_step(self, global_step: int) -> PCVRStepPlan:
@@ -240,12 +207,14 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
             cache.configure_key_universe(key_universe)
         return cache
 
-    def _read_base_batch(self, batch_key: PCVRBatchKey) -> PCVRBatch:
+    def _read_base_batch(self, batch_key: PCVRBatchKey, *, generator: torch.Generator) -> PCVRBatch | None:
         if self.pipeline is None:
-            return self._materialize_base_batch(batch_key)
-        return self.pipeline.read_base_batch(
+            return self.source_dataset.filter_batch_by_timestamp_range(self._materialize_base_batch(batch_key))
+        return self.pipeline.materialize(
             batch_key,
             lambda batch_key=batch_key: self._materialize_base_batch(batch_key),
+            generator=generator,
+            preprocess=self.source_dataset.filter_batch_by_timestamp_range,
         )
 
     def _materialize_base_batch(self, batch_key: PCVRBatchKey) -> PCVRBatch:

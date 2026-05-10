@@ -23,7 +23,7 @@ from taac2026.domain.sidecar import (
     PCVR_TRAIN_CONFIG_VERSION,
     build_pcvr_train_config_sidecar,
 )
-from taac2026.domain.model_contract import (
+from taac2026.infrastructure.modeling.model_contract import (
     batch_to_model_input,
     build_feature_specs,
     build_pcvr_model,
@@ -457,7 +457,7 @@ def test_build_pcvr_model_forwards_constructor_contract(
     assert runtime_config == {"flash_backend": "tilelang", "backend": "tilelang", "block_rows": 8}
 
 
-def test_build_pcvr_model_configures_shared_flash_attention_runtime(tmp_path: Path) -> None:
+def test_build_pcvr_model_leaves_shared_flash_attention_runtime_to_application(tmp_path: Path) -> None:
     configure_flash_attention_runtime(backend="tilelang")
     dataset = _dataset(user_count=2, item_count=1)
     package_dir = tmp_path / "package"
@@ -504,7 +504,7 @@ def test_build_pcvr_model_configures_shared_flash_attention_runtime(tmp_path: Pa
             checkpoint_dir=checkpoint_dir,
         )
 
-        assert flash_attention_runtime_state() == "torch"
+        assert flash_attention_runtime_state() == "tilelang"
     finally:
         configure_flash_attention_runtime(backend="torch")
 
@@ -702,13 +702,16 @@ def test_default_load_train_config_requires_current_payload(tmp_path: Path) -> N
     assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
 
 
-def test_default_load_train_config_rejects_flat_payload(tmp_path: Path) -> None:
+def test_default_load_train_config_migrates_flat_payload(tmp_path: Path) -> None:
     checkpoint_dir = tmp_path / "global_step1"
     checkpoint_dir.mkdir()
-    (checkpoint_dir / "train_config.json").write_text(dumps(PCVRTrainConfig().to_flat_dict()), encoding="utf-8")
+    flat_config = PCVRTrainConfig().to_flat_dict()
+    (checkpoint_dir / "train_config.json").write_text(dumps(flat_config), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="train_config_format"):
-        default_load_train_config(None, checkpoint_dir)
+    loaded = default_load_train_config(None, checkpoint_dir)
+
+    assert loaded["d_model"] == flat_config["d_model"]
+    assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
 
 
 @pytest.mark.parametrize("identifier_kind", ["path", "path_object"])

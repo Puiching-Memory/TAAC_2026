@@ -34,6 +34,7 @@ def _make_experiment(
 ) -> PCVRExperiment:
     package_dir = tmp_path / "package"
     package_dir.mkdir()
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
     (package_dir / "model.py").write_text(
         "class ModelInput:\n    pass\n\nclass DummyModel:\n    pass\n",
         encoding="utf-8",
@@ -402,6 +403,7 @@ def test_load_train_config_backfills_data_split_defaults(tmp_path: Path) -> None
         "train_timestamp_end",
         "valid_timestamp_start",
         "valid_timestamp_end",
+        "deterministic",
     ):
         config.pop(key)
     (checkpoint_dir / "train_config.json").write_text(
@@ -416,6 +418,7 @@ def test_load_train_config_backfills_data_split_defaults(tmp_path: Path) -> None
     assert loaded["train_timestamp_end"] == 0
     assert loaded["valid_timestamp_start"] == 0
     assert loaded["valid_timestamp_end"] == 0
+    assert loaded["deterministic"] is True
 
 
 def test_load_train_config_normalizes_legacy_step_keys(tmp_path: Path) -> None:

@@ -166,5 +166,5 @@ def test_build_bundle_reports_site_experiment_path_collision(
     with pytest.raises(ValueError, match="got 'site/experiments/baseline'") as exc_info:
         bundle_packaging.build_training_bundle("experiments/baseline", output_dir=tmp_path / "bundle", root=root)
 
-    assert "resolved experiment path" in str(exc_info.value)
-    assert "Pass an experiment package such as 'experiments/baseline'" in str(exc_info.value)
+    assert "generated site/ output" in str(exc_info.value)
+    assert "explicit external experiment package path" in str(exc_info.value)

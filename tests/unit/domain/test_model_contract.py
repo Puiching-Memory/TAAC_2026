@@ -6,7 +6,7 @@ from typing import NamedTuple
 import pytest
 import torch
 
-from taac2026.domain.model_contract import (
+from taac2026.infrastructure.modeling.model_contract import (
     batch_to_model_input,
     build_feature_specs,
     load_ns_groups,

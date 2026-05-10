@@ -35,6 +35,7 @@ def main() -> None:
         raise RuntimeError("EVAL_DATA_PATH is required")
     if not result_path:
         raise RuntimeError("EVAL_RESULT_PATH is required")
+    os.environ.setdefault("TAAC_BUNDLE_MODE", "1")
     argv = [
         "infer",
     ]

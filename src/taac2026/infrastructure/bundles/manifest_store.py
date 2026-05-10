@@ -4,18 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 from typing import Any, Literal
 
 from pydantic import Field
 
 from taac2026 import __version__
+from taac2026.infrastructure.io.files import stable_hash64
 from taac2026.domain.validation import TAACBoundaryModel
 
 
 BundleKind = Literal["training", "inference"]
 
 BUNDLE_MANIFEST_VERSION = 1
+BUNDLE_MANIFEST_SUPPORTED_VERSIONS = frozenset({BUNDLE_MANIFEST_VERSION})
 TRAINING_BUNDLE_FORMAT = "taac2026-training-v2"
 TRAINING_BUNDLE_FORMAT_VERSION = 2
 INFERENCE_BUNDLE_FORMAT = "taac2026-inference-v1"
@@ -89,32 +92,47 @@ def get_bundle_definition(kind: BundleKind) -> BundleDefinition:
     return _BUNDLE_DEFINITIONS[kind]
 
 
-def _format_expected_experiment_path_error(*, relative_path: str, experiment_path: Path, root: Path) -> str:
+def _safe_experiment_archive_name(experiment_path: Path) -> str:
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", experiment_path.name).strip("_") or "external_experiment"
+    suffix = f"{stable_hash64(str(experiment_path.expanduser().resolve())):016x}"[:12]
+    return f"{name}_{suffix}"
+
+
+def _format_generated_site_experiment_path_error(*, relative_path: str, experiment_path: Path, root: Path) -> str:
     return (
-        "bundle experiment path must be inside the repository experiments/ directory; "
+        "bundle experiment path resolved inside generated site/ output; "
         f"got {relative_path!r} from resolved experiment path {experiment_path} "
         f"relative to workspace root {root}. "
-        "Pass an experiment package such as 'experiments/baseline'."
+        "Pass an experiment package such as 'experiments/baseline' from the repository root, "
+        "or pass an explicit external experiment package path."
     )
 
 
 def _bundled_experiment_path(experiment_path: Path, root: Path) -> str:
     try:
         relative_path = experiment_path.relative_to(root).as_posix()
-    except ValueError as exc:
+    except ValueError:
+        return f"experiments/{_safe_experiment_archive_name(experiment_path)}"
+    if relative_path.startswith("experiments/"):
+        return relative_path
+    if relative_path.startswith("site/"):
         raise ValueError(
-            "bundle experiment path must be inside the workspace root; "
-            f"got resolved experiment path {experiment_path} outside workspace root {root}."
-        ) from exc
-    if not relative_path.startswith("experiments/"):
-        raise ValueError(
-            _format_expected_experiment_path_error(
+            _format_generated_site_experiment_path_error(
                 relative_path=relative_path,
                 experiment_path=experiment_path,
                 root=root,
             )
         )
-    return relative_path
+    return f"experiments/{_safe_experiment_archive_name(experiment_path)}"
+
+
+def _validate_bundled_experiment_path(value: str) -> None:
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or len(path.parts) < 2 or path.parts[0] != "experiments":
+        raise ValueError(
+            "bundle manifest must contain a relative bundled_experiment_path under 'experiments/'; "
+            f"got {value!r}"
+        )
 
 
 class FrameworkMetadata(TAACBoundaryModel):
@@ -152,10 +170,28 @@ def build_bundle_manifest(*, kind: BundleKind, experiment_path: Path, root: Path
     return validate_bundle_manifest(manifest.to_dict(), kind=kind)
 
 
+def _migrate_bundle_manifest_v1(manifest: dict[str, Any]) -> dict[str, Any]:
+    return manifest
+
+
+_BUNDLE_MANIFEST_MIGRATIONS = {
+    1: _migrate_bundle_manifest_v1,
+}
+
+
+def migrate_bundle_manifest_payload(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    raw_manifest = dict(manifest)
+    version = int(raw_manifest.get("manifest_version", BUNDLE_MANIFEST_VERSION))
+    migration = _BUNDLE_MANIFEST_MIGRATIONS.get(version)
+    if migration is None:
+        raise ValueError(f"unsupported bundle manifest version: {version}")
+    return migration(raw_manifest)
+
+
 def validate_bundle_manifest(manifest: Mapping[str, Any], *, kind: BundleKind | None = None) -> dict[str, object]:
-    model = BundleManifest.model_validate(dict(manifest))
+    model = BundleManifest.model_validate(migrate_bundle_manifest_payload(manifest))
     payload = model.to_dict()
-    if model.manifest_version != BUNDLE_MANIFEST_VERSION:
+    if model.manifest_version not in BUNDLE_MANIFEST_SUPPORTED_VERSIONS:
         raise ValueError(f"unsupported bundle manifest version: {model.manifest_version}")
 
     manifest_kind = model.kind
@@ -168,11 +204,7 @@ def validate_bundle_manifest(manifest: Mapping[str, Any], *, kind: BundleKind | 
     if model.bundle_format_version != definition.bundle_format_version:
         raise ValueError(f"unsupported {manifest_kind} bundle format version: {model.bundle_format_version}")
 
-    if not model.bundled_experiment_path.startswith("experiments/"):
-        raise ValueError(
-            "bundle manifest must contain a bundled_experiment_path under 'experiments/'; "
-            f"got {model.bundled_experiment_path!r}"
-        )
+    _validate_bundled_experiment_path(model.bundled_experiment_path)
     if model.entrypoint != definition.entrypoint:
         raise ValueError(f"invalid {manifest_kind} bundle entrypoint: {model.entrypoint}")
     if model.code_package != "code_package.zip":
@@ -186,6 +218,7 @@ def validate_bundle_manifest(manifest: Mapping[str, Any], *, kind: BundleKind | 
 
 
 __all__ = [
+    "BUNDLE_MANIFEST_SUPPORTED_VERSIONS",
     "BUNDLE_MANIFEST_VERSION",
     "INFERENCE_BUNDLE_FORMAT",
     "INFERENCE_BUNDLE_FORMAT_VERSION",
@@ -197,5 +230,6 @@ __all__ = [
     "FrameworkMetadata",
     "build_bundle_manifest",
     "get_bundle_definition",
+    "migrate_bundle_manifest_payload",
     "validate_bundle_manifest",
 ]

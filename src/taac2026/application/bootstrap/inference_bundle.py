@@ -15,6 +15,7 @@ from taac2026.infrastructure.platform.deps import (
 
 
 def run_inference_bundle(project_dir: Path) -> None:
+    os.environ.setdefault("TAAC_BUNDLE_MODE", "1")
     manifest = read_manifest(project_dir / ".taac_inference_manifest.json")
     install_project_pip_dependencies(project_dir, ONLINE_INFERENCE_BUNDLE_PLATFORM)
     set_default_experiment_from_manifest(manifest)

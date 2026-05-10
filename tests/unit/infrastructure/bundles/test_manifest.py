@@ -40,17 +40,32 @@ def test_build_inference_bundle_manifest_contains_runtime_variables(tmp_path: Pa
     assert manifest["runtime_env"]["result_path"] == "EVAL_RESULT_PATH"
 
 
-def test_build_bundle_manifest_rejects_experiment_outside_experiments_with_context(tmp_path: Path) -> None:
+def test_build_bundle_manifest_maps_non_experiments_path_to_safe_archive_path(tmp_path: Path) -> None:
+    experiment_path = tmp_path / "custom" / "baseline"
+    experiment_path.mkdir(parents=True)
+
+    manifest = build_bundle_manifest(kind="training", experiment_path=experiment_path, root=tmp_path)
+
+    assert str(manifest["bundled_experiment_path"]).startswith("experiments/baseline_")
+
+
+def test_build_bundle_manifest_rejects_generated_site_collision(tmp_path: Path) -> None:
     experiment_path = tmp_path / "site" / "experiments" / "baseline"
     experiment_path.mkdir(parents=True)
 
-    with pytest.raises(ValueError, match="got 'site/experiments/baseline'") as exc_info:
+    with pytest.raises(ValueError, match="generated site"):
         build_bundle_manifest(kind="training", experiment_path=experiment_path, root=tmp_path)
 
-    message = str(exc_info.value)
-    assert str(experiment_path) in message
-    assert str(tmp_path) in message
-    assert "Pass an experiment package such as 'experiments/baseline'" in message
+
+def test_build_bundle_manifest_maps_external_path_to_safe_archive_path(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    experiment_path = tmp_path / "external_exp"
+    experiment_path.mkdir()
+
+    manifest = build_bundle_manifest(kind="training", experiment_path=experiment_path, root=root)
+
+    assert str(manifest["bundled_experiment_path"]).startswith("experiments/external_exp_")
 
 
 def test_validate_bundle_manifest_rejects_invalid_bundled_experiment_path_with_value(tmp_path: Path) -> None:
@@ -60,6 +75,16 @@ def test_validate_bundle_manifest_rejects_invalid_bundled_experiment_path_with_v
     manifest["bundled_experiment_path"] = "site/experiments/baseline"
 
     with pytest.raises(ValueError, match="got 'site/experiments/baseline'"):
+        validate_bundle_manifest(manifest, kind="training")
+
+
+def test_validate_bundle_manifest_rejects_parent_traversal(tmp_path: Path) -> None:
+    experiment_path = tmp_path / "experiments" / "baseline"
+    experiment_path.mkdir(parents=True)
+    manifest = build_bundle_manifest(kind="training", experiment_path=experiment_path, root=tmp_path)
+    manifest["bundled_experiment_path"] = "experiments/../baseline"
+
+    with pytest.raises(ValueError, match="relative bundled_experiment_path"):
         validate_bundle_manifest(manifest, kind="training")
 
 
@@ -80,6 +105,16 @@ def test_validate_bundle_manifest_rejects_kind_mismatch(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="kind mismatch"):
         validate_bundle_manifest(manifest, kind="inference")
+
+
+def test_validate_bundle_manifest_rejects_unknown_manifest_version(tmp_path: Path) -> None:
+    experiment_path = tmp_path / "experiments" / "baseline"
+    experiment_path.mkdir(parents=True)
+    manifest = build_bundle_manifest(kind="training", experiment_path=experiment_path, root=tmp_path)
+    manifest["manifest_version"] = 999
+
+    with pytest.raises(ValueError, match="unsupported bundle manifest version: 999"):
+        validate_bundle_manifest(manifest, kind="training")
 
 
 def test_validate_bundle_manifest_rejects_internal_kind_field(tmp_path: Path) -> None:

@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-import torch.multiprocessing
 
 
 class FeatureSchema:
@@ -51,9 +50,6 @@ class FeatureSchema:
         lines.append("])"
         )
         return "\n".join(lines)
-
-
-torch.multiprocessing.set_sharing_strategy("file_system")
 
 
 BUCKET_BOUNDARIES = np.array(

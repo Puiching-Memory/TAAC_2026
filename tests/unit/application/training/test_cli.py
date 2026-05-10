@@ -21,7 +21,8 @@ from taac2026.domain.config import (
 from taac2026.application.training.cli import main, parse_train_args
 from taac2026.infrastructure.experiments.module_loader import load_module_from_path
 from taac2026.infrastructure.io.json import loads
-from taac2026.application.training.workflow import PCVRTrainDataBundle, build_pcvr_train_hooks
+import taac2026.application.training.workflow as workflow_module
+from taac2026.application.training.workflow import PCVRTrainDataBundle, build_pcvr_train_hooks, default_build_train_model
 from taac2026.application.training.args import parse_pcvr_train_args, train_pcvr_model
 from taac2026.infrastructure.runtime.execution import RuntimeExecutionConfig
 
@@ -233,6 +234,7 @@ def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
             "--amp-dtype",
             "float16",
             "--compile",
+            "--no-deterministic",
             "--progress-log-interval-steps",
             "25",
             "--gradient-checkpointing",
@@ -244,6 +246,7 @@ def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
     assert args.amp is True
     assert args.amp_dtype == "float16"
     assert args.compile is True
+    assert args.deterministic is False
     assert args.progress_log_interval_steps == 25
     assert args.gradient_checkpointing is True
 
@@ -254,6 +257,55 @@ def test_parse_pcvr_train_args_uses_runtime_progress_log_interval_default(tmp_pa
     args = parse_pcvr_train_args([], package_dir=tmp_path, defaults=defaults)
 
     assert args.progress_log_interval_steps == 77
+
+
+def test_default_build_train_model_configures_shared_flash_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        workflow_module,
+        "configure_shared_flash_attention_runtime",
+        lambda *, backend: captured.update({"backend": backend}),
+    )
+    monkeypatch.setattr(workflow_module, "load_ns_groups", lambda *args: ([], []))
+
+    class FakeModel:
+        num_ns = 0
+
+        def to(self, device):
+            del device
+            return self
+
+        def parameters(self):
+            return []
+
+    monkeypatch.setattr(workflow_module, "build_pcvr_model", lambda **kwargs: FakeModel())
+    context = SimpleNamespace(
+        model_module=SimpleNamespace(ModelInput=object),
+        model_class_name="FakeModel",
+        package_dir=tmp_path,
+        ckpt_dir=tmp_path / "checkpoints",
+        config={"flash_attention_backend": "tilelang"},
+        args=SimpleNamespace(
+            device="cpu",
+            d_model=16,
+            num_queries=2,
+            rank_mixer_mode="full",
+        ),
+    )
+    data_bundle = PCVRTrainDataBundle(
+        train_loader="train",
+        valid_loader="valid",
+        dataset=SimpleNamespace(seq_domains=[]),
+    )
+
+    model = default_build_train_model(context, data_bundle)
+
+    assert captured == {"backend": "tilelang"}
+    assert isinstance(model, FakeModel)
 
 
 def test_parse_pcvr_train_args_accepts_rms_norm_flags(tmp_path: Path) -> None:
@@ -581,6 +633,12 @@ def test_pcvr_train_config_serializes_optimizer_schedule_fields() -> None:
     assert flat_config["scheduler_type"] == "cosine"
     assert flat_config["warmup_steps"] == 64
     assert flat_config["min_lr_ratio"] == pytest.approx(0.2)
+
+
+def test_pcvr_train_config_serializes_runtime_determinism_field() -> None:
+    flat_config = PCVRTrainConfig(runtime=RuntimeExecutionConfig(deterministic=False)).to_flat_dict()
+
+    assert flat_config["deterministic"] is False
 
 
 def test_pcvr_train_config_serializes_data_split_fields() -> None:

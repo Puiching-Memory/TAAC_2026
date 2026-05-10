@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from typing import Any
 
 from taac2026.domain.requests import EvalRequest, InferRequest
+from taac2026.domain.runtime_config import RuntimeExecutionConfig, normalize_amp_dtype
 from taac2026.application.evaluation.workflow import PCVRPredictionContext
-from taac2026.infrastructure.runtime.execution import RuntimeExecutionConfig, normalize_amp_dtype
+from taac2026.infrastructure.experiments.module_loader import load_experiment_submodule
 
 
 _INFER_REQUEST_DEFAULT_BATCH_SIZE = int(InferRequest.__dataclass_fields__["batch_size"].default)
@@ -32,6 +32,9 @@ def _required_config_value(config: dict[str, Any], config_key: str) -> Any:
 
 
 class PCVRExperimentRuntimeMixin:
+    def _load_model_module(self) -> Any:
+        return load_experiment_submodule(self.package_dir, "model")
+
     def _configured_infer_runtime_value(
         self,
         config: dict[str, Any],
@@ -130,7 +133,20 @@ class PCVRExperimentRuntimeMixin:
             config,
             config_key="compile",
         )
-        return RuntimeExecutionConfig(amp=amp, amp_dtype=amp_dtype, compile=compile_enabled), amp_source, amp_dtype_source, compile_source
+        deterministic = config.get("deterministic", True)
+        if not isinstance(deterministic, bool):
+            raise TypeError(f"PCVR train_config key 'deterministic' must be bool, got {type(deterministic).__name__}")
+        return (
+            RuntimeExecutionConfig(
+                amp=amp,
+                amp_dtype=amp_dtype,
+                compile=compile_enabled,
+                deterministic=deterministic,
+            ),
+            amp_source,
+            amp_dtype_source,
+            compile_source,
+        )
 
     def _run_prediction_loop(
         self,
@@ -146,7 +162,7 @@ class PCVRExperimentRuntimeMixin:
         config: dict[str, Any] | None = None,
         runtime_execution: RuntimeExecutionConfig | None = None,
     ) -> dict[str, Any]:
-        model_module = importlib.import_module("model")
+        model_module = self._load_model_module()
 
         if schema_path is None:
             resolved_schema_path, _resolved_schema = self.runtime_hooks.load_runtime_schema(

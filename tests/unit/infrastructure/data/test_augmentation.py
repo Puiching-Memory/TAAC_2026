@@ -256,6 +256,37 @@ def test_data_pipeline_keeps_explicit_empty_cache_instance() -> None:
     assert pipeline.cache._opt_enabled is True
 
 
+def test_data_pipeline_materialize_composes_cache_preprocess_and_stages() -> None:
+    events: list[str] = []
+
+    class MarkStage:
+        name = "mark"
+
+        def __call__(self, batch, *, generator):
+            del generator
+            events.append("stage")
+            batch = dict(batch)
+            batch["marked"] = True
+            return batch
+
+    def factory():
+        events.append("factory")
+        return _make_batch()
+
+    def preprocess(batch):
+        events.append("preprocess")
+        return batch
+
+    pipeline = PCVRDataPipeline(cache=PCVRMemoryBatchCache(enabled=True, max_batches=1), stages=(MarkStage(),))
+
+    first = pipeline.materialize(("file", 0, 0), factory, preprocess=preprocess)
+    second = pipeline.materialize(("file", 0, 0), factory, preprocess=preprocess)
+
+    assert first is not None and first["marked"] is True
+    assert second is not None and second["marked"] is True
+    assert events == ["factory", "preprocess", "stage", "preprocess", "stage"]
+
+
 def test_concat_batch_drops_optional_metadata_missing_from_cached_batches() -> None:
     batch_a = _make_batch()
     batch_b = _make_batch()

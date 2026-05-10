@@ -20,6 +20,7 @@ from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.optimization.registry import build_dense_optimizer, dense_optimizer_display_name
 from taac2026.infrastructure.optimization.schedules import dense_lr_multiplier
 from taac2026.infrastructure.optimization.transforms import orthogonalize_gradient
+from taac2026.infrastructure.runtime.protocols import ReinitializableSparseParameterModel
 
 
 class PCVRTrainerSupportMixin:
@@ -161,6 +162,11 @@ class PCVRTrainerSupportMixin:
     def _rebuild_sparse_optimizer(self, total_step: int) -> None:
         if self.sparse_optimizer is None:
             return
+        if not isinstance(self.model, ReinitializableSparseParameterModel):
+            raise TypeError(
+                "sparse optimizer reinitialization requires get_sparse_params() "
+                "and reinit_high_cardinality_params()"
+            )
         old_state: dict[int, Any] = {}
         for group in self.sparse_optimizer.param_groups:
             for parameter in group["params"]:

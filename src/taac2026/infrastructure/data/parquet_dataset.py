@@ -410,14 +410,14 @@ class PCVRParquetDataset(IterableDataset):
                     batch_index=batch_context.batch_index,
                 )
                 last_generator = generator
-            batch_dict = self.pipeline.read_base_batch(
+            batch_dict = self.pipeline.materialize(
                 batch_context.cache_key,
                 lambda record_batch=batch_context.record_batch: self.convert_record_batch(record_batch),
+                generator=generator,
+                preprocess=self.filter_batch_by_timestamp_range,
             )
-            batch_dict = self.filter_batch_by_timestamp_range(batch_dict)
             if batch_dict is None:
                 continue
-            batch_dict = self.pipeline.apply_transforms(batch_dict, generator=generator)
             yield from shuffle_buffer.push(batch_dict, generator=generator)
 
         yield from shuffle_buffer.flush(generator=last_generator)

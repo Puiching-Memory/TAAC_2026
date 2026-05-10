@@ -26,7 +26,7 @@ from taac2026.application.evaluation.workflow import (
     PCVRPredictionContext,
     PCVRPredictionDataBundle,
 )
-from taac2026.domain.model_contract import build_pcvr_model, load_ns_groups
+from taac2026.infrastructure.modeling.model_contract import build_pcvr_model, load_ns_groups
 from taac2026.infrastructure.logging import logger
 from taac2026.application.evaluation.runtime import (
     default_load_train_config,

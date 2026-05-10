@@ -105,14 +105,10 @@ def build_pcvr_model(
     user_ns_groups, item_ns_groups = load_ns_groups(dataset, config, package_dir, checkpoint_dir)
     user_int_feature_specs = build_feature_specs(dataset.user_int_schema, dataset.user_int_vocab_sizes)
     item_int_feature_specs = build_feature_specs(dataset.item_int_schema, dataset.item_int_vocab_sizes)
-    flash_attention_backend = str(config.get("flash_attention_backend", "torch"))
-    from taac2026.infrastructure.modeling.sequence import configure_flash_attention_runtime as configure_shared_flash_attention_runtime
-
-    configure_shared_flash_attention_runtime(backend=flash_attention_backend)
     configure_flash_attention_runtime = getattr(model_module, "configure_flash_attention_runtime", None)
     if callable(configure_flash_attention_runtime):
         configure_flash_attention_runtime(
-            flash_attention_backend=flash_attention_backend,
+            flash_attention_backend=str(config.get("flash_attention_backend", "torch")),
         )
     configure_rms_norm_runtime = getattr(model_module, "configure_rms_norm_runtime", None)
     if callable(configure_rms_norm_runtime):
@@ -191,3 +187,15 @@ def batch_to_model_input(batch: dict[str, Any], model_input_type: Any, device: t
         seq_lens=sequence_lengths,
         seq_time_buckets=sequence_time_buckets,
     )
+
+
+__all__ = [
+    "ModelInput",
+    "batch_to_model_input",
+    "build_feature_specs",
+    "build_pcvr_model",
+    "load_ns_groups",
+    "num_time_buckets",
+    "parse_seq_max_lens",
+    "resolve_schema_path",
+]

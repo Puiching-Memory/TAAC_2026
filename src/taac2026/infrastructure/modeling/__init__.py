@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from taac2026.domain.model_contract import ModelInput as ModelInput
+from taac2026.infrastructure.modeling.model_contract import ModelInput as ModelInput
 from taac2026.infrastructure.modeling import normalization as _normalization
 from taac2026.infrastructure.modeling import sequence as _sequence
 from taac2026.infrastructure.modeling.embeddings import EmbeddingParameterMixin, FeatureEmbeddingBank
@@ -22,32 +22,32 @@ from taac2026.infrastructure.modeling.sequence import (
 )
 from taac2026.infrastructure.modeling.tokenizers import DenseTokenProjector, NonSequentialTokenizer, SequenceTokenizer
 
-RMS_NORM_BACKEND = _normalization.RMS_NORM_BACKEND
-RMS_NORM_BLOCK_ROWS = _normalization.RMS_NORM_BLOCK_ROWS
-FLASH_ATTENTION_BACKEND = _sequence.FLASH_ATTENTION_BACKEND
-
 
 def configure_flash_attention_runtime(*, backend: str) -> None:
-    global FLASH_ATTENTION_BACKEND
     _sequence.configure_flash_attention_runtime(backend=backend)
-    FLASH_ATTENTION_BACKEND = _sequence.FLASH_ATTENTION_BACKEND
 
 
 def configure_rms_norm_runtime(*, backend: str, block_rows: int) -> None:
-    global RMS_NORM_BACKEND, RMS_NORM_BLOCK_ROWS
     _normalization.configure_rms_norm_runtime(backend=backend, block_rows=block_rows)
-    RMS_NORM_BACKEND = _normalization.RMS_NORM_BACKEND
-    RMS_NORM_BLOCK_ROWS = _normalization.RMS_NORM_BLOCK_ROWS
 
 
 def rms_norm_runtime_state() -> tuple[str, int]:
     return _normalization.rms_norm_runtime_state()
 
 
+def __getattr__(name: str):
+    if name == "FLASH_ATTENTION_BACKEND":
+        return _sequence.flash_attention_runtime_state()
+    if name == "RMS_NORM_BACKEND":
+        backend, _block_rows = _normalization.rms_norm_runtime_state()
+        return backend
+    if name == "RMS_NORM_BLOCK_ROWS":
+        _backend, block_rows = _normalization.rms_norm_runtime_state()
+        return block_rows
+    raise AttributeError(name)
+
+
 __all__ = [
-    "FLASH_ATTENTION_BACKEND",
-    "RMS_NORM_BACKEND",
-    "RMS_NORM_BLOCK_ROWS",
     "DenseTokenProjector",
     "EmbeddingParameterMixin",
     "FeatureEmbeddingBank",

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
 import os
-import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,7 +26,6 @@ from taac2026.application.training.workflow import PCVRTrainHooks
 from taac2026.application.training.args import train_pcvr_model
 
 
-_PLUGIN_MODULE_NAMES = ("utils", "model")
 _EVAL_AUC_BOOTSTRAP_SAMPLES = 200
 
 
@@ -73,21 +70,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
 
     @contextmanager
     def _module_context(self) -> Iterator[None]:
-        package_path = str(self.package_dir)
-        previous_path = list(sys.path)
-        previous_modules = {name: sys.modules.get(name) for name in _PLUGIN_MODULE_NAMES}
-        for module_name in _PLUGIN_MODULE_NAMES:
-            sys.modules.pop(module_name, None)
-        sys.path.insert(0, package_path)
-        try:
-            yield
-        finally:
-            sys.path[:] = previous_path
-            for module_name in _PLUGIN_MODULE_NAMES:
-                sys.modules.pop(module_name, None)
-            for module_name, module in previous_modules.items():
-                if module is not None:
-                    sys.modules[module_name] = module
+        yield
 
     def train(self, request: TrainRequest) -> Mapping[str, Any]:
         resolved_dataset_path, resolved_schema_override = resolve_default_pcvr_sample_paths(
@@ -113,7 +96,7 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
         forwarded_args.extend(request.extra_args)
 
         with self._module_context():
-            model_module = importlib.import_module("model")
+            model_module = self._load_model_module()
 
             summary = dict(train_pcvr_model(
                 model_module=model_module,

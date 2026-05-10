@@ -12,6 +12,7 @@ from taac2026.infrastructure.modeling import (
     configure_flash_attention_runtime,
     configure_rms_norm_runtime,
     flash_attention_runtime_state,
+    rms_norm_runtime_state,
     scaled_dot_product_attention,
 )
 from taac2026.infrastructure.modeling.embeddings import FeatureEmbeddingBank as FeatureEmbeddingBankOwner
@@ -37,7 +38,17 @@ def test_configure_rms_norm_runtime_validates_backend_and_block_rows() -> None:
     with pytest.raises(ValueError, match="rms_norm block_rows must be positive"):
         configure_rms_norm_runtime(backend="torch", block_rows=0)
     configure_rms_norm_runtime(backend="triton", block_rows=2)
+    assert rms_norm_runtime_state() == ("triton", 2)
     configure_rms_norm_runtime(backend="torch", block_rows=1)
+
+
+def test_rms_norm_captures_runtime_state_at_construction() -> None:
+    configure_rms_norm_runtime(backend="triton", block_rows=4)
+    norm = RMSNorm(6)
+    configure_rms_norm_runtime(backend="torch", block_rows=1)
+
+    assert norm.backend == "triton"
+    assert norm.block_rows == 4
 
 
 def test_configure_flash_attention_runtime_validates_backend() -> None:

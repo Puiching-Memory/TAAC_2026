@@ -16,7 +16,8 @@ from taac2026.domain.config import (
     PCVRSequenceCropConfig,
     PCVRTrainConfig,
 )
-from taac2026.domain.model_contract import ModelInput
+from taac2026.infrastructure.modeling.model_contract import ModelInput
+from taac2026.domain.runtime_config import PCVRLossConfig, PCVRLossTermConfig, RuntimeExecutionConfig
 from taac2026.infrastructure import modeling as _modeling
 from taac2026.infrastructure.modeling import (
     DenseTokenProjector,
@@ -37,29 +38,27 @@ from taac2026.infrastructure.modeling import (
     scaled_dot_product_attention,
     sinusoidal_positions,
 )
-from taac2026.infrastructure.runtime.execution import PCVRLossConfig, PCVRLossTermConfig, RuntimeExecutionConfig
-
-RMS_NORM_BACKEND = _modeling.RMS_NORM_BACKEND
-RMS_NORM_BLOCK_ROWS = _modeling.RMS_NORM_BLOCK_ROWS
-FLASH_ATTENTION_BACKEND = _modeling.FLASH_ATTENTION_BACKEND
 
 
 def configure_flash_attention_runtime(*, backend: str) -> None:
-    global FLASH_ATTENTION_BACKEND
     _modeling.configure_flash_attention_runtime(backend=backend)
-    FLASH_ATTENTION_BACKEND = _modeling.FLASH_ATTENTION_BACKEND
 
 
 def configure_rms_norm_runtime(*, backend: str, block_rows: int) -> None:
-    global RMS_NORM_BACKEND, RMS_NORM_BLOCK_ROWS
     _modeling.configure_rms_norm_runtime(backend=backend, block_rows=block_rows)
-    RMS_NORM_BACKEND = _modeling.RMS_NORM_BACKEND
-    RMS_NORM_BLOCK_ROWS = _modeling.RMS_NORM_BLOCK_ROWS
+
+
+def rms_norm_runtime_state() -> tuple[str, int]:
+    return _modeling.rms_norm_runtime_state()
+
+
+def __getattr__(name: str):
+    if name in {"FLASH_ATTENTION_BACKEND", "RMS_NORM_BACKEND", "RMS_NORM_BLOCK_ROWS"}:
+        return getattr(_modeling, name)
+    raise AttributeError(name)
+
 
 __all__ = [
-    "FLASH_ATTENTION_BACKEND",
-    "RMS_NORM_BACKEND",
-    "RMS_NORM_BLOCK_ROWS",
     "DenseTokenProjector",
     "EmbeddingParameterMixin",
     "FeatureEmbeddingBank",
@@ -92,6 +91,7 @@ __all__ = [
     "masked_last",
     "masked_mean",
     "maybe_gradient_checkpoint",
+    "rms_norm_runtime_state",
     "safe_key_padding_mask",
     "scaled_dot_product_attention",
     "sinusoidal_positions",

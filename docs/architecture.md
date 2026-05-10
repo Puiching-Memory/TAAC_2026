@@ -47,8 +47,8 @@ src/taac2026/
 │   ├── config.py              # PCVR train/model/data/cache/pipeline/optimizer/NS 配置
 │   ├── experiment.py          # ExperimentSpec 插件契约
 │   ├── metrics.py             # AUC / LogLoss / GAUC / 诊断指标
-│   ├── model_contract.py      # ModelInput、schema -> model、batch -> input contract
 │   ├── requests.py            # TrainRequest / EvalRequest / InferRequest
+│   ├── runtime_config.py      # AMP、compile、determinism、loss 和 optimizer 边界配置
 │   ├── schema.py              # FeatureSchema 与时间桶常量
 │   └── sidecar.py             # train_config sidecar 契约与版本
 ├── application/
@@ -121,6 +121,7 @@ src/taac2026/
     │   └── streams.py
     ├── modeling/
     │   ├── embeddings.py
+    │   ├── model_contract.py  # ModelInput、schema -> model、batch -> input contract
     │   ├── normalization.py
     │   ├── sequence.py
     │   ├── tensors.py
@@ -320,7 +321,7 @@ global_step*.best_model/
 | 实验加载             | `src/taac2026/application/experiments/registry.py`     |
 | 默认训练 workflow    | `src/taac2026/application/training/workflow.py`        |
 | 数据读取             | `src/taac2026/infrastructure/data/dataset.py`          |
-| batch -> model input | `src/taac2026/domain/model_contract.py`                |
+| batch -> model input | `src/taac2026/infrastructure/modeling/model_contract.py` |
 | trainer              | `src/taac2026/infrastructure/runtime/trainer.py`       |
 | checkpoint IO        | `src/taac2026/infrastructure/runtime/checkpoint_io.py` |
 

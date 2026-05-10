@@ -19,6 +19,8 @@ from taac2026.infrastructure.runtime.execution import (
     compute_pcvr_loss,
     maybe_compile_callable,
     maybe_prepare_internal_compile,
+    runtime_amp_enabled,
+    set_seed,
 )
 
 
@@ -277,10 +279,20 @@ def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> No
     eval_logits, eval_labels = trainer._evaluate_step(_dummy_batch([0.0]))
 
     assert trainer.grad_scaler is None
-    assert trainer.runtime_execution.amp_enabled_for("cpu") is False
+    assert runtime_amp_enabled(trainer.runtime_execution, "cpu") is False
     assert math.isfinite(train_loss)
     assert eval_logits.shape == (1,)
     assert torch.equal(eval_labels, torch.tensor([0.0]))
+
+
+def test_set_seed_can_disable_cudnn_determinism() -> None:
+    set_seed(7, deterministic=False)
+
+    assert torch.backends.cudnn.deterministic is False
+
+    set_seed(7, deterministic=True)
+
+    assert torch.backends.cudnn.deterministic is True
 
 
 def test_trainer_train_step_matches_shared_focal_loss(tmp_path) -> None:
@@ -534,6 +546,27 @@ def test_evaluate_accepts_bfloat16_logits(tmp_path) -> None:
     auc, logloss = trainer.evaluate(step=1)
 
     assert auc == 1.0
+    assert math.isfinite(logloss)
+
+
+def test_evaluate_uses_domain_auc_for_single_class(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=object,
+        train_loader=[],
+        valid_loader=[{"label": torch.tensor([1.0])}, {"label": torch.tensor([1.0])}],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+    )
+    logits = iter((torch.tensor([0.0]), torch.tensor([1.0])))
+    trainer._evaluate_step = lambda batch: (next(logits), batch["label"])
+
+    auc, logloss = trainer.evaluate(step=1)
+
+    assert auc == pytest.approx(0.5)
     assert math.isfinite(logloss)
 
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import zlib
-from collections.abc import Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable
+from dataclasses import dataclass
+from typing import Protocol
 
 import torch
 
@@ -29,6 +31,29 @@ from taac2026.infrastructure.data.transforms import (
 )
 
 
+class PCVRDataPipelineStage(Protocol):
+    name: str
+
+    def __call__(self, batch: PCVRBatch, *, generator: torch.Generator) -> PCVRBatch:
+        """Return a processed PCVR batch."""
+
+
+@dataclass(frozen=True, slots=True)
+class PCVRTransformStage:
+    transform: PCVRBatchTransform
+    name: str
+
+    def __call__(self, batch: PCVRBatch, *, generator: torch.Generator) -> PCVRBatch:
+        return self.transform(batch, generator=generator)
+
+
+def _transform_stage(transform: PCVRBatchTransform) -> PCVRTransformStage:
+    return PCVRTransformStage(
+        transform=transform,
+        name=getattr(transform, "name", type(transform).__name__),
+    )
+
+
 class PCVRDataPipeline:
     """Compose cache and row-level transforms around Parquet batch conversion."""
 
@@ -37,13 +62,15 @@ class PCVRDataPipeline:
         *,
         cache: PCVRMemoryBatchCache | None = None,
         transforms: list[PCVRBatchTransform] | tuple[PCVRBatchTransform, ...] = (),
+        stages: list[PCVRDataPipelineStage] | tuple[PCVRDataPipelineStage, ...] = (),
     ) -> None:
         self.cache = cache if cache is not None else PCVRMemoryBatchCache()
         self.transforms = tuple(transforms)
+        self.stages = (*tuple(stages), *tuple(_transform_stage(transform) for transform in self.transforms))
 
     @property
     def requires_generator(self) -> bool:
-        return bool(self.transforms)
+        return bool(self.stages)
 
     def configure_access_trace(
         self,
@@ -66,14 +93,29 @@ class PCVRDataPipeline:
         return batch
 
     def apply_transforms(self, batch: PCVRBatch, *, generator: torch.Generator | None = None) -> PCVRBatch:
-        if not self.transforms:
+        if not self.stages:
             return batch
         if generator is None:
             generator = torch.Generator()
         transformed = batch
-        for transform in self.transforms:
-            transformed = transform(transformed, generator=generator)
+        for stage in self.stages:
+            transformed = stage(transformed, generator=generator)
         return transformed
+
+    def materialize(
+        self,
+        key: Hashable,
+        factory: PCVRBatchFactory,
+        *,
+        generator: torch.Generator | None = None,
+        preprocess: Callable[[PCVRBatch], PCVRBatch | None] | None = None,
+    ) -> PCVRBatch | None:
+        batch = self.read_base_batch(key, factory)
+        if preprocess is not None:
+            batch = preprocess(batch)
+            if batch is None:
+                return None
+        return self.apply_transforms(batch, generator=generator)
 
 
 def stable_pcvr_batch_seed_from_path_crc(
@@ -117,6 +159,7 @@ __all__ = [
     "PCVRBatchFactory",
     "PCVRBatchTransform",
     "PCVRDataPipeline",
+    "PCVRDataPipelineStage",
     "PCVRDomainDropoutTransform",
     "PCVRFeatureMaskTransform",
     "PCVRMemoryBatchCache",

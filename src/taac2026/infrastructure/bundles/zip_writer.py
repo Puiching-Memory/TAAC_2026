@@ -5,7 +5,7 @@ from __future__ import annotations
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from taac2026.infrastructure.bundles.manifest_store import BundleKind, get_bundle_definition
 from taac2026.infrastructure.io.json import dump_bytes
@@ -69,6 +69,17 @@ def add_file_to_zip(archive: zipfile.ZipFile, source: Path, arcname: str) -> Non
     archive.write(source, arcname=arcname)
 
 
+def _add_experiment_parent_inits(archive: zipfile.ZipFile, *, root: Path, bundled_experiment_path: str) -> None:
+    parent_parts = PurePosixPath(bundled_experiment_path).parts[:-1]
+    current = root
+    for index, part in enumerate(parent_parts, start=1):
+        current = current / part
+        init_path = current / "__init__.py"
+        if init_path.exists():
+            archive_parent = PurePosixPath(*parent_parts[:index])
+            add_file_to_zip(archive, init_path, f"project/{archive_parent}/__init__.py")
+
+
 def write_workspace_code_package(
     *,
     code_package_path: Path,
@@ -77,7 +88,7 @@ def write_workspace_code_package(
     manifest: dict[str, object],
     manifest_name: str,
 ) -> None:
-    relative_experiment_path = experiment_path.relative_to(root)
+    bundled_experiment_path = str(manifest["bundled_experiment_path"])
     with zipfile.ZipFile(code_package_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(
             f"project/{manifest_name}",
@@ -87,17 +98,13 @@ def write_workspace_code_package(
         if pyproject_path.exists():
             add_file_to_zip(archive, pyproject_path, "project/pyproject.toml")
 
-        current = root
-        for part in relative_experiment_path.parts[:-1]:
-            current = current / part
-            init_path = current / "__init__.py"
-            if init_path.exists():
-                add_file_to_zip(archive, init_path, f"project/{init_path.relative_to(root)}")
+        _add_experiment_parent_inits(archive, root=root, bundled_experiment_path=bundled_experiment_path)
 
         for source in iter_python_tree(root / "src" / "taac2026"):
             add_file_to_zip(archive, source, f"project/{source.relative_to(root)}")
         for source in iter_file_tree(experiment_path):
-            add_file_to_zip(archive, source, f"project/{source.relative_to(root)}")
+            archive_relative_path = PurePosixPath(bundled_experiment_path) / source.relative_to(experiment_path).as_posix()
+            add_file_to_zip(archive, source, f"project/{archive_relative_path}")
 
 
 __all__ = [

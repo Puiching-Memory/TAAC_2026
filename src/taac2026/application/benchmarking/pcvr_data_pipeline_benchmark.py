@@ -26,7 +26,7 @@ from taac2026.domain.config import (
     PCVRSequenceCropConfig,
 )
 from taac2026.infrastructure.data.dataset import PCVRParquetDataset, get_pcvr_data
-from taac2026.domain.model_contract import parse_seq_max_lens
+from taac2026.infrastructure.modeling.model_contract import parse_seq_max_lens
 
 
 BenchmarkMode = Literal["loader", "convert"]

@@ -20,11 +20,10 @@ import tyro
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
+from taac2026.domain.runtime_config import DENSE_OPTIMIZER_TYPE_CHOICES, RuntimeExecutionConfig
 from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.runtime.execution import (
-    DENSE_OPTIMIZER_TYPE_CHOICES,
     EarlyStopping,
-    RuntimeExecutionConfig,
 )
 
 

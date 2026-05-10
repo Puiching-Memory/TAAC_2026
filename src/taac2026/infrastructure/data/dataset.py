@@ -28,6 +28,15 @@ from taac2026.infrastructure.logging import logger
 
 
 _STEP_RANDOM_BUFFER_BATCHES = 1
+_TORCH_SHARING_STRATEGY_CONFIGURED = False
+
+
+def ensure_torch_file_system_sharing_strategy() -> None:
+    global _TORCH_SHARING_STRATEGY_CONFIGURED
+    if _TORCH_SHARING_STRATEGY_CONFIGURED:
+        return
+    torch.multiprocessing.set_sharing_strategy("file_system")
+    _TORCH_SHARING_STRATEGY_CONFIGURED = True
 
 
 def get_pcvr_data(
@@ -52,6 +61,7 @@ def get_pcvr_data(
     data_pipeline_config: PCVRDataPipelineConfig | None = None,
     **kwargs: Any,
 ) -> tuple[DataLoader, DataLoader, Any]:
+    ensure_torch_file_system_sharing_strategy()
     random.seed(seed)
     _validate_get_pcvr_data_args(split_strategy, sampling_strategy)
 
@@ -328,6 +338,7 @@ __all__ = [
     "build_pcvr_observed_schema_report",
     "collect_pcvr_row_groups",
     "count_pcvr_rows_in_timestamp_range",
+    "ensure_torch_file_system_sharing_strategy",
     "get_pcvr_data",
     "normalize_pcvr_timestamp_range",
     "pcvr_timestamp_range_to_dict",

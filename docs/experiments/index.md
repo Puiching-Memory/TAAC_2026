@@ -74,7 +74,7 @@ experiments/<tool>/
 - 实验入口：`experiments/<name>/__init__.py`
 - 模型实现：`experiments/<name>/model.py`
 - 实验发现与装载：`src/taac2026/application/experiments/`
-- 模型输入契约：`src/taac2026/domain/model_contract.py`
+- 模型输入契约：`src/taac2026/infrastructure/modeling/model_contract.py`
 - 新增实验流程：[新增实验包](../guide/contributing.md)
 
 不要从 `docs/archive/files/...` 推断当前契约；那里是历史快照。

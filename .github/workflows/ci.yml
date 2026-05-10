@@ -29,11 +29,7 @@ env:
   CI_CANONICAL_PYTHON_VERSION: "3.13"
   CPU_TEST_MARKERS: "(unit or contract or integration or benchmark_cpu) and not gpu and not benchmark_gpu"
   COVERAGE_SOURCE: "src/taac2026"
-  COVERAGE_DOMAIN: "src/taac2026/domain/*"
-  COVERAGE_TRAINING_INIT: "src/taac2026/application/training/__init__.py"
-  COVERAGE_TRAINING_ARGS: "src/taac2026/application/training/args.py"
-  COVERAGE_TRAINING_CLI: "src/taac2026/application/training/cli.py"
-  COVERAGE_TRAINING_WORKFLOW: "src/taac2026/application/training/workflow.py"
+  COVERAGE_CPU_SAFE_CORE: "src/taac2026/domain/*,src/taac2026/application/bootstrap/*,src/taac2026/application/evaluation/*,src/taac2026/application/experiments/*,src/taac2026/application/packaging/*,src/taac2026/application/training/*,src/taac2026/infrastructure/bundles/*,src/taac2026/infrastructure/data/*,src/taac2026/infrastructure/experiments/*,src/taac2026/infrastructure/modeling/*,src/taac2026/infrastructure/runtime/*"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -142,12 +138,7 @@ jobs:
       - name: 汇总覆盖率路径
         id: coverage-include
         run: |
-          coverage_include="${COVERAGE_DOMAIN}"
-          coverage_include="${coverage_include},${COVERAGE_TRAINING_INIT}"
-          coverage_include="${coverage_include},${COVERAGE_TRAINING_ARGS}"
-          coverage_include="${coverage_include},${COVERAGE_TRAINING_CLI}"
-          coverage_include="${coverage_include},${COVERAGE_TRAINING_WORKFLOW}"
-          echo "value=$coverage_include" >> "$GITHUB_OUTPUT"
+          echo "value=${COVERAGE_CPU_SAFE_CORE}" >> "$GITHUB_OUTPUT"
 
       - name: 总结覆盖率范围
         run: |
@@ -159,11 +150,10 @@ jobs:
             echo "- CPU 测试 marker: ${CPU_TEST_MARKERS}"
             echo "- 覆盖率采集 source: ${COVERAGE_SOURCE}"
             echo "- 只统计 CPU 安全模块:"
-            echo "  - ${COVERAGE_DOMAIN}"
-            echo "  - ${COVERAGE_TRAINING_INIT}"
-            echo "  - ${COVERAGE_TRAINING_ARGS}"
-            echo "  - ${COVERAGE_TRAINING_CLI}"
-            echo "  - ${COVERAGE_TRAINING_WORKFLOW}"
+            IFS=',' read -ra coverage_paths <<< "${COVERAGE_CPU_SAFE_CORE}"
+            for coverage_path in "${coverage_paths[@]}"; do
+              echo "  - ${coverage_path}"
+            done
             echo "- 集成和 GPU 覆盖率在需要时从本地 CUDA CLI 运行中收集"
             echo "- GPU 测试用 pytest -m gpu 在本地 CUDA 环境运行"
           } >> "$GITHUB_STEP_SUMMARY"

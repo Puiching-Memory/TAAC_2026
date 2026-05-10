@@ -13,6 +13,7 @@ from taac2026.domain.validation import TAACBoundaryModel
 
 PCVR_TRAIN_CONFIG_FORMAT = "taac2026-pcvr-train-config"
 PCVR_TRAIN_CONFIG_VERSION = 1
+PCVR_TRAIN_CONFIG_SUPPORTED_VERSIONS = frozenset({PCVR_TRAIN_CONFIG_VERSION})
 
 PCVR_TRAIN_CONFIG_METADATA_KEYS = frozenset(
     {
@@ -43,7 +44,7 @@ class PCVRTrainConfigSidecar(TAACBoundaryModel):
     @field_validator("train_config_version")
     @classmethod
     def _validate_version(cls, value: int) -> int:
-        if value != PCVR_TRAIN_CONFIG_VERSION:
+        if value not in PCVR_TRAIN_CONFIG_SUPPORTED_VERSIONS:
             raise ValueError(f"unsupported PCVR train_config version: {value}")
         return value
 
@@ -76,17 +77,41 @@ def build_pcvr_train_config_sidecar(train_config: Mapping[str, Any] | None) -> d
     ).to_sidecar_payload()
 
 
+def _migrate_pcvr_train_config_v1(payload: dict[str, Any]) -> dict[str, Any]:
+    return payload
+
+
+_PCVR_TRAIN_CONFIG_MIGRATIONS = {
+    1: _migrate_pcvr_train_config_v1,
+}
+
+
+def migrate_pcvr_train_config_sidecar_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    raw_payload = dict(payload)
+    if not PCVR_TRAIN_CONFIG_METADATA_KEYS <= raw_payload.keys():
+        return build_pcvr_train_config_sidecar(raw_payload)
+    if raw_payload.get("train_config_format") != PCVR_TRAIN_CONFIG_FORMAT:
+        raise ValueError(f"unsupported PCVR train_config format: {raw_payload.get('train_config_format')}")
+    version = int(raw_payload.get("train_config_version", 0))
+    migration = _PCVR_TRAIN_CONFIG_MIGRATIONS.get(version)
+    if migration is None:
+        raise ValueError(f"unsupported PCVR train_config version: {version}")
+    return migration(raw_payload)
+
+
 def load_pcvr_train_config_sidecar(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Load the current PCVR train_config.json payload."""
 
-    return PCVRTrainConfigSidecar.model_validate(dict(payload)).to_runtime_config()
+    return PCVRTrainConfigSidecar.model_validate(migrate_pcvr_train_config_sidecar_payload(payload)).to_runtime_config()
 
 
 __all__ = [
     "PCVR_TRAIN_CONFIG_FORMAT",
     "PCVR_TRAIN_CONFIG_METADATA_KEYS",
+    "PCVR_TRAIN_CONFIG_SUPPORTED_VERSIONS",
     "PCVR_TRAIN_CONFIG_VERSION",
     "PCVRTrainConfigSidecar",
     "build_pcvr_train_config_sidecar",
     "load_pcvr_train_config_sidecar",
+    "migrate_pcvr_train_config_sidecar_payload",
 ]

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, make_dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated, Any, Literal
 
 import torch
@@ -24,7 +24,8 @@ from taac2026.domain.config import (
     RankMixerMode,
     SeqEncoderType,
 )
-from taac2026.domain.model_contract import resolve_schema_path
+from taac2026.infrastructure.modeling.model_contract import resolve_schema_path
+from taac2026.domain.runtime_config import PCVRLossConfig, RuntimeExecutionConfig
 from taac2026.infrastructure.io.files import write_json
 from taac2026.infrastructure.logging import logger
 from taac2026.application.training.workflow import (
@@ -33,9 +34,8 @@ from taac2026.application.training.workflow import (
 )
 from taac2026.infrastructure.runtime.telemetry import RuntimeTelemetry
 from taac2026.infrastructure.runtime.execution import (
-    PCVRLossConfig,
-    RuntimeExecutionConfig,
     create_logger,
+    runtime_execution_summary,
     set_seed,
 )
 
@@ -73,6 +73,7 @@ class PCVRTrainCLIArgs:
     amp_dtype: Annotated[AMPDType, _arg("--amp-dtype")] = "bfloat16"
     compile: bool = False
     progress_log_interval_steps: Annotated[int, _arg("--progress-log-interval-steps")] = 100
+    deterministic: bool = True
 
     num_workers: Annotated[int, _arg("--num-workers")] = 16
     buffer_batches: Annotated[int, _arg("--buffer-batches")] = 1
@@ -201,7 +202,7 @@ def _parse_pcvr_train_cli_args(
     *,
     defaults: PCVRTrainConfig,
     extra_config_defaults: Mapping[str, Any] | None = None,
-) -> argparse.Namespace:
+) -> SimpleNamespace:
     parser_type = _pcvr_train_cli_type(extra_config_defaults)
     parsed = tyro.cli(
         parser_type,
@@ -214,7 +215,7 @@ def _parse_pcvr_train_cli_args(
         ),
         use_underscores=True,
     )
-    return argparse.Namespace(**asdict(parsed))
+    return SimpleNamespace(**asdict(parsed))
 
 
 @dataclass(slots=True)
@@ -235,7 +236,7 @@ class TyroFlatArgParser:
             _flat_config_value_type(default)
             self.extra_config_defaults[name] = default
 
-    def parse_args(self, argv: Sequence[str] | None = None) -> argparse.Namespace:
+    def parse_args(self, argv: Sequence[str] | None = None) -> SimpleNamespace:
         return _parse_pcvr_train_cli_args(
             argv,
             defaults=self.defaults,
@@ -288,7 +289,7 @@ def build_pcvr_train_arg_parser(
     return TyroFlatArgParser(defaults=defaults)
 
 
-def apply_pcvr_train_arg_env_overrides(args: argparse.Namespace) -> argparse.Namespace:
+def apply_pcvr_train_arg_env_overrides(args: SimpleNamespace) -> SimpleNamespace:
     args.data_dir = os.environ.get("TRAIN_DATA_PATH", args.data_dir)
     args.schema_path = os.environ.get("TAAC_SCHEMA_PATH", args.schema_path)
     args.ckpt_dir = os.environ.get("TRAIN_CKPT_PATH", args.ckpt_dir)
@@ -298,10 +299,10 @@ def apply_pcvr_train_arg_env_overrides(args: argparse.Namespace) -> argparse.Nam
 
 
 def apply_pcvr_train_non_cli_defaults(
-    args: argparse.Namespace,
+    args: SimpleNamespace,
     *,
     defaults: PCVRTrainConfig,
-) -> argparse.Namespace:
+) -> SimpleNamespace:
     ns_defaults = defaults.ns.to_flat_dict()
     args.ns_grouping_strategy = ns_defaults["ns_grouping_strategy"]
     args.user_ns_groups = ns_defaults["user_ns_groups"]
@@ -318,7 +319,7 @@ def parse_pcvr_train_args(
     *,
     package_dir: Path,
     defaults: PCVRTrainConfig,
-) -> argparse.Namespace:
+) -> SimpleNamespace:
     parser = build_pcvr_train_arg_parser(package_dir=package_dir, defaults=defaults)
     args = parser.parse_args(argv)
     args = apply_pcvr_train_arg_env_overrides(args)
@@ -351,7 +352,8 @@ def train_pcvr_model(
     log_dir.mkdir(parents=True, exist_ok=True)
     tf_events_dir.mkdir(parents=True, exist_ok=True)
 
-    set_seed(args.seed)
+    deterministic = bool(getattr(args, "deterministic", defaults.runtime.deterministic))
+    set_seed(args.seed, deterministic=deterministic)
     create_logger(log_dir / "train.log")
     config = vars(args).copy()
     data_pipeline_config = defaults.data_pipeline
@@ -364,9 +366,10 @@ def train_pcvr_model(
         progress_log_interval_steps=int(
             getattr(args, "progress_log_interval_steps", defaults.runtime.progress_log_interval_steps)
         ),
+        deterministic=deterministic,
     )
     logger.info(
-        "Resolved PCVR training runtime: {}", runtime_execution.summary(args.device)
+        "Resolved PCVR training runtime: {}", runtime_execution_summary(runtime_execution, args.device)
     )
 
     from torch.utils.tensorboard import SummaryWriter

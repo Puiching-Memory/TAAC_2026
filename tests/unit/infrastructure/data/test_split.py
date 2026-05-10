@@ -388,6 +388,7 @@ def test_step_dataset_draws_batches_with_replacement(tmp_path: Path) -> None:
     assert len(dataset) == 8
     assert len(draws) == 8
     assert len(set(draws)) < len(draws)
+    assert dataset.row_groups == source_dataset.row_groups
 
 
 def test_step_dataset_keeps_one_optimizer_batch_after_multi_view_transform(
@@ -454,6 +455,21 @@ def test_step_index_sampler_offsets_indices_by_start_step() -> None:
     sampler.set_start_step(6)
 
     assert list(sampler) == [6, 7, 8]
+
+
+def test_torch_sharing_strategy_is_configured_lazily(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(pcvr_data, "_TORCH_SHARING_STRATEGY_CONFIGURED", False)
+    monkeypatch.setattr(
+        pcvr_data.torch.multiprocessing,
+        "set_sharing_strategy",
+        lambda strategy: calls.append(strategy),
+    )
+
+    pcvr_data.ensure_torch_file_system_sharing_strategy()
+    pcvr_data.ensure_torch_file_system_sharing_strategy()
+
+    assert calls == ["file_system"]
 
 
 def test_step_dataset_train_steps_per_sweep_overrides_planned_steps_for_loader_length(

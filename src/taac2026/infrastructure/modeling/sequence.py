@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from contextvars import ContextVar
 from typing import Literal
 
 import torch
@@ -13,17 +14,20 @@ from taac2026.infrastructure.accelerators.attention.flash_attention import flash
 
 FlashAttentionBackend = Literal["torch", "tilelang"]
 FLASH_ATTENTION_BACKEND: FlashAttentionBackend = "torch"
+_FLASH_ATTENTION_BACKEND: ContextVar[FlashAttentionBackend] = ContextVar(
+    "taac2026_flash_attention_backend",
+    default="torch",
+)
 
 
 def configure_flash_attention_runtime(*, backend: str) -> None:
-    global FLASH_ATTENTION_BACKEND
     if backend not in {"torch", "tilelang"}:
         raise ValueError(f"unsupported flash attention backend: {backend}")
-    FLASH_ATTENTION_BACKEND = backend
+    _FLASH_ATTENTION_BACKEND.set(backend)
 
 
 def flash_attention_runtime_state() -> FlashAttentionBackend:
-    return FLASH_ATTENTION_BACKEND
+    return _FLASH_ATTENTION_BACKEND.get()
 
 
 def make_padding_mask(lengths: torch.Tensor, max_len: int) -> torch.Tensor:
@@ -100,7 +104,7 @@ def scaled_dot_product_attention(
         q,
         k,
         v,
-        backend=FLASH_ATTENTION_BACKEND if backend is None else backend,
+        backend=flash_attention_runtime_state() if backend is None else backend,
         attn_mask=attn_mask,
         dropout_p=dropout_p,
         training=training,

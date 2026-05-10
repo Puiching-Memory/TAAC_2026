@@ -12,26 +12,26 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from taac2026.domain.metrics import binary_score_diagnostics
+from taac2026.domain.metrics import binary_auc, binary_score_diagnostics
 from taac2026.domain.config import DENSE_LR_SCHEDULER_TYPE_CHOICES
-from taac2026.domain.model_contract import batch_to_model_input
+from taac2026.infrastructure.modeling.model_contract import batch_to_model_input
+from taac2026.domain.runtime_config import DENSE_OPTIMIZER_TYPE_CHOICES, PCVRLossConfig, RuntimeExecutionConfig
 from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.modeling.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.runtime.checkpoint_io import PCVRTrainerSupportMixin
 from taac2026.infrastructure.runtime.execution import (
-    DENSE_OPTIMIZER_TYPE_CHOICES,
     EarlyStopping,
-    PCVRLossConfig,
-    RuntimeExecutionConfig,
     compute_pcvr_loss,
     create_grad_scaler,
     maybe_compile_callable,
     maybe_prepare_internal_compile,
+    runtime_autocast_context,
+    runtime_execution_summary,
 )
+from taac2026.infrastructure.runtime.protocols import SparseParameterModel
 
 
 def _use_interactive_progress() -> bool:
@@ -101,7 +101,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         self.dense_params: list[nn.Parameter] = []
 
         self.sparse_optimizer: torch.optim.Optimizer | None
-        if hasattr(model, "get_sparse_params"):
+        if isinstance(model, SparseParameterModel):
             sparse_params = model.get_sparse_params()
             dense_params = model.get_dense_params()
             if not sparse_params:
@@ -184,7 +184,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             self.max_steps,
             self.reinit_sparse_every_n_steps,
         )
-        logger.info("PCVRPointwiseTrainer runtime: {}", self.runtime_execution.summary(self.device))
+        logger.info("PCVRPointwiseTrainer runtime: {}", runtime_execution_summary(self.runtime_execution, self.device))
 
     def _log_loop_progress(
         self,
@@ -304,7 +304,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             self.sparse_optimizer.zero_grad()
 
         model_input = self._make_model_input(device_batch)
-        with self.runtime_execution.autocast_context(self.device):
+        with runtime_autocast_context(self.runtime_execution, self.device):
             logits = self.forward_model(model_input).squeeze(-1)
             loss, loss_components = compute_pcvr_loss(logits, label, self.loss_config, model=self.model)
         self.last_train_loss_components = {name: float(value.detach().float().cpu()) for name, value in loss_components.items()}
@@ -390,10 +390,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             probabilities = probabilities[valid_mask]
             labels_np = labels_np[valid_mask]
 
-        if len(probabilities) == 0 or len(np.unique(labels_np)) < 2:
-            auc = 0.0
-        else:
-            auc = float(roc_auc_score(labels_np, probabilities))
+        auc = binary_auc(labels_np, probabilities)
 
         self.last_eval_diagnostics = binary_score_diagnostics(labels_np, probabilities)
         logger.info(
@@ -413,7 +410,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         label = device_batch["label"]
 
         model_input = self._make_model_input(device_batch)
-        with self.runtime_execution.autocast_context(self.device):
+        with runtime_autocast_context(self.runtime_execution, self.device):
             logits, _embeddings = self.predict_fn(model_input)
         logits = logits.squeeze(-1)
 

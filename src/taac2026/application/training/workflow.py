@@ -4,20 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import torch
 
 import taac2026.infrastructure.data.dataset as pcvr_data
 from taac2026.domain.config import PCVRTrainConfig
-from taac2026.domain.model_contract import (
+from taac2026.domain.runtime_config import RuntimeExecutionConfig
+from taac2026.infrastructure.modeling.model_contract import (
     build_pcvr_model,
     load_ns_groups,
     parse_seq_max_lens,
 )
 from taac2026.infrastructure.logging import logger
+from taac2026.infrastructure.modeling.sequence import configure_flash_attention_runtime as configure_shared_flash_attention_runtime
 from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
-from taac2026.infrastructure.runtime.execution import EarlyStopping, RuntimeExecutionConfig
+from taac2026.infrastructure.runtime.execution import EarlyStopping
 from taac2026.infrastructure.checkpoints import preferred_checkpoint_path
 
 
@@ -99,6 +101,9 @@ def default_build_train_model(
     )
     logger.info("User NS groups: {}", user_ns_groups)
     logger.info("Item NS groups: {}", item_ns_groups)
+    configure_shared_flash_attention_runtime(
+        backend=str(context.config.get("flash_attention_backend", "torch")),
+    )
 
     model = build_pcvr_model(
         model_module=context.model_module,
@@ -208,13 +213,38 @@ def default_build_train_summary(
     return summary
 
 
+class BuildTrainDataHook(Protocol):
+    def __call__(self, context: PCVRTrainContext) -> PCVRTrainDataBundle:
+        ...
+
+
+class BuildTrainModelHook(Protocol):
+    def __call__(self, context: PCVRTrainContext, data_bundle: PCVRTrainDataBundle) -> torch.nn.Module:
+        ...
+
+
+class BuildTrainTrainerHook(Protocol):
+    def __call__(self, context: PCVRTrainContext, data_bundle: PCVRTrainDataBundle, model: torch.nn.Module) -> Any:
+        ...
+
+
+class RunTrainingHook(Protocol):
+    def __call__(self, context: PCVRTrainContext, trainer: Any) -> None:
+        ...
+
+
+class BuildTrainSummaryHook(Protocol):
+    def __call__(self, context: PCVRTrainContext, trainer: Any) -> dict[str, Any] | None:
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class PCVRTrainHooks:
-    build_data: Any = default_build_train_data
-    build_model: Any = default_build_train_model
-    build_trainer: Any = default_build_train_trainer
-    run_training: Any = default_run_training
-    build_summary: Any = default_build_train_summary
+    build_data: BuildTrainDataHook = default_build_train_data
+    build_model: BuildTrainModelHook = default_build_train_model
+    build_trainer: BuildTrainTrainerHook = default_build_train_trainer
+    run_training: RunTrainingHook = default_run_training
+    build_summary: BuildTrainSummaryHook = default_build_train_summary
 
 
 DEFAULT_PCVR_TRAIN_HOOKS = PCVRTrainHooks()
@@ -226,9 +256,14 @@ def build_pcvr_train_hooks(**overrides: Any) -> PCVRTrainHooks:
 
 __all__ = [
     "DEFAULT_PCVR_TRAIN_HOOKS",
+    "BuildTrainDataHook",
+    "BuildTrainModelHook",
+    "BuildTrainSummaryHook",
+    "BuildTrainTrainerHook",
     "PCVRTrainContext",
     "PCVRTrainDataBundle",
     "PCVRTrainHooks",
+    "RunTrainingHook",
     "build_pcvr_train_hooks",
     "default_build_train_data",
     "default_build_train_model",

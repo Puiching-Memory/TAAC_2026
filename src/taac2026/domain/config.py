@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any, Literal
 
-from taac2026.infrastructure.runtime.execution import (
+from taac2026.domain.runtime_config import (
     DENSE_OPTIMIZER_TYPE_CHOICES,
     PCVRLossConfig,
     PCVRLossTermConfig as PCVRLossTermConfig,
@@ -41,6 +41,10 @@ def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, li
         str(group_name): [int(feature_id) for feature_id in feature_ids]
         for group_name, feature_ids in groups.items()
     }
+
+
+def _dataclass_flat_dict(value: object) -> dict[str, Any]:
+    return {config_field.name: getattr(value, config_field.name) for config_field in fields(value)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,63 +289,13 @@ class PCVRTrainConfig:
     ns: PCVRNSConfig = field(default_factory=PCVRNSConfig)
 
     def to_flat_dict(self) -> dict[str, Any]:
-        return {
-            "batch_size": self.data.batch_size,
-            "num_workers": self.data.num_workers,
-            "buffer_batches": self.data.buffer_batches,
-            "train_steps_per_sweep": self.data.train_steps_per_sweep,
-            "train_ratio": self.data.train_ratio,
-            "valid_ratio": self.data.valid_ratio,
-            "split_strategy": self.data.split_strategy,
-            "sampling_strategy": self.data.sampling_strategy,
-            "train_timestamp_start": self.data.train_timestamp_start,
-            "train_timestamp_end": self.data.train_timestamp_end,
-            "valid_timestamp_start": self.data.valid_timestamp_start,
-            "valid_timestamp_end": self.data.valid_timestamp_end,
-            "eval_every_n_steps": self.data.eval_every_n_steps,
-            "seq_max_lens": self.data.seq_max_lens,
-            **self.data_pipeline.to_flat_dict(),
-            "lr": self.optimizer.lr,
-            "max_steps": self.optimizer.max_steps,
-            "patience_steps": self.optimizer.patience_steps,
-            "seed": self.optimizer.seed,
-            "device": self.optimizer.device,
-            "dense_optimizer_type": self.optimizer.dense_optimizer_type,
-            "scheduler_type": self.optimizer.scheduler_type,
-            "warmup_steps": self.optimizer.warmup_steps,
-            "min_lr_ratio": self.optimizer.min_lr_ratio,
-            "amp": self.runtime.amp,
-            "amp_dtype": self.runtime.amp_dtype,
-            "compile": self.runtime.compile,
-            "progress_log_interval_steps": self.runtime.progress_log_interval_steps,
-            "loss_terms": self.loss.to_list(),
-            "sparse_lr": self.sparse_optimizer.sparse_lr,
-            "sparse_weight_decay": self.sparse_optimizer.sparse_weight_decay,
-            "reinit_sparse_every_n_steps": self.sparse_optimizer.reinit_sparse_every_n_steps,
-            "reinit_cardinality_threshold": self.sparse_optimizer.reinit_cardinality_threshold,
-            "d_model": self.model.d_model,
-            "emb_dim": self.model.emb_dim,
-            "num_queries": self.model.num_queries,
-            "num_blocks": self.model.num_blocks,
-            "num_heads": self.model.num_heads,
-            "seq_encoder_type": self.model.seq_encoder_type,
-            "hidden_mult": self.model.hidden_mult,
-            "dropout_rate": self.model.dropout_rate,
-            "seq_top_k": self.model.seq_top_k,
-            "seq_causal": self.model.seq_causal,
-            "action_num": self.model.action_num,
-            "use_time_buckets": self.model.use_time_buckets,
-            "rank_mixer_mode": self.model.rank_mixer_mode,
-            "use_rope": self.model.use_rope,
-            "rope_base": self.model.rope_base,
-            "emb_skip_threshold": self.model.emb_skip_threshold,
-            "seq_id_threshold": self.model.seq_id_threshold,
-            "gradient_checkpointing": self.model.gradient_checkpointing,
-            "flash_attention_backend": self.model.flash_attention_backend,
-            "rms_norm_backend": self.model.rms_norm_backend,
-            "rms_norm_block_rows": self.model.rms_norm_block_rows,
-            **self.ns.to_flat_dict(),
-        }
+        flat: dict[str, Any] = {}
+        for group in (self.data, self.optimizer, self.runtime, self.sparse_optimizer, self.model):
+            flat.update(_dataclass_flat_dict(group))
+        flat.update(self.data_pipeline.to_flat_dict())
+        flat["loss_terms"] = self.loss.to_list()
+        flat.update(self.ns.to_flat_dict())
+        return flat
 REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())
 PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
     "split_strategy": "row_group_tail",
@@ -351,6 +305,7 @@ PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
     "train_timestamp_end": 0,
     "valid_timestamp_start": 0,
     "valid_timestamp_end": 0,
+    "deterministic": True,
 }
 
 

@@ -14,7 +14,14 @@ from taac2026.infrastructure.data.batches import (
 	take_pcvr_rows,
 )
 from taac2026.infrastructure.data.cache import PCVRMemoryBatchCache, PCVRSharedBatchCache
-from taac2026.infrastructure.data.pipeline import PCVRDataPipeline, stable_pcvr_batch_seed, stable_pcvr_batch_seed_from_path_crc
+from taac2026.infrastructure.data.dataset import ensure_torch_file_system_sharing_strategy, get_pcvr_data
+from taac2026.infrastructure.data.pipeline import (
+	PCVRDataPipeline,
+	PCVRDataPipelineStage,
+	stable_pcvr_batch_seed,
+	stable_pcvr_batch_seed_from_path_crc,
+)
+from taac2026.infrastructure.data.parquet_dataset import PCVRParquetDataset
 from taac2026.infrastructure.data.shuffle import PCVRShuffleBuffer
 from taac2026.infrastructure.data.step_dataset import PCVRStepDataset, PCVRStepIndexSampler, PCVRStepPlan
 from taac2026.infrastructure.data.transforms import (
@@ -30,9 +37,11 @@ __all__ = [
 	"PCVRBatchFactory",
 	"PCVRBatchTransform",
 	"PCVRDataPipeline",
+	"PCVRDataPipelineStage",
 	"PCVRDomainDropoutTransform",
 	"PCVRFeatureMaskTransform",
 	"PCVRMemoryBatchCache",
+	"PCVRParquetDataset",
 	"PCVRSequenceCropTransform",
 	"PCVRSharedBatchCache",
 	"PCVRSharedTensorSpec",
@@ -44,6 +53,8 @@ __all__ = [
 	"build_pcvr_batch_transforms",
 	"clone_pcvr_batch",
 	"concat_pcvr_batches",
+	"ensure_torch_file_system_sharing_strategy",
+	"get_pcvr_data",
 	"pcvr_batch_row_count",
 	"repeat_pcvr_rows",
 	"stable_pcvr_batch_seed",

@@ -138,7 +138,7 @@ for block in self.blocks:
 
 - 配置字段：`src/taac2026/domain/config.py`
 - 训练 CLI 参数：`src/taac2026/application/training/args.py`
-- 模型构造传参：`src/taac2026/domain/model_contract.py`
+- 模型构造传参：`src/taac2026/infrastructure/modeling/model_contract.py`
 - checkpoint helper：`src/taac2026/infrastructure/modeling/sequence.py`
 - API 导出：`src/taac2026/api.py`
 - 实验模型调用点：`experiments/*/model.py`
