@@ -50,16 +50,16 @@
 
 ## 我们的工作
 
-- **分层架构与依赖倒置** — Domain / Application / Infrastructure 三层单向依赖；核心度量与配置校验独立于 PyTorch，可纯 CPU 测试
-- **插件式实验包** — 仅需 `__init__.py` + `model.py` 即接入完整训练/评估/推理/打包链路，`importlib` 动态加载，实验间零耦合
-- **钩子驱动的可组合流程** — 训练/预测拆为可替换钩子（`build_data` / `build_model` / `build_trainer` …），只覆盖差异部分，其余复用默认实现
-- **冻结 dataclass 配置** — `frozen=True, slots=True` 保证不可变与零 dict 开销，可安全传入多进程 worker；自动兼容旧配置键名
-- **版本化边界契约** — sidecar / manifest 携带格式+版本号，Pydantic `extra="forbid"` 严格校验，版本不匹配直接报错
-- **GPU 内核注册表** — FlashAttention / RMSNorm / EmbeddingBag 三类算子后端（torch / Triton / TileLang）一行配置切换，编译结果自动缓存
-- **Step 级采样管线** — 以 optimizer step 为索引而非 epoch；缓存层（6 种策略）+ 变换层（裁剪/遮蔽/域丢弃）可组合，确定性种子保证全链路可复现
-- **稀疏/密集双优化器** — Embedding 走 Adagrad，其余走 AdamW / Fused / Orthogonal / Muon，支持定期重建稀疏优化器
-- **版本化 Bundle 打包** — 一键生成 `code_package.zip` + 入口脚本 + manifest，打包与线上环境通过 manifest 契约校验一致性
-- **分层测试标记** — unit / contract / integration / gpu / benchmark 六级 pytest marker，CI 按层级运行，覆盖率门槛 70%
+- **分层架构与依赖倒置** — Domain → Application → Infrastructure 单向依赖，核心度量与配置校验脱离 PyTorch，纯 CPU 可测
+- **插件式实验包** — 两文件接入完整链路：`__init__.py` 暴露入口 + `model.py` 履行契约，`importlib` 动态加载，实验间零耦合
+- **钩子驱动的可组合流程** — 训练 / 预测拆为可替换钩子（`build_data` · `build_model` · `build_trainer` …），只覆写差异，其余复用默认
+- **冻结 dataclass 配置** — `frozen=True, slots=True` 确保不可变与零 dict 开销，可安全传入多进程 worker，并自动兼容旧键名
+- **版本化边界契约** — sidecar / manifest 携带格式与版本号，Pydantic `extra="forbid"` 严格校验，版本不匹配即报错
+- **GPU 内核注册表** — FlashAttention · RMSNorm · EmbeddingBag 三类算子，torch / Triton / TileLang 三套后端，一行配置切换，编译自动缓存
+- **Step 级采样管线** — 以 optimizer step 而非 epoch 编排采样；缓存层 6 策略 × 变换层 3 操作可组合，确定性种子保证全链路可复现
+- **稀疏 / 密集双优化器** — Embedding 走 Adagrad，其余走 AdamW / Fused / Orthogonal / Muon，支持稀疏优化器定期重建
+- **版本化 Bundle 打包** — 一键产出 `code_package.zip` + 入口脚本 + manifest，打包与线上环境经 manifest 契约校验一致
+- **分层测试标记** — unit · contract · integration · gpu · benchmark 五级 pytest marker，CI 按层级调度，覆盖率门槛 70%
 
 ![PCVR Runtime Resources](figures/pcvr_diagnostics/pcvr_runtime_resources.svg)
 
@@ -100,7 +100,7 @@ bash run.sh val --experiment experiments/baseline \
 
 # 生成 predictions.json
 bash run.sh infer --experiment experiments/baseline \
-  --checkpoint outputs/readme_baseline/best_model/model.safetensors \
+  --checkpoint outputs/readme_baseline \
   --result-dir outputs/readme_infer \
   --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```

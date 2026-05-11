@@ -55,6 +55,10 @@ or handle passwords, QR codes, tokens, or raw cookies in chat.
    - Prefer `page.context().request.get(url)` for same-origin JSON endpoints.
    - `page.evaluate(() => fetch(url, { credentials: "include" }))` is also
      acceptable for same-origin APIs.
+   - If `page.context().request.get(...)` fails with a Playwright protocol error
+     such as `Storage.getCookies: Method not found`, do not retry the same path.
+     Switch to in-page `fetch(url, { credentials: "include" })`; it reuses the
+     logged-in page session without exposing cookies.
    - Do not print cookie values. Do not copy cookies into terminal commands
      unless there is no browser-context alternative.
 
@@ -62,6 +66,13 @@ or handle passwords, QR codes, tokens, or raw cookies in chat.
    - For checkpoint tables, use JSON fields or DOM table text, not screenshots.
    - For metrics, extract scalar series as `{name, step, value}` arrays or the
      closest equivalent returned by the platform.
+   - For checkpoint output pages, the loaded endpoints often include:
+     - `/taskmanagement/api/v1/instances/external/<instance_id>/get_ckpt`
+     - `/taskmanagement/api/v1/instances/external/<instance_id>/tf_events`
+   - `tf_events` metric groups are usually nested under `json.data?.data`, not
+     directly under the top-level `json.data`. Each metric group is an array of chart objects like
+     `{date: [...], title: [...], value: [[...], ...]}`. Parse it by zipping
+     `date[j]` with `value[i][j]` for every `title[i]`.
    - Summarize exact best steps, last steps, minima/maxima, and trend direction.
    - For `Probe/*` metrics, compare `Probe/auc`, `Probe/logloss`, and
      `Probe/auc_retention` against full `AUC/valid` and `LogLoss/valid`.
@@ -140,6 +151,60 @@ return {
 };
 ```
 
+Fallback API call when browser-context requests cannot read cookies in the MCP
+browser environment:
+
+```javascript
+return page.evaluate(async (endpointUrl) => {
+  const response = await fetch(endpointUrl, {
+    credentials: "include",
+    headers: { accept: "application/json,text/plain,*/*" },
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    ok: response.ok,
+    contentType: response.headers.get("content-type") || "",
+    bodyPreview: text.slice(0, 12000),
+  };
+}, endpointUrl);
+```
+
+Parse TAAC `tf_events` scalars from checkpoint pages:
+
+```javascript
+const json = await (await fetch(tfEventsUrl, { credentials: "include" })).json();
+const groups = json.data?.data ?? {};
+const series = [];
+for (const [group, charts] of Object.entries(groups)) {
+  if (!Array.isArray(charts)) continue;
+  for (const chart of charts) {
+    const dates = chart.date || [];
+    const titles = chart.title || [];
+    const values = chart.value || [];
+    for (let i = 0; i < titles.length; i++) {
+      const points = dates
+        .map((step, j) => ({ step: Number(step), value: Number((values[i] || [])[j]) }))
+        .filter((point) => Number.isFinite(point.step) && Number.isFinite(point.value));
+      if (points.length) series.push({ group, name: titles[i], points });
+    }
+  }
+}
+return series;
+```
+
+Summarize a scalar series without returning huge JSON:
+
+```javascript
+function summarize(name, points) {
+  const first = points[0];
+  const last = points[points.length - 1];
+  const min = points.reduce((best, point) => (point.value < best.value ? point : best), first);
+  const max = points.reduce((best, point) => (point.value > best.value ? point : best), first);
+  return { name, count: points.length, first, last, min, max };
+}
+```
+
 Extract visible table text without screenshots:
 
 ```javascript
@@ -147,6 +212,34 @@ return page.locator("table").evaluateAll((tables) =>
   tables.map((table) => table.innerText)
 );
 ```
+
+## Known Pitfalls From Browser MCP Runs
+
+- Long browser tool results may be written to ephemeral chat-session resource
+  files. Those paths can be difficult to re-open reliably if copied from a
+  truncated tool message. Prefer returning compact summaries from
+  `page.evaluate` instead of large raw API payloads.
+- If a tool result says “Large tool result written to file” and `read_file`
+  repeatedly fails with an `ENOENT` path, stop chasing that cache path. Re-run a
+  smaller browser-side aggregation that returns only the needed metrics.
+- Do not assume `json.data` is the metric group map. Inspect response shape once
+  with a shallow `Object.keys`/sample query, then parse the actual nesting.
+- Do not assume all metric groups are arrays. Guard with `Array.isArray(...)`
+  before iterating to avoid `TypeError: charts is not iterable`.
+- Platform chart tags may be nested under names such as `Probe/score/...`, not
+  only `Probe/...` or `score/...`. First list metric names for a group before
+  choosing exact tags.
+- Browser console errors from WeChat login probes, telemetry, or preload
+  warnings are usually not training failures. Treat them as page noise unless
+  the platform API itself returns an auth error or non-success payload.
+- When analyzing Symbiosis runs, inspect `Symbiosis/latent_diversity/...` and
+  `Symbiosis/latent_attention/...` in addition to AUC/LogLoss. Repeated values
+  like `effective_rank ~= 1`, `mean_pairwise_cosine ~= 1`, or
+  `slot_overlap_mean ~= 1` indicate latent-token collapse even if full
+  `AUC/valid` is improving.
+- If checkpoints are listed as `best_auc`, `best_model`, and `best_probe_auc`,
+  compare full validation metrics against probe metrics before recommending a
+  checkpoint. Full AUC can keep improving after probe robustness degrades.
 
 ## Safety And Hygiene
 
