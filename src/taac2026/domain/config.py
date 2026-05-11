@@ -116,6 +116,13 @@ class PCVRDomainDropoutConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PCVRNonSequentialSparseDropoutConfig:
+    name: Literal["nonseq_sparse_dropout"] = "nonseq_sparse_dropout"
+    enabled: bool = True
+    probability: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class PCVRDataCacheConfig:
     mode: PCVRDataCacheMode = "none"
     max_batches: int = 0
@@ -130,7 +137,10 @@ class PCVRDataCacheConfig:
 
 
 PCVRDataTransformConfig = (
-    PCVRSequenceCropConfig | PCVRFeatureMaskConfig | PCVRDomainDropoutConfig
+    PCVRSequenceCropConfig
+    | PCVRFeatureMaskConfig
+    | PCVRDomainDropoutConfig
+    | PCVRNonSequentialSparseDropoutConfig
 )
 
 
@@ -186,7 +196,10 @@ def _data_transform_config_to_dict(
                 "seq_window_min_len": transform.seq_window_min_len,
             }
         )
-    elif isinstance(transform, (PCVRFeatureMaskConfig, PCVRDomainDropoutConfig)):
+    elif isinstance(
+        transform,
+        (PCVRFeatureMaskConfig, PCVRDomainDropoutConfig, PCVRNonSequentialSparseDropoutConfig),
+    ):
         payload["probability"] = transform.probability
     return payload
 
@@ -322,30 +335,3 @@ class PCVRTrainConfig:
         flat.update(self.validation.to_flat_dict())
         return flat
 REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())
-PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
-    "split_strategy": "row_group_tail",
-    "sampling_strategy": "step_random",
-    "train_steps_per_sweep": 0,
-    "train_timestamp_start": 0,
-    "train_timestamp_end": 0,
-    "valid_timestamp_start": 0,
-    "valid_timestamp_end": 0,
-    "deterministic": True,
-    "validation_probe_mode": "none",
-    "early_stopping_metric": "auc",
-}
-
-
-def normalize_pcvr_train_config_compat(config: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = dict(config)
-    legacy_aliases = {
-        "steps_per_epoch": "train_steps_per_sweep",
-        "patience": "patience_steps",
-    }
-    for old_key, new_key in legacy_aliases.items():
-        if new_key not in normalized and old_key in normalized:
-            normalized[new_key] = normalized[old_key]
-        normalized.pop(old_key, None)
-    for key, value in PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS.items():
-        normalized.setdefault(key, value)
-    return normalized

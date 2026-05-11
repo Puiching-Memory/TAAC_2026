@@ -27,6 +27,7 @@ from taac2026.infrastructure.data.step_dataset import PCVRStepDataset, PCVRStepI
 from taac2026.infrastructure.data.transforms import (
 	PCVRDomainDropoutTransform,
 	PCVRFeatureMaskTransform,
+	PCVRNonSequentialSparseDropoutTransform,
 	PCVRSequenceCropTransform,
 	build_pcvr_batch_transform,
 	build_pcvr_batch_transforms,
@@ -41,6 +42,7 @@ __all__ = [
 	"PCVRDomainDropoutTransform",
 	"PCVRFeatureMaskTransform",
 	"PCVRMemoryBatchCache",
+	"PCVRNonSequentialSparseDropoutTransform",
 	"PCVRParquetDataset",
 	"PCVRSequenceCropTransform",
 	"PCVRSharedBatchCache",

@@ -131,16 +131,6 @@ class PCVRTrainCLIArgs:
 _PATH_CLI_FIELD_NAMES = frozenset({"data_dir", "schema_path", "ckpt_dir", "log_dir", "tf_events_dir"})
 _SPECIAL_CLI_FIELD_NAMES = _PATH_CLI_FIELD_NAMES | frozenset({"loss_terms", "loss_weight_overrides"})
 _BASE_CLI_FIELD_NAMES = frozenset(item.name for item in fields(PCVRTrainCLIArgs))
-_LEGACY_BOOLEAN_FLAG_ALIASES = {
-    "--no_time_buckets": "--no-use_time_buckets",
-    "--no-time-buckets": "--no-use-time-buckets",
-}
-
-
-def _normalize_legacy_boolean_flags(argv: Sequence[str] | None) -> Sequence[str] | None:
-    if argv is None:
-        return None
-    return tuple(_LEGACY_BOOLEAN_FLAG_ALIASES.get(arg, arg) for arg in argv)
 
 
 def _flat_config_value_type(default: Any) -> type[Any] | object:
@@ -211,7 +201,7 @@ def _parse_pcvr_train_cli_args(
     parsed = tyro.cli(
         parser_type,
         description="Train a PCVR experiment",
-        args=_normalize_legacy_boolean_flags(argv),
+        args=argv,
         default=_pcvr_train_cli_default(
             parser_type,
             defaults=defaults,

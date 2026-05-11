@@ -11,6 +11,7 @@ from taac2026.domain.config import (
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
+    PCVRNonSequentialSparseDropoutConfig,
     PCVRLossConfig,
     PCVRLossTermConfig,
     PCVRModelConfig,
@@ -619,6 +620,7 @@ def test_pcvr_train_config_serializes_structured_data_pipeline() -> None:
                     seq_window_min_len=8,
                 ),
                 PCVRFeatureMaskConfig(probability=0.05),
+                PCVRNonSequentialSparseDropoutConfig(probability=0.15),
                 PCVRDomainDropoutConfig(probability=0.1),
             ),
         )
@@ -641,6 +643,7 @@ def test_pcvr_train_config_serializes_structured_data_pipeline() -> None:
                 "seq_window_min_len": 8,
             },
             {"name": "feature_mask", "enabled": True, "probability": 0.05},
+            {"name": "nonseq_sparse_dropout", "enabled": True, "probability": 0.15},
             {"name": "domain_dropout", "enabled": True, "probability": 0.1},
         ],
     }

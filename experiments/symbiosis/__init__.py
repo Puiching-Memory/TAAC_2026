@@ -19,6 +19,7 @@ from taac2026.api import (
     PCVRLossTermConfig,
     PCVRModelConfig,
     PCVRNSConfig,
+    PCVRNonSequentialSparseDropoutConfig,
     PCVROptimizerConfig,
     PCVRSparseOptimizerConfig,
     PCVRTrainConfig,
@@ -62,6 +63,12 @@ class SymbiosisModelDefaults:
     memory_block_size: int = 32
     memory_top_k: int = 8
     recent_tokens: int = 32
+    sequence_recent_output_tokens: int = 12
+    sequence_memory_output_tokens: int = 8
+    use_sequence_temporal_encoder: bool = True
+    ns_tokenizer_mode: str = "group"
+    use_structured_fusion: bool = True
+    cross_token_count: int = 6
     compile_fusion_core: bool = True
     shortcut_dropout_rate: float = 0.08
     compress_large_ids: bool = True
@@ -82,6 +89,12 @@ class SymbiosisModelDefaults:
             "symbiosis_memory_block_size": self.memory_block_size,
             "symbiosis_memory_top_k": self.memory_top_k,
             "symbiosis_recent_tokens": self.recent_tokens,
+            "symbiosis_sequence_recent_output_tokens": self.sequence_recent_output_tokens,
+            "symbiosis_sequence_memory_output_tokens": self.sequence_memory_output_tokens,
+            "symbiosis_use_sequence_temporal_encoder": self.use_sequence_temporal_encoder,
+            "symbiosis_ns_tokenizer_mode": self.ns_tokenizer_mode,
+            "symbiosis_use_structured_fusion": self.use_structured_fusion,
+            "symbiosis_cross_token_count": self.cross_token_count,
             "symbiosis_compile_fusion_core": self.compile_fusion_core,
             "symbiosis_shortcut_dropout_rate": self.shortcut_dropout_rate,
             "symbiosis_compress_large_ids": self.compress_large_ids,
@@ -97,6 +110,12 @@ SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS = {
     "symbiosis_compress_large_ids": False,
     "symbiosis_use_missing_signals": False,
     "symbiosis_use_sequence_stats": False,
+    "symbiosis_sequence_recent_output_tokens": 1,
+    "symbiosis_sequence_memory_output_tokens": 1,
+    "symbiosis_use_sequence_temporal_encoder": False,
+    "symbiosis_ns_tokenizer_mode": "random_chunk",
+    "symbiosis_use_structured_fusion": False,
+    "symbiosis_cross_token_count": 1,
 }
 SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
 
@@ -232,6 +251,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         cache=PCVRDataCacheConfig(mode="none", max_batches=0),
         transforms=(
             PCVRFeatureMaskConfig(probability=0.03),
+            PCVRNonSequentialSparseDropoutConfig(probability=0.10),
             PCVRDomainDropoutConfig(probability=0.02),
         ),
         seed=42,
@@ -262,11 +282,11 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         reinit_cardinality_threshold=0,
     ),
     model=PCVRModelConfig(
-        d_model=64,
-        emb_dim=64,
+        d_model=256,
+        emb_dim=256,
         num_queries=1,
-        num_blocks=2,
-        num_heads=4,
+        num_blocks=4,
+        num_heads=8,
         seq_encoder_type="transformer",
         hidden_mult=4,
         dropout_rate=0.04,
@@ -282,8 +302,8 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         gradient_checkpointing=False,
     ),
     validation=PCVRValidationConfig(
-        probe_mode="drop_nonseq_sparse",
-        early_stopping_metric="probe_auc",
+        probe_mode="none",
+        early_stopping_metric="auc",
     ),
     ns=PCVRNSConfig(
         # NS token groups for parquet data. Values are fids, using the numeric suffix
@@ -311,8 +331,8 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
             "I4": [9, 10],
         },
         tokenizer_type="rankmixer",
-        user_tokens=5,
-        item_tokens=2,
+        user_tokens=7,
+        item_tokens=4,
     ),
 )
 

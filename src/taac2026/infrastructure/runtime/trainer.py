@@ -272,8 +272,20 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         self.early_stopping_metric = str(early_stopping_metric).strip().lower()
         if self.early_stopping_metric not in PCVR_EARLY_STOPPING_METRIC_CHOICES:
             raise ValueError(f"unsupported early stopping metric: {early_stopping_metric}")
-        if self.validation_probe_mode == "none" and self.early_stopping_metric.startswith("probe_"):
-            raise ValueError("probe early stopping metrics require validation_probe_mode != 'none'")
+        if self.validation_probe_mode != "none":
+            logger.info(
+                "validation_probe_mode={} is configured but training evaluation no longer runs a validation probe; "
+                "use data-pipeline training augmentation for sparse-drop robustness",
+                self.validation_probe_mode,
+            )
+        if self.early_stopping_metric.startswith("probe_"):
+            fallback_metric = "logloss" if self.early_stopping_metric == "probe_logloss" else "auc"
+            logger.warning(
+                "early_stopping_metric={} is no longer computed during training evaluation; using {} instead",
+                self.early_stopping_metric,
+                fallback_metric,
+            )
+            self.early_stopping_metric = fallback_metric
         self.train_config = train_config
         self.last_eval_diagnostics: dict[str, float | int] = {}
         self.last_eval_probe_diagnostics: dict[str, float | int] = {}
@@ -504,13 +516,12 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             else valid_iter
         )
         all_logits_list = []
-        all_probe_logits_list = [] if self.validation_probe_mode != "none" else None
         all_labels_list = []
         model_scalar_sums: dict[str, float] = {}
         model_scalar_counts: dict[str, int] = {}
         collect_model_scalars = self.reporter.should_collect_model_scalars(phase="valid", step=step, trainer=self)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for step_index, batch in pbar:
                 self._set_model_training_diagnostics_enabled(collect_model_scalars)
                 logits, labels = self._evaluate_step(batch)
@@ -519,10 +530,6 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
                 self._set_model_training_diagnostics_enabled(False)
                 all_logits_list.append(logits.detach())
                 all_labels_list.append(labels.detach())
-                if all_probe_logits_list is not None:
-                    probe_logits, _probe_labels = self._evaluate_step(batch, probe_mode=self.validation_probe_mode)
-                    all_probe_logits_list.append(probe_logits.detach())
-
                 current_batch = step_index + 1
                 if not use_tqdm and _should_log_progress(current_batch, total_valid_batches, log_interval):
                     self._log_loop_progress(
@@ -557,35 +564,6 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             self.last_eval_diagnostics["score_margin_mean"],
             self.last_eval_diagnostics["score_std"],
         )
-
-        if all_probe_logits_list is not None:
-            all_probe_logits = torch.cat(all_probe_logits_list, dim=0).float()
-            probe_auc, probe_logloss, probe_diagnostics = self._compute_validation_metrics(
-                all_probe_logits,
-                all_labels,
-                label="Evaluate probe",
-            )
-            auc_retention = self._auc_retention(auc, probe_auc)
-            self.last_eval_probe_diagnostics = probe_diagnostics
-            self.last_eval_probe_metrics = {
-                "auc": probe_auc,
-                "logloss": probe_logloss,
-                "auc_retention": auc_retention,
-            }
-            self.last_eval_metrics.update(
-                {
-                    "probe_auc": probe_auc,
-                    "probe_logloss": probe_logloss,
-                    "probe_auc_retention": auc_retention,
-                }
-            )
-            logger.info(
-                "Validation probe ({}) | AUC: {}, LogLoss: {}, retention: {}",
-                self.validation_probe_mode,
-                probe_auc,
-                probe_logloss,
-                auc_retention,
-            )
 
         return auc, logloss
 
@@ -663,46 +641,18 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         diagnostics = binary_score_diagnostics(labels_np, probabilities)
         return auc, logloss, diagnostics
 
-    def _auc_retention(self, full_auc: float, probe_auc: float) -> float:
-        full_uplift = float(full_auc) - 0.5
-        if full_uplift <= 1.0e-8:
-            return 0.0
-        return float((float(probe_auc) - 0.5) / full_uplift)
-
-    def _apply_validation_probe(self, device_batch: dict[str, Any], probe_mode: str) -> dict[str, Any]:
-        if probe_mode == "none":
-            return device_batch
-        probed_batch = dict(device_batch)
-        for feature_key in ("user_int_feats", "item_int_feats"):
-            value = probed_batch.get(feature_key)
-            if isinstance(value, torch.Tensor):
-                probed_batch[feature_key] = torch.zeros_like(value)
-        if probe_mode == "drop_all_sparse":
-            for domain in probed_batch.get("_seq_domains", ()):
-                value = probed_batch.get(domain)
-                if isinstance(value, torch.Tensor):
-                    probed_batch[domain] = torch.zeros_like(value)
-        return probed_batch
-
     def validation_metric_score(self, metric_name: str, val_auc: float, val_logloss: float) -> float:
         if metric_name == "auc":
             return float(val_auc)
         if metric_name == "logloss":
             return -float(val_logloss)
-        if metric_name == "probe_auc":
-            return float(self.last_eval_probe_metrics["auc"])
-        if metric_name == "probe_logloss":
-            return -float(self.last_eval_probe_metrics["logloss"])
-        if metric_name == "probe_auc_retention":
-            return float(self.last_eval_probe_metrics["auc_retention"])
         raise ValueError(f"unsupported validation metric: {metric_name}")
 
     def validation_early_stopping_score(self, val_auc: float, val_logloss: float) -> float:
         return self.validation_metric_score(self.early_stopping_metric, val_auc, val_logloss)
 
-    def _evaluate_step(self, batch: dict[str, Any], probe_mode: str = "none") -> tuple[torch.Tensor, torch.Tensor]:
+    def _evaluate_step(self, batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
         device_batch = self._batch_to_device(batch)
-        device_batch = self._apply_validation_probe(device_batch, probe_mode)
         label = device_batch["label"]
 
         model_input = self._make_model_input(device_batch)

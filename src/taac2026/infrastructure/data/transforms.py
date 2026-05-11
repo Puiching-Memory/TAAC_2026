@@ -9,6 +9,7 @@ from taac2026.domain.config import (
     PCVRDataTransformConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
+    PCVRNonSequentialSparseDropoutConfig,
     PCVRSequenceCropConfig,
 )
 from taac2026.infrastructure.data.batches import PCVRBatch, PCVRBatchTransform, clone_pcvr_batch, repeat_pcvr_rows
@@ -246,6 +247,57 @@ class PCVRFeatureMaskTransform:
                 time_buckets[row_index, :new_len] = selected_time
 
 
+class PCVRNonSequentialSparseDropoutTransform:
+    """Drop all non-sequence sparse fields for selected training rows."""
+
+    def __init__(self, config: PCVRNonSequentialSparseDropoutConfig) -> None:
+        self.config = config
+
+    def __call__(self, batch: PCVRBatch, *, generator: torch.Generator) -> PCVRBatch:
+        if not self.config.enabled:
+            return clone_pcvr_batch(batch)
+        augmented = clone_pcvr_batch(batch)
+        self._apply_nonseq_sparse_dropout(augmented, generator=generator)
+        return augmented
+
+    def _apply_nonseq_sparse_dropout(
+        self,
+        batch: PCVRBatch,
+        *,
+        generator: torch.Generator,
+    ) -> None:
+        probability = float(self.config.probability)
+        if probability <= 0.0:
+            return
+
+        row_count = 0
+        for feature_key in ("user_int_feats", "item_int_feats"):
+            features = batch.get(feature_key)
+            if isinstance(features, torch.Tensor) and features.ndim >= 1:
+                row_count = int(features.shape[0])
+                break
+        if row_count <= 0:
+            return
+
+        drop_rows = torch.rand(row_count, generator=generator) < probability
+        if not bool(drop_rows.any()):
+            return
+
+        for feature_key in ("user_int_feats", "item_int_feats"):
+            features = batch.get(feature_key)
+            if (
+                not isinstance(features, torch.Tensor)
+                or features.ndim < 1
+                or int(features.shape[0]) != row_count
+            ):
+                continue
+            features[drop_rows] = 0
+            missing_key = feature_key.replace("_feats", "_missing_mask")
+            missing = batch.get(missing_key)
+            if isinstance(missing, torch.Tensor) and missing.shape == features.shape:
+                missing[drop_rows] = True
+
+
 def build_pcvr_batch_transform(config: PCVRDataTransformConfig) -> PCVRBatchTransform:
     if isinstance(config, PCVRSequenceCropConfig):
         return PCVRSequenceCropTransform(config)
@@ -253,6 +305,8 @@ def build_pcvr_batch_transform(config: PCVRDataTransformConfig) -> PCVRBatchTran
         return PCVRFeatureMaskTransform(config)
     if isinstance(config, PCVRDomainDropoutConfig):
         return PCVRDomainDropoutTransform(config)
+    if isinstance(config, PCVRNonSequentialSparseDropoutConfig):
+        return PCVRNonSequentialSparseDropoutTransform(config)
     raise TypeError(f"unsupported PCVR data transform config: {type(config).__name__}")
 
 
@@ -267,7 +321,10 @@ def build_pcvr_batch_transforms(config: PCVRDataPipelineConfig) -> tuple[PCVRBat
 def _is_noop_pcvr_batch_transform_config(config: PCVRDataTransformConfig) -> bool:
     if isinstance(config, PCVRSequenceCropConfig):
         return config.views_per_row <= 1 and config.seq_window_mode == "tail"
-    if isinstance(config, (PCVRFeatureMaskConfig, PCVRDomainDropoutConfig)):
+    if isinstance(
+        config,
+        (PCVRFeatureMaskConfig, PCVRDomainDropoutConfig, PCVRNonSequentialSparseDropoutConfig),
+    ):
         return float(config.probability) <= 0.0
     return False
 
@@ -275,6 +332,7 @@ def _is_noop_pcvr_batch_transform_config(config: PCVRDataTransformConfig) -> boo
 __all__ = [
     "PCVRDomainDropoutTransform",
     "PCVRFeatureMaskTransform",
+    "PCVRNonSequentialSparseDropoutTransform",
     "PCVRSequenceCropTransform",
     "build_pcvr_batch_transform",
     "build_pcvr_batch_transforms",

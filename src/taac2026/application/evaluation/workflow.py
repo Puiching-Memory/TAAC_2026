@@ -186,7 +186,7 @@ def default_run_prediction_loop(
     progress_log_every_rows = max(_PREDICTION_PROGRESS_LOG_EVERY_ROWS, context.batch_size)
     next_progress_log_rows = progress_log_every_rows
     started_at = time.perf_counter()
-    with torch.no_grad():
+    with torch.inference_mode():
         for batch_count, batch in enumerate(data_bundle.loader, start=1):
             model_input = batch_to_model_input(batch, context.model_module.ModelInput, context.runtime_device)
             with runtime_autocast_context(context.runtime_execution, context.runtime_device):

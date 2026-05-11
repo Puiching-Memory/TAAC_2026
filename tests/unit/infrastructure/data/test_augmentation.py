@@ -13,6 +13,7 @@ from taac2026.domain.config import (
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
     PCVRFeatureMaskConfig,
+    PCVRNonSequentialSparseDropoutConfig,
     PCVRSequenceCropConfig,
 )
 from taac2026.infrastructure.data import cache as cache_module
@@ -22,6 +23,7 @@ from taac2026.infrastructure.data.pipeline import (
     PCVRDomainDropoutTransform,
     PCVRFeatureMaskTransform,
     PCVRMemoryBatchCache,
+    PCVRNonSequentialSparseDropoutTransform,
     PCVRSharedBatchCache,
     PCVRSharedTensorSpec,
     PCVRSequenceCropTransform,
@@ -158,6 +160,26 @@ def test_feature_masking_compacts_sequence_lengths() -> None:
         augmented["item_int_missing_mask"], torch.ones_like(augmented["item_int_missing_mask"])
     )
     assert torch.equal(augmented["seq_a_stats"], torch.zeros_like(augmented["seq_a_stats"]))
+
+
+def test_nonseq_sparse_dropout_masks_full_rows_without_touching_sequences() -> None:
+    batch = _make_batch()
+    batch["user_int_missing_mask"] = torch.zeros_like(batch["user_int_feats"], dtype=torch.bool)
+    batch["item_int_missing_mask"] = torch.zeros_like(batch["item_int_feats"], dtype=torch.bool)
+    original_sequence = batch["seq_a"].clone()
+    original_lengths = batch["seq_a_len"].clone()
+    original_dense = batch["user_dense_feats"].clone()
+    transform = PCVRNonSequentialSparseDropoutTransform(PCVRNonSequentialSparseDropoutConfig(probability=1.0))
+
+    augmented = transform(batch, generator=torch.Generator().manual_seed(11))
+
+    assert torch.equal(augmented["user_int_feats"], torch.zeros_like(augmented["user_int_feats"]))
+    assert torch.equal(augmented["item_int_feats"], torch.zeros_like(augmented["item_int_feats"]))
+    assert torch.equal(augmented["user_int_missing_mask"], torch.ones_like(augmented["user_int_missing_mask"]))
+    assert torch.equal(augmented["item_int_missing_mask"], torch.ones_like(augmented["item_int_missing_mask"]))
+    assert torch.equal(augmented["seq_a"], original_sequence)
+    assert torch.equal(augmented["seq_a_len"], original_lengths)
+    assert torch.equal(augmented["user_dense_feats"], original_dense)
 
 
 def test_augmentation_is_reproducible_with_fixed_generator_seed() -> None:

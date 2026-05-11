@@ -392,7 +392,7 @@ def test_load_train_config_requires_complete_sidecar(tmp_path: Path) -> None:
         experiment._load_train_config(checkpoint_dir)
 
 
-def test_load_train_config_backfills_data_split_defaults(tmp_path: Path) -> None:
+def test_load_train_config_raises_on_missing_data_split_keys(tmp_path: Path) -> None:
     experiment = _make_experiment(tmp_path)
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
@@ -411,36 +411,8 @@ def test_load_train_config_backfills_data_split_defaults(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    loaded = experiment._load_train_config(checkpoint_dir)
-
-    assert loaded["split_strategy"] == "row_group_tail"
-    assert loaded["train_timestamp_start"] == 0
-    assert loaded["train_timestamp_end"] == 0
-    assert loaded["valid_timestamp_start"] == 0
-    assert loaded["valid_timestamp_end"] == 0
-    assert loaded["deterministic"] is True
-
-
-def test_load_train_config_normalizes_legacy_step_keys(tmp_path: Path) -> None:
-    experiment = _make_experiment(tmp_path)
-    checkpoint_dir = tmp_path / "checkpoint"
-    checkpoint_dir.mkdir()
-    config = PCVRTrainConfig().to_flat_dict()
-    config["patience"] = 77
-    config["steps_per_epoch"] = 88
-    config.pop("patience_steps")
-    config.pop("train_steps_per_sweep")
-    (checkpoint_dir / "train_config.json").write_text(
-        dumps(build_pcvr_train_config_sidecar(config)),
-        encoding="utf-8",
-    )
-
-    loaded = experiment._load_train_config(checkpoint_dir)
-
-    assert loaded["patience_steps"] == 77
-    assert loaded["train_steps_per_sweep"] == 88
-    assert "patience" not in loaded
-    assert "steps_per_epoch" not in loaded
+    with pytest.raises(KeyError, match="split_strategy"):
+        experiment._load_train_config(checkpoint_dir)
 
 
 def test_infer_uses_train_config_runtime_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

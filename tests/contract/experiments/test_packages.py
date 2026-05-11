@@ -260,12 +260,18 @@ def test_symbiosis_sequence_memory_defaults_to_role_token_budget() -> None:
     assert len(pieces) == len(model.sequence_memory.seq_domains)
     assert len(masks) == len(pieces)
     assert domain_indices == list(range(len(model.sequence_memory.seq_domains)))
-    assert model.num_sequence_tokens == 3 * len(model.sequence_memory.seq_domains)
-    assert [tensor.shape[1] for tensor in pieces] == [3] * len(pieces)
-    assert [mask.shape[1] for mask in masks] == [3] * len(masks)
+    expected_tokens_per_domain = model.sequence_memory.tokens_per_domain
+    assert expected_tokens_per_domain == (
+        model.symbiosis_sequence_recent_output_tokens
+        + model.symbiosis_sequence_memory_output_tokens
+        + 1
+    )
+    assert model.num_sequence_tokens == expected_tokens_per_domain * len(model.sequence_memory.seq_domains)
+    assert [tensor.shape[1] for tensor in pieces] == [expected_tokens_per_domain] * len(pieces)
+    assert [mask.shape[1] for mask in masks] == [expected_tokens_per_domain] * len(masks)
 
 
-def test_symbiosis_role_tokens_produce_three_tokens_per_domain() -> None:
+def test_symbiosis_role_tokens_produce_configured_tokens_per_domain() -> None:
     experiment_case = get_experiment_case("experiments/symbiosis")
     model_module = load_model_module(experiment_case)
     model = _make_model(experiment_case, model_module)
@@ -276,8 +282,8 @@ def test_symbiosis_role_tokens_produce_three_tokens_per_domain() -> None:
     pieces, masks, _domain_indices = model.sequence_memory(model_input, query)
 
     assert len(pieces) == len(model.sequence_memory.seq_domains)
-    assert all(tensor.shape[1] == 3 for tensor in pieces)
-    assert all(mask.shape[1] == 3 for mask in masks)
+    assert all(tensor.shape[1] == model.sequence_memory.tokens_per_domain for tensor in pieces)
+    assert all(mask.shape[1] == model.sequence_memory.tokens_per_domain for mask in masks)
 
 
 def test_symbiosis_tensorboard_diagnostics_report_role_token_health() -> None:
@@ -285,6 +291,17 @@ def test_symbiosis_tensorboard_diagnostics_report_role_token_health() -> None:
     model_module = load_model_module(experiment_case)
     model = _make_model(experiment_case, model_module)
     model_input = _sample_model_input(model_module)
+    user_sparse, _user_mask, item_sparse, _item_mask = model._sparse_tokens(model_input)
+    query = model.sequence_query_projection(torch.cat([user_sparse.mean(dim=1), item_sparse.mean(dim=1)], dim=-1))
+    with torch.no_grad():
+        _pieces, masks, _domain_indices = model.sequence_memory(model_input, query)
+    valid_total = sum(float((~mask).sum().item()) for mask in masks)
+    slot_total = sum(float(mask.numel()) for mask in masks)
+    expected_active_mean = valid_total / float(model_input.user_int_feats.shape[0])
+    seq_a_index = model.sequence_memory.seq_domains.index("seq_a")
+    seq_a_valid = float((~masks[seq_a_index]).sum().item())
+    seq_a_slots = float(masks[seq_a_index].numel())
+    seq_a_active_mean = seq_a_valid / float(model_input.user_int_feats.shape[0])
 
     model.set_tensorboard_diagnostics_enabled(True)
     model.eval()
@@ -293,18 +310,17 @@ def test_symbiosis_tensorboard_diagnostics_report_role_token_health() -> None:
 
     scalars = model.consume_tensorboard_scalars(phase="train")
 
-    valid_roles_per_domain = model.sequence_memory.tokens_per_domain - 1
     assert scalars["Symbiosis/token_health/train/all/latent_valid_ratio"] == pytest.approx(
-        valid_roles_per_domain / model.sequence_memory.tokens_per_domain
+        valid_total / slot_total
     )
     assert scalars["Symbiosis/token_health/train/all/active_latent_tokens_mean"] == pytest.approx(
-        valid_roles_per_domain * len(model.sequence_memory.seq_domains)
+        expected_active_mean
     )
     assert scalars["Symbiosis/token_health/train/seq_a/latent_valid_ratio"] == pytest.approx(
-        valid_roles_per_domain / model.sequence_memory.tokens_per_domain
+        seq_a_valid / seq_a_slots
     )
     assert scalars["Symbiosis/token_health/train/seq_a/active_latent_tokens_mean"] == pytest.approx(
-        valid_roles_per_domain
+        seq_a_active_mean
     )
     assert scalars["Symbiosis/token_health/train/seq_a/empty_sequence_rate"] == pytest.approx(0.0)
     assert scalars["Symbiosis/token_health/train/seq_a/seq_len_mean"] == pytest.approx(3.0)
@@ -357,7 +373,7 @@ def test_symbiosis_shortcut_dropout_masks_shortcut_spans_during_training() -> No
         assert not padding_mask[:, start:end].all()
 
 
-def test_symbiosis_role_sequence_reader_tokenizes_compact_raw_window(
+def test_symbiosis_role_sequence_reader_tokenizes_full_raw_sequence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     experiment_case = get_experiment_case("experiments/symbiosis")
@@ -368,6 +384,8 @@ def test_symbiosis_role_sequence_reader_tokenizes_compact_raw_window(
         overrides={
             "symbiosis_recent_tokens": 4,
             "symbiosis_memory_top_k": 2,
+            "symbiosis_sequence_recent_output_tokens": 4,
+            "symbiosis_sequence_memory_output_tokens": 2,
         },
     )
     model_input = _sample_model_input(model_module)._replace(
@@ -400,7 +418,7 @@ def test_symbiosis_role_sequence_reader_tokenizes_compact_raw_window(
 
     model.sequence_memory(model_input, query)
 
-    assert observed_lengths == [6, 6]
+    assert observed_lengths == [64, 48]
 
 
 def test_symbiosis_sequence_memory_uses_learned_compression_and_sparse_indexer() -> None:
@@ -521,7 +539,12 @@ def test_symbiosis_keeps_sequence_width_stable_for_compile() -> None:
     model = _make_model(
         experiment_case,
         model_module,
-        overrides={"symbiosis_recent_tokens": 4, "symbiosis_memory_top_k": 2},
+        overrides={
+            "symbiosis_recent_tokens": 4,
+            "symbiosis_memory_top_k": 2,
+            "symbiosis_sequence_recent_output_tokens": 4,
+            "symbiosis_sequence_memory_output_tokens": 2,
+        },
     )
     model_input = model_module.ModelInput(
         user_int_feats=torch.tensor([[1, 2, 3], [4, 0, 1]], dtype=torch.long),
@@ -552,8 +575,9 @@ def test_symbiosis_keeps_sequence_width_stable_for_compile() -> None:
     query = model.sequence_query_projection(torch.cat([user_sparse.mean(dim=1), item_sparse.mean(dim=1)], dim=-1))
     pieces, masks, _domain_indices = model.sequence_memory(model_input, query)
 
-    assert [tensor.shape[1] for tensor in pieces] == [3, 3]
-    assert [mask.shape[1] for mask in masks] == [3, 3]
+    expected_tokens_per_domain = model.sequence_memory.tokens_per_domain
+    assert [tensor.shape[1] for tensor in pieces] == [expected_tokens_per_domain, expected_tokens_per_domain]
+    assert [mask.shape[1] for mask in masks] == [expected_tokens_per_domain, expected_tokens_per_domain]
 
 
 def test_safe_key_padding_mask_unmasks_first_position_for_fully_padded_rows() -> None:
@@ -618,20 +642,20 @@ def test_symbiosis_unified_stage_uses_compact_context_tokens(monkeypatch: pytest
     observed_unified_token_counts: list[int] = []
     original_forward = model.blocks[0].forward
 
-    def recording_forward(tokens, padding_mask):
+    def recording_forward(tokens, padding_mask, attention_mask=None):
         observed_unified_token_counts.append(int(tokens.shape[1]))
-        return original_forward(tokens, padding_mask)
+        return original_forward(tokens, padding_mask, attention_mask)
 
     monkeypatch.setattr(model.blocks[0], "forward", recording_forward)
 
     logits = model(model_input)
 
-    sequence_token_count = sum(int(sequence.shape[2]) for sequence in model_input.seq_data.values())
     context_token_count = model._encode_tokens(model_input)[0].shape[1]
 
     assert logits.shape == (2, 1)
     assert observed_unified_token_counts == [context_token_count]
-    assert context_token_count < sequence_token_count + model.num_ns
+    assert context_token_count == model.num_ns + model.num_sequence_tokens
+    assert model.num_sequence_tokens == model.sequence_memory.tokens_per_domain * len(model.sequence_memory.seq_domains)
 
 
 def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
@@ -669,5 +693,5 @@ def test_symbiosis_ablation_flags_disable_optional_modules() -> None:
 
     assert logits.shape == (2, 1)
     assert predicted_logits.shape == (2, 1)
-    assert embeddings.shape == (2, model.d_model * 5)
+    assert embeddings.shape == (2, model.d_model * len(model._CLASSIFIER_SPAN_NAMES))
     assert torch.isfinite(logits).all()

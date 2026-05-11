@@ -146,8 +146,10 @@ class _SparseProbeDummyModel(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.bias = torch.nn.Parameter(torch.zeros(1))
+        self.forward_calls = 0
 
     def forward(self, model_input):
+        self.forward_calls += 1
         sparse_score = model_input.user_int_feats[:, 0].float() + model_input.item_int_feats[:, 0].float()
         return (sparse_score - 0.5 + self.bias).view(-1, 1)
 
@@ -730,9 +732,10 @@ def test_evaluate_records_score_diagnostics(tmp_path, log_capture) -> None:
     assert "Validation score diagnostics" in log_capture.text
 
 
-def test_evaluate_records_sparse_drop_probe_metrics(tmp_path) -> None:
+def test_evaluate_does_not_run_legacy_sparse_drop_probe(tmp_path) -> None:
+    model = _SparseProbeDummyModel()
     trainer = PCVRPointwiseTrainer(
-        model=_SparseProbeDummyModel(),
+        model=model,
         model_input_type=_DummyModelInput,
         train_loader=[],
         valid_loader=[_sparse_probe_batch()],
@@ -749,12 +752,14 @@ def test_evaluate_records_sparse_drop_probe_metrics(tmp_path) -> None:
 
     assert auc == 1.0
     assert math.isfinite(logloss)
-    assert trainer.last_eval_probe_metrics["auc"] == pytest.approx(0.5)
-    assert trainer.last_eval_probe_metrics["auc_retention"] == pytest.approx(0.0)
-    assert trainer.validation_early_stopping_score(auc, logloss) == pytest.approx(0.5)
+    assert model.forward_calls == 1
+    assert trainer.early_stopping_metric == "auc"
+    assert trainer.last_eval_probe_metrics == {}
+    assert "probe_auc" not in trainer.last_eval_metrics
+    assert trainer.validation_early_stopping_score(auc, logloss) == pytest.approx(1.0)
 
 
-def test_validation_result_uses_configured_probe_early_stopping_metric(tmp_path) -> None:
+def test_validation_result_uses_auc_for_legacy_probe_early_stopping_metric(tmp_path) -> None:
     early_stopping = EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2)
     trainer = PCVRPointwiseTrainer(
         model=_SparseProbeDummyModel(),
@@ -770,14 +775,13 @@ def test_validation_result_uses_configured_probe_early_stopping_metric(tmp_path)
         early_stopping_metric="probe_auc",
     )
     trainer.last_eval_diagnostics = {"sample_count": 2}
-    trainer.last_eval_probe_metrics = {"auc": 0.6, "logloss": 0.4, "auc_retention": 0.5}
-    trainer.last_eval_probe_diagnostics = {"sample_count": 2}
 
     trainer._handle_validation_result(total_step=1, val_auc=0.95, val_logloss=0.2)
 
-    assert early_stopping.best_score == pytest.approx(0.6)
+    assert trainer.early_stopping_metric == "auc"
+    assert early_stopping.best_score == pytest.approx(0.95)
     assert early_stopping.best_extra_metrics is not None
-    assert early_stopping.best_extra_metrics["early_stopping_metric"] == "probe_auc"
+    assert early_stopping.best_extra_metrics["early_stopping_metric"] == "auc"
     assert early_stopping.best_extra_metrics["best_val_AUC"] == pytest.approx(0.95)
 
 
@@ -793,21 +797,16 @@ def test_validation_result_saves_current_step_checkpoint(tmp_path) -> None:
         device="cpu",
         save_dir=tmp_path / "checkpoints",
         early_stopping=early_stopping,
-        validation_probe_mode="drop_nonseq_sparse",
-        early_stopping_metric="probe_auc",
     )
     trainer.last_eval_diagnostics = {"sample_count": 2}
-    trainer.last_eval_probe_diagnostics = {"sample_count": 2}
 
-    trainer.last_eval_probe_metrics = {"auc": 0.6, "logloss": 0.4, "auc_retention": 0.5}
     trainer._handle_validation_result(total_step=1, val_auc=0.90, val_logloss=0.2)
-    trainer.last_eval_probe_metrics = {"auc": 0.55, "logloss": 0.5, "auc_retention": 0.25}
     trainer._handle_validation_result(total_step=2, val_auc=0.95, val_logloss=0.25)
 
     checkpoint_root = tmp_path / "checkpoints"
     assert (checkpoint_root / "global_step1" / "model.safetensors").exists()
     assert (checkpoint_root / "global_step2" / "model.safetensors").exists()
-    assert early_stopping.best_score == pytest.approx(0.6)
+    assert early_stopping.best_score == pytest.approx(0.95)
 
 
 class _NaNProducingModel(torch.nn.Module):
