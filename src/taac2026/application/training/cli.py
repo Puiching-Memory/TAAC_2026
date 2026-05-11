@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +11,7 @@ import tyro
 
 from taac2026.domain.requests import TrainRequest, default_run_dir
 from taac2026.application.experiments.registry import load_experiment_package
+from taac2026.application.shared import experiment_kind, experiment_requires_dataset, is_bundle_mode
 from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.io.rich_output import print_rich_summary
 from taac2026.infrastructure.io.streams import write_stdout_line
@@ -33,26 +33,6 @@ def parse_train_args(argv: Sequence[str] | None = None) -> tuple[TrainCLIArgs, l
         args=argv,
         return_unknown_args=True,
     )
-
-
-def _experiment_requires_dataset(experiment: object) -> bool:
-    metadata = getattr(experiment, "metadata", {})
-    if not isinstance(metadata, dict):
-        return True
-    requires_dataset = metadata.get("requires_dataset", True)
-    return bool(requires_dataset) if isinstance(requires_dataset, bool) else True
-
-
-def _experiment_kind(experiment: object) -> str | None:
-    metadata = getattr(experiment, "metadata", {})
-    if not isinstance(metadata, dict):
-        return None
-    kind = metadata.get("kind")
-    return kind if isinstance(kind, str) else None
-
-
-def _is_bundle_mode() -> bool:
-    return os.environ.get("TAAC_BUNDLE_MODE") == "1"
 
 
 def _format_train_summary(summary: dict[str, Any], *, experiment: str) -> None:
@@ -78,9 +58,9 @@ def _format_train_summary(summary: dict[str, Any], *, experiment: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args, extra_args = parse_train_args(argv)
     experiment = load_experiment_package(args.experiment)
-    if _experiment_kind(experiment) == "pcvr" and not _is_bundle_mode() and args.dataset_path is not None:
+    if experiment_kind(experiment) == "pcvr" and not is_bundle_mode() and args.dataset_path is not None:
         raise ValueError("local PCVR runs no longer accept --dataset-path; demo data is managed automatically")
-    if args.dataset_path is None and _experiment_requires_dataset(experiment) and (_experiment_kind(experiment) != "pcvr" or _is_bundle_mode()):
+    if args.dataset_path is None and experiment_requires_dataset(experiment) and (experiment_kind(experiment) != "pcvr" or is_bundle_mode()):
         raise ValueError(f"experiment {args.experiment!r} requires --dataset-path")
     run_dir = Path(args.run_dir) if args.run_dir else default_run_dir(args.experiment)
     request = TrainRequest(
