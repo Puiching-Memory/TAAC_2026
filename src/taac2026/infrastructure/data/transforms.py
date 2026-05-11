@@ -14,6 +14,43 @@ from taac2026.domain.config import (
 from taac2026.infrastructure.data.batches import PCVRBatch, PCVRBatchTransform, clone_pcvr_batch, repeat_pcvr_rows
 
 
+SEQUENCE_STATS_DIM = 6
+
+
+def _refresh_sequence_stats(batch: PCVRBatch, domain: str) -> None:
+    sequence = batch.get(domain)
+    lengths = batch.get(f"{domain}_len")
+    time_buckets = batch.get(f"{domain}_time_bucket")
+    if not isinstance(sequence, torch.Tensor) or not isinstance(lengths, torch.Tensor):
+        return
+    row_count = int(sequence.shape[0])
+    feature_count = int(sequence.shape[1])
+    max_len = int(sequence.shape[2])
+    stats = sequence.new_zeros((row_count, SEQUENCE_STATS_DIM), dtype=torch.float32)
+    for row_index in range(row_count):
+        length = min(max(int(lengths[row_index].item()), 0), max_len)
+        if length <= 0 or feature_count <= 0:
+            continue
+        row_tokens = sequence[row_index, :, :length]
+        active_events = (row_tokens > 0).any(dim=0)
+        active_count = int(active_events.sum().item())
+        if active_count <= 0:
+            continue
+        event_signatures = {
+            tuple(int(value) for value in row_tokens[:, event_index].detach().cpu().tolist())
+            for event_index in torch.nonzero(active_events, as_tuple=False).flatten().tolist()
+        }
+        unique_count = len(event_signatures)
+        stats[row_index, 0] = float(length)
+        stats[row_index, 1] = float(active_count)
+        stats[row_index, 2] = float(unique_count)
+        stats[row_index, 3] = 1.0 - float(unique_count) / float(max(1, active_count))
+        stats[row_index, 4] = float((row_tokens > 0).sum().item()) / float(max(1, length * feature_count))
+        if isinstance(time_buckets, torch.Tensor) and time_buckets.shape[1] > 0:
+            stats[row_index, 5] = float(time_buckets[row_index, length - 1].item())
+    batch[f"{domain}_stats"] = stats
+
+
 class PCVRSequenceCropTransform:
     """Create time-safe sequence views from each batch."""
 
@@ -36,9 +73,10 @@ class PCVRSequenceCropTransform:
             if not isinstance(sequence, torch.Tensor) or not isinstance(lengths, torch.Tensor):
                 continue
             if not isinstance(time_buckets, torch.Tensor):
-                time_buckets = torch.zeros(sequence.shape[0], sequence.shape[2], dtype=torch.long)
+                time_buckets = torch.zeros(sequence.shape[0], sequence.shape[2], dtype=torch.long, device=sequence.device)
                 batch[f"{domain}_time_bucket"] = time_buckets
             self._crop_domain(sequence, lengths, time_buckets, generator=generator)
+            _refresh_sequence_stats(batch, domain)
 
     def _crop_domain(
         self,
@@ -123,6 +161,7 @@ class PCVRDomainDropoutTransform:
             lengths[drop_mask] = 0
             if isinstance(time_buckets, torch.Tensor):
                 time_buckets[drop_mask] = 0
+            _refresh_sequence_stats(batch, domain)
 
 
 class PCVRFeatureMaskTransform:
@@ -148,6 +187,10 @@ class PCVRFeatureMaskTransform:
             if isinstance(features, torch.Tensor) and features.numel() > 0:
                 mask = torch.rand(features.shape, generator=generator) < probability
                 features[mask] = 0
+                missing_key = feature_key.replace("_feats", "_missing_mask")
+                missing = batch.get(missing_key)
+                if isinstance(missing, torch.Tensor) and missing.shape == features.shape:
+                    missing[mask] = True
 
         for domain in batch.get("_seq_domains", []):
             sequence = batch.get(domain)
@@ -168,6 +211,7 @@ class PCVRFeatureMaskTransform:
                     time_buckets if isinstance(time_buckets, torch.Tensor) else None,
                     row_mask=event_mask.any(dim=1),
                 )
+                _refresh_sequence_stats(batch, domain)
 
     def _compact_domain(
         self,

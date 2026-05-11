@@ -304,7 +304,7 @@ bash run.sh train --experiment experiments/baseline
 训练产物的关键约定：
 
 ```text
-global_step*.best_model/
+global_step*/
 ├── model.safetensors
 ├── schema.json
 └── train_config.json

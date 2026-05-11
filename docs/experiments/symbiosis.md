@@ -4,7 +4,7 @@ icon: lucide/zap
 
 # Symbiosis
 
-Symbiosis 是基于线上 EDA 结果重做的统一 PCVR 消融实验。它不再把用户-物品图、上下文交换、多尺度汇总、attention sink、lane mixing、伪 semantic id 等旧模块并联在一起，而是围绕 UniTok 思想做统一 token-stream 建模：稀疏 grouped token、dense packet、候选 token、长序列 latent memory token 和 item 侧强信号在同一个 backbone 里交互。当前默认路径采用固定预算 latent unification：序列域先在 raw 序列上选取最近窗口和少量历史锚点，再做事件 tokenization 和 target-aware latent pooling，避免把全长 raw 序列投影后直接塞进全局 self-attention。
+Symbiosis 是基于线上 EDA 结果重做的统一 PCVR 消融实验。它不再把用户-物品图、上下文交换、多尺度汇总、attention sink、lane mixing、伪 semantic id 等旧模块并联在一起，而是围绕 UniTok 思想做统一 token-stream 建模：随机分块稀疏 token、dense packet、候选 token、长序列 role token 和 item 侧强信号在同一个 backbone 里交互。当前默认路径采用固定预算 role-aware unification：每个序列域先在 raw 序列上选取最近窗口和少量历史锚点，再做事件 tokenization，输出 recent / memory / global 三个显式角色 token，避免把全长 raw 序列投影后直接塞进全局 self-attention。
 
 ## 快速运行
 
@@ -46,12 +46,12 @@ Symbiosis 的额外参数来自 `experiments/symbiosis/__init__.py` 中的 `Symb
 
 - 实验名：`pcvr_symbiosis`
 - 模型类：`PCVRSymbiosis`
-- 默认 backbone：固定预算 latent token-stream self-attention
+- 默认 backbone：固定预算 role-token self-attention
 - 默认层数：`num_blocks=2`
-- 默认序列 memory：raw recent window + 少量历史锚点 tokenization，再压缩成每域 target-aware latent tokens
+- 默认序列 memory：raw recent window + 少量历史锚点 tokenization，每域输出 recent / memory / global 三个 role tokens
 - 默认 optimizer：`muon`
 - 默认 scheduler：关闭
-- 默认数据增强：`sequence_crop` + `feature_mask` + `domain_dropout`，训练 batch cache 默认关闭
+- 默认验证 probe：`drop_nonseq_sparse`，早停监控 `probe_auc`；训练 batch cache 默认关闭
 - 默认运行时：AMP bf16 开启，`torch.compile` 开启；默认编译模型内部固定形状 fusion core，而不是整模型 forward
 - 默认 loss：单个 BCE loss term，`loss_terms=[{"name": "bce", "kind": "bce", "weight": 1.0}]`
 
@@ -72,28 +72,29 @@ runtime_hook_overrides={"load_train_config": load_symbiosis_train_config}
 
 前向大致分为：
 
-1. user / item 稀疏特征默认使用 RankMixer NS grouped token；打开字段 token 开关后按字段生成 raw token。
+1. user / item 稀疏特征默认使用固定 seed 的随机分块 token，避免手工字段组成为单一路径瓶颈。
 2. dense 特征默认做 `log1p(abs(x)) * sign(x)` 后拆成少量 packet token；关闭后退回单 dense token projector。
 3. user 与 item summary 生成 sequence query。
 4. 每个序列域先在 raw 序列上保留 `recent_tokens + memory_top_k` 个位置，再做事件 tokenization。
-5. 默认用 candidate-aware latent pooler 把每个序列域压缩成固定数量 latent memory token。
+5. 每个序列域输出 recent / memory / global 三个显式 role tokens；memory role 可使用 learned block compressor 和 query-relevant top-k。
 6. 可选 candidate token 以 item summary 初始化，保护 item 侧强信号。
-7. candidate、user、dense、sequence latent memory、item token 进入同一个 self-attention backbone。
-8. 输出拼接 candidate summary、context summary 和 item summary 后分类。
+7. 可选 user-item cross token 与 global context token 进入同一个 self-attention backbone。
+8. 输出拼接 candidate、cross、context、item、sequence 五段 summary 后分类。
 
-`predict()` 返回 `(logits, embeddings)`，其中 embeddings 是三段 summary 的拼接向量，形状为 `(B, d_model * 3)`。
+`predict()` 返回 `(logits, embeddings)`，其中 embeddings 是五段 summary 的拼接向量，形状为 `(B, d_model * 5)`。
 
 ## 消融参数
 
 | 开关                              | 控制                                                                    |
 | --------------------------------- | ----------------------------------------------------------------------- |
-| `symbiosis_use_field_tokens`      | 稀疏特征是否按字段 token 化；默认关闭，使用 NS grouped token            |
 | `symbiosis_use_dense_packets`     | dense 特征是否拆成 packet token 并做 log 缩放；关闭后使用单 dense token |
 | `symbiosis_use_sequence_memory`   | 是否加入序列 memory token                                               |
 | `symbiosis_use_compressed_memory` | sequence memory 中是否加入 learned compressed block top-k               |
 | `symbiosis_use_candidate_token`   | 是否加入候选 token                                                      |
 | `symbiosis_use_item_prior`        | 候选 token 和最终 summary 是否保留 item prior                           |
 | `symbiosis_use_domain_type`       | 是否给 user/item/dense/sequence memory 加 type embedding                |
+| `symbiosis_use_cross_token`       | 是否加入 user-item cross token                                          |
+| `symbiosis_use_global_token`      | 是否加入 global context token                                           |
 | `symbiosis_compile_fusion_core`   | 开启 `--compile` 时是否只编译模型内部固定形状 fusion core               |
 
 memory 参数只在 `symbiosis_use_sequence_memory=True` 时有意义：
@@ -101,17 +102,34 @@ memory 参数只在 `symbiosis_use_sequence_memory=True` 时有意义：
 - `symbiosis_memory_block_size`：压缩 block 大小，默认 `32`。
 - `symbiosis_memory_top_k`：每个序列域保留的 query-relevant block 数，默认 `8`。
 - `symbiosis_recent_tokens`：每个序列域保留的最近 token 数，默认 `32`。
-- `symbiosis_sequence_latent_tokens`：每个序列域进入全局 backbone 的 latent token 数，默认 `3`；设为 `0` 可回到 raw recent/block/global memory token 路径。
+
+稀疏 tokenization 由 `symbiosis_sparse_seed` 控制固定随机分块，默认 `2026`。序列 token budget 固定为每域 3 个 role tokens，不再提供自由 latent token 数量开关。
 
 推荐消融顺序：
 
-1. `--symbiosis-sequence-latent-tokens 0`：回到 raw recent/block/global memory token，验证 latent budget 对 AUC 和速度的影响。
-2. `--no-symbiosis-use-sequence-memory`：确认序列 memory 是否贡献排序信号。
-3. `--no-symbiosis-use-compressed-memory`：只保留 recent + global，检查压缩块是否值得推理成本。
-4. `--symbiosis-use-field-tokens`：对比字段级 raw token 与 NS grouped token。
-5. `--no-symbiosis-use-dense-packets`：检查 dense packet 和 log 缩放是否稳定。
-6. `--no-symbiosis-use-item-prior`：验证 item 侧强信号是否需要显式保护。
+1. `--no-symbiosis-use-sequence-memory`：确认序列 memory 是否贡献排序信号。
+2. `--no-symbiosis-use-compressed-memory`：只保留 recent + global，检查压缩块是否值得推理成本。
+3. `--no-symbiosis-use-cross-token` / `--no-symbiosis-use-global-token`：检查显式交叉 token 与全局上下文 token 的增益。
+4. `--no-symbiosis-use-dense-packets`：检查 dense packet 和 log 缩放是否稳定。
+5. `--no-symbiosis-use-item-prior`：验证 item 侧强信号是否需要显式保护。
+6. `--symbiosis-sparse-seed 2027`：检查随机分块稀疏 token 的稳定性。
 7. `--no-symbiosis-compile-fusion-core`：调试编译边界；配合 `--compile` 时会回到整模型编译路径。
+
+## 验证 Probe
+
+Symbiosis 默认开启 `validation_probe_mode="drop_nonseq_sparse"`，验证时会额外跑一遍 hard probe：把 `user_int_feats` 和 `item_int_feats` 置零，保留 dense 与序列输入，记录 `Probe/auc`、`Probe/logloss` 和 `Probe/auc_retention`。默认早停监控 `early_stopping_metric="probe_auc"`，仅用于早停判断；训练器会保存每次验证对应的普通 `global_step*/` checkpoint，发布哪个模型由平台侧选择。
+
+如果要回到旧行为，可以传：
+
+```bash
+bash run.sh train \
+  --experiment experiments/symbiosis \
+  --run-dir outputs/symbiosis_auc_stop \
+  --validation-probe-mode none \
+  --early-stopping-metric auc
+```
+
+如果要做更强的遮蔽诊断，可以使用 `--validation-probe-mode drop_all_sparse`，它会同时置零非序列 sparse 特征和各序列域 ID；这个 probe 更苛刻，通常更适合作为诊断曲线，不一定适合作为默认早停目标。
 
 ## 打包
 

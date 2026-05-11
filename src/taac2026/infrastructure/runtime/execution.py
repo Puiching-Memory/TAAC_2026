@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
 import os
@@ -28,7 +27,6 @@ from taac2026.domain.runtime_config import (
     parse_pcvr_loss_config_arg,
 )
 from taac2026.infrastructure.logging import configure_logging, logger
-from taac2026.infrastructure.checkpoints import save_checkpoint_state_dict
 
 
 def amp_dtype_to_torch_dtype(value: str | None) -> torch.dtype:
@@ -131,8 +129,6 @@ class EarlyStopping:
         self.best_score: float | None = None
         self.early_stop = False
         self.delta = delta
-        self.best_model: dict[str, torch.Tensor] | None = None
-        self.best_saved_score = 0.0
         self.best_extra_metrics: dict[str, Any] | None = None
         self.label = f"{label} " if label else ""
         self.best_step: int | None = None
@@ -161,10 +157,7 @@ class EarlyStopping:
         if self.best_score is None:
             self.best_score = score
             self.best_extra_metrics = extra_metrics
-            self.best_saved_score = 0.0
             self.best_step = current_step
-            self.save_checkpoint(score, model)
-            self.best_model = copy.deepcopy(model.state_dict())
         elif self._is_not_improved(score):
             assert self.best_step is not None
             self.counter = max(0, current_step - self.best_step)
@@ -179,18 +172,9 @@ class EarlyStopping:
         else:
             logger.info("{}earlyStopping counter reset!", self.label)
             self.best_score = score
-            self.best_model = copy.deepcopy(model.state_dict())
             self.best_extra_metrics = extra_metrics
             self.best_step = current_step
-            self.save_checkpoint(score, model)
             self.counter = 0
-
-    def save_checkpoint(self, score: float, model: nn.Module) -> None:
-        if self.verbose:
-            logger.info("Validation score increased. Saving model ...")
-        checkpoint_path = Path(self.checkpoint_path)
-        save_checkpoint_state_dict(model.state_dict(), checkpoint_path)
-        self.best_saved_score = score
 
 
 def set_seed(seed: int, *, deterministic: bool = True) -> None:

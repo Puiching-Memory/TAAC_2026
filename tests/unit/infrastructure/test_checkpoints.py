@@ -17,15 +17,15 @@ from taac2026.infrastructure.checkpoints import (
 )
 
 
-def test_resolve_checkpoint_prefers_best_model(tmp_path: Path) -> None:
+def test_resolve_checkpoint_uses_latest_step(tmp_path: Path) -> None:
     old_dir = tmp_path / "global_step1.layer=2"
-    best_dir = tmp_path / "global_step2.layer=2.best_model"
+    new_dir = tmp_path / "global_step2.layer=2"
     old_dir.mkdir()
-    best_dir.mkdir()
+    new_dir.mkdir()
     (old_dir / PRIMARY_CHECKPOINT_FILENAME).write_text("old", encoding="utf-8")
-    (best_dir / PRIMARY_CHECKPOINT_FILENAME).write_text("best", encoding="utf-8")
+    (new_dir / PRIMARY_CHECKPOINT_FILENAME).write_text("new", encoding="utf-8")
 
-    assert resolve_checkpoint_path(tmp_path) == best_dir / PRIMARY_CHECKPOINT_FILENAME
+    assert resolve_checkpoint_path(tmp_path) == new_dir / PRIMARY_CHECKPOINT_FILENAME
 
 
 def test_validate_checkpoint_name_rejects_non_global_step_prefix() -> None:
@@ -34,11 +34,11 @@ def test_validate_checkpoint_name_rejects_non_global_step_prefix() -> None:
 
 
 def test_build_checkpoint_dir_name_uses_global_step_prefix() -> None:
-    assert build_checkpoint_dir_name(12, {"layer": 2, "head": 4, "hidden": 64}, is_best=True) == "global_step12.layer=2.head=4.hidden=64.best_model"
+    assert build_checkpoint_dir_name(12, {"layer": 2, "head": 4, "hidden": 64}) == "global_step12.layer=2.head=4.hidden=64"
 
 
 def test_write_checkpoint_sidecars_persists_explicit_ns_group_config(tmp_path: Path) -> None:
-    checkpoint_dir = tmp_path / "global_step1.best_model"
+    checkpoint_dir = tmp_path / "global_step1"
     schema_path = tmp_path / "schema.json"
     schema_path.write_text('{"schema": true}\n', encoding="utf-8")
 
@@ -62,7 +62,7 @@ def test_write_checkpoint_sidecars_persists_explicit_ns_group_config(tmp_path: P
 
 
 def test_save_and_load_checkpoint_state_dict_round_trip(tmp_path: Path) -> None:
-    checkpoint_dir = tmp_path / "global_step3.best_model"
+    checkpoint_dir = tmp_path / "global_step3"
     state_dict = {
         "weight": torch.arange(6, dtype=torch.float32).reshape(2, 3),
         "bias": torch.tensor([1.5], dtype=torch.float32),

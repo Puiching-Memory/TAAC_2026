@@ -133,6 +133,9 @@ def test_domain_dropout_clears_sequence_tokens_lengths_and_time_buckets() -> Non
 
 def test_feature_masking_compacts_sequence_lengths() -> None:
     batch = _make_batch()
+    batch["user_int_missing_mask"] = torch.zeros_like(batch["user_int_feats"], dtype=torch.bool)
+    batch["item_int_missing_mask"] = torch.zeros_like(batch["item_int_feats"], dtype=torch.bool)
+    batch["seq_a_stats"] = torch.ones(2, 6, dtype=torch.float32)
     transform = PCVRFeatureMaskTransform(PCVRFeatureMaskConfig(probability=1.0))
 
     augmented = transform(batch, generator=torch.Generator().manual_seed(5))
@@ -148,6 +151,13 @@ def test_feature_masking_compacts_sequence_lengths() -> None:
     assert torch.equal(
         augmented["seq_a_time_bucket"], torch.zeros_like(augmented["seq_a_time_bucket"])
     )
+    assert torch.equal(
+        augmented["user_int_missing_mask"], torch.ones_like(augmented["user_int_missing_mask"])
+    )
+    assert torch.equal(
+        augmented["item_int_missing_mask"], torch.ones_like(augmented["item_int_missing_mask"])
+    )
+    assert torch.equal(augmented["seq_a_stats"], torch.zeros_like(augmented["seq_a_stats"]))
 
 
 def test_augmentation_is_reproducible_with_fixed_generator_seed() -> None:

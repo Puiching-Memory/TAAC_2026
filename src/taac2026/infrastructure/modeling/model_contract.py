@@ -18,6 +18,11 @@ class ModelInput(NamedTuple):
     seq_data: dict[str, torch.Tensor]
     seq_lens: dict[str, torch.Tensor]
     seq_time_buckets: dict[str, torch.Tensor]
+    user_int_missing_mask: torch.Tensor | None = None
+    item_int_missing_mask: torch.Tensor | None = None
+    user_dense_missing_mask: torch.Tensor | None = None
+    item_dense_missing_mask: torch.Tensor | None = None
+    seq_stats: dict[str, torch.Tensor] | None = None
 
 
 def parse_seq_max_lens(value: str) -> dict[str, int]:
@@ -169,6 +174,7 @@ def batch_to_model_input(batch: dict[str, Any], model_input_type: Any, device: t
     sequence_data: dict[str, torch.Tensor] = {}
     sequence_lengths: dict[str, torch.Tensor] = {}
     sequence_time_buckets: dict[str, torch.Tensor] = {}
+    sequence_stats: dict[str, torch.Tensor] = {}
     for domain in sequence_domains:
         sequence_data[domain] = device_batch[domain]
         sequence_lengths[domain] = device_batch[f"{domain}_len"]
@@ -178,15 +184,34 @@ def batch_to_model_input(batch: dict[str, Any], model_input_type: Any, device: t
             f"{domain}_time_bucket",
             torch.zeros(batch_size, max_length, dtype=torch.long, device=device),
         )
-    return model_input_type(
-        user_int_feats=device_batch["user_int_feats"],
-        item_int_feats=device_batch["item_int_feats"],
-        user_dense_feats=device_batch["user_dense_feats"],
-        item_dense_feats=device_batch["item_dense_feats"],
-        seq_data=sequence_data,
-        seq_lens=sequence_lengths,
-        seq_time_buckets=sequence_time_buckets,
-    )
+        sequence_stats[domain] = device_batch.get(
+            f"{domain}_stats",
+            torch.zeros(batch_size, 6, dtype=torch.float32, device=device),
+        )
+    payload = {
+        "user_int_feats": device_batch["user_int_feats"],
+        "item_int_feats": device_batch["item_int_feats"],
+        "user_dense_feats": device_batch["user_dense_feats"],
+        "item_dense_feats": device_batch["item_dense_feats"],
+        "seq_data": sequence_data,
+        "seq_lens": sequence_lengths,
+        "seq_time_buckets": sequence_time_buckets,
+        "user_int_missing_mask": device_batch.get("user_int_missing_mask", device_batch["user_int_feats"] <= 0),
+        "item_int_missing_mask": device_batch.get("item_int_missing_mask", device_batch["item_int_feats"] <= 0),
+        "user_dense_missing_mask": device_batch.get(
+            "user_dense_missing_mask",
+            torch.zeros_like(device_batch["user_dense_feats"], dtype=torch.bool),
+        ),
+        "item_dense_missing_mask": device_batch.get(
+            "item_dense_missing_mask",
+            torch.zeros_like(device_batch["item_dense_feats"], dtype=torch.bool),
+        ),
+        "seq_stats": sequence_stats,
+    }
+    field_names = getattr(model_input_type, "_fields", None)
+    if field_names is not None:
+        payload = {key: value for key, value in payload.items() if key in field_names}
+    return model_input_type(**payload)
 
 
 __all__ = [

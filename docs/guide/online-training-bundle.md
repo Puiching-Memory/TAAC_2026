@@ -248,7 +248,7 @@ uv run taac-package-train \
 
 **推理没有写出 `predictions.json`**
 
-检查 `EVAL_RESULT_PATH` 是否设置、目录是否可写，以及 `MODEL_OUTPUT_PATH` 是否能解析到 `model.safetensors`。`MODEL_OUTPUT_PATH` 可以是 checkpoint 文件，也可以是包含 `global_step*.best_model/` 的根目录。
+检查 `EVAL_RESULT_PATH` 是否设置、目录是否可写，以及 `MODEL_OUTPUT_PATH` 是否能解析到 `model.safetensors`。`MODEL_OUTPUT_PATH` 可以是 checkpoint 文件，也可以是包含 `global_step*/` 的根目录。
 
 ## 源码入口
 

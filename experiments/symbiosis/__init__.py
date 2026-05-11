@@ -13,6 +13,8 @@ from taac2026.api import (
     PCVRDataCacheConfig,
     PCVRDataConfig,
     PCVRDataPipelineConfig,
+    PCVRDomainDropoutConfig,
+    PCVRFeatureMaskConfig,
     PCVRLossConfig,
     PCVRLossTermConfig,
     PCVRModelConfig,
@@ -20,6 +22,7 @@ from taac2026.api import (
     PCVROptimizerConfig,
     PCVRSparseOptimizerConfig,
     PCVRTrainConfig,
+    PCVRValidationConfig,
 )
 from taac2026.api import create_pcvr_experiment
 from taac2026.application.evaluation.workflow import (
@@ -47,38 +50,55 @@ from taac2026.api import RuntimeExecutionConfig
 
 @dataclass(frozen=True, slots=True)
 class SymbiosisModelDefaults:
-    use_field_tokens: bool = False
     use_dense_packets: bool = True
     use_sequence_memory: bool = True
     use_compressed_memory: bool = True
     use_candidate_token: bool = True
     use_item_prior: bool = True
     use_domain_type: bool = True
+    use_cross_token: bool = True
+    use_global_token: bool = True
+    sparse_seed: int = 20260511
     memory_block_size: int = 32
     memory_top_k: int = 8
     recent_tokens: int = 32
-    sequence_latent_tokens: int = 3
     compile_fusion_core: bool = True
+    shortcut_dropout_rate: float = 0.08
+    compress_large_ids: bool = True
+    use_missing_signals: bool = True
+    use_sequence_stats: bool = True
 
     def to_flat_dict(self) -> dict[str, Any]:
         return {
-            "symbiosis_use_field_tokens": self.use_field_tokens,
             "symbiosis_use_dense_packets": self.use_dense_packets,
             "symbiosis_use_sequence_memory": self.use_sequence_memory,
             "symbiosis_use_compressed_memory": self.use_compressed_memory,
             "symbiosis_use_candidate_token": self.use_candidate_token,
             "symbiosis_use_item_prior": self.use_item_prior,
             "symbiosis_use_domain_type": self.use_domain_type,
+            "symbiosis_use_cross_token": self.use_cross_token,
+            "symbiosis_use_global_token": self.use_global_token,
+            "symbiosis_sparse_seed": self.sparse_seed,
             "symbiosis_memory_block_size": self.memory_block_size,
             "symbiosis_memory_top_k": self.memory_top_k,
             "symbiosis_recent_tokens": self.recent_tokens,
-            "symbiosis_sequence_latent_tokens": self.sequence_latent_tokens,
             "symbiosis_compile_fusion_core": self.compile_fusion_core,
+            "symbiosis_shortcut_dropout_rate": self.shortcut_dropout_rate,
+            "symbiosis_compress_large_ids": self.compress_large_ids,
+            "symbiosis_use_missing_signals": self.use_missing_signals,
+            "symbiosis_use_sequence_stats": self.use_sequence_stats,
         }
 
 
 SYMBIOSIS_MODEL_DEFAULTS = SymbiosisModelDefaults()
 SYMBIOSIS_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
+SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS = {
+    "symbiosis_shortcut_dropout_rate": SYMBIOSIS_MODEL_DEFAULTS.shortcut_dropout_rate,
+    "symbiosis_compress_large_ids": False,
+    "symbiosis_use_missing_signals": False,
+    "symbiosis_use_sequence_stats": False,
+}
+SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
 
 
 def _add_symbiosis_train_args(parser: Any) -> None:
@@ -98,9 +118,13 @@ def parse_symbiosis_train_args(
 
 
 def _resolve_symbiosis_model_kwargs(config: Mapping[str, Any]) -> dict[str, Any]:
+    defaults = SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict()
+    resolved_config = dict(config)
+    for key, default_value in SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS.items():
+        resolved_config.setdefault(key, default_value)
     return resolve_flat_config_values(
-        config,
-        SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict(),
+        resolved_config,
+        defaults,
         config_name="Symbiosis train_config",
     )
 
@@ -150,9 +174,8 @@ def build_symbiosis_train_model(
         checkpoint_dir=context.ckpt_dir,
     ).to(context.args.device)
 
-    num_sequences = len(data_bundle.dataset.seq_domains)
     num_ns = model.num_ns
-    sequence_tokens = int(getattr(model, "symbiosis_sequence_latent_tokens", 0)) * num_sequences
+    sequence_tokens = int(getattr(model, "num_sequence_tokens", 0))
     token_count = num_ns + sequence_tokens
     logger.info(
         "PCVR model created: class={}, num_ns={}, sequence_tokens={}, T={}, d_model={}, rank_mixer_mode={}",
@@ -192,7 +215,7 @@ def load_symbiosis_train_config(experiment: Any, checkpoint_dir: Path) -> dict[s
 TRAIN_DEFAULTS = PCVRTrainConfig(
     data=PCVRDataConfig(
         batch_size=128,
-        num_workers=4,
+        num_workers=8,
         buffer_batches=1,
         train_ratio=1.0,
         valid_ratio=0.1,
@@ -202,25 +225,28 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         train_timestamp_end=0,
         valid_timestamp_start=0,
         valid_timestamp_end=0,
-        eval_every_n_steps=1_000,
+        eval_every_n_steps=500,
         seq_max_lens="seq_a:256,seq_b:256,seq_c:512,seq_d:512",
     ),
     data_pipeline=PCVRDataPipelineConfig(
         cache=PCVRDataCacheConfig(mode="none", max_batches=0),
-        transforms=(),
+        transforms=(
+            PCVRFeatureMaskConfig(probability=0.03),
+            PCVRDomainDropoutConfig(probability=0.02),
+        ),
         seed=42,
         strict_time_filter=True,
     ),
     optimizer=PCVROptimizerConfig(
         lr=1e-4,
         max_steps=100_000,
-        patience_steps=5_000,
+        patience_steps=2500,
         seed=42,
         device=None,
         dense_optimizer_type="muon",
         scheduler_type="none",
-        warmup_steps=0,
-        min_lr_ratio=0.0,
+        warmup_steps=100,
+        min_lr_ratio=0.1,
     ),
     runtime=RuntimeExecutionConfig(
         amp=True,
@@ -230,7 +256,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
     ),
     loss=PCVRLossConfig(terms=(PCVRLossTermConfig(name="bce", kind="bce", weight=1.0),)),
     sparse_optimizer=PCVRSparseOptimizerConfig(
-        sparse_lr=0.05,
+        sparse_lr=0.01,
         sparse_weight_decay=0.0,
         reinit_sparse_every_n_steps=0,
         reinit_cardinality_threshold=0,
@@ -243,7 +269,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         num_heads=4,
         seq_encoder_type="transformer",
         hidden_mult=4,
-        dropout_rate=0.02,
+        dropout_rate=0.04,
         seq_top_k=64,
         seq_causal=False,
         action_num=1,
@@ -254,6 +280,10 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         emb_skip_threshold=1_000_000,
         seq_id_threshold=10000,
         gradient_checkpointing=False,
+    ),
+    validation=PCVRValidationConfig(
+        probe_mode="drop_nonseq_sparse",
+        early_stopping_metric="probe_auc",
     ),
     ns=PCVRNSConfig(
         # NS token groups for parquet data. Values are fids, using the numeric suffix

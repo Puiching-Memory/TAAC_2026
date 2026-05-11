@@ -73,7 +73,7 @@ bash run.sh train \
 
 ```text
 outputs/quickstart_baseline/
-└── global_step*.best_model/
+└── global_step*/
     ├── model.safetensors
     ├── schema.json
     └── train_config.json
@@ -92,7 +92,7 @@ bash run.sh val \
   --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
 
-传 `--run-dir` 时，运行时会在目录下自动寻找最新的 `global_step*.best_model/model.safetensors`。
+传 `--run-dir` 时，运行时会在目录下自动寻找最新的 `global_step*/model.safetensors`。
 
 评估会写出：
 
@@ -200,6 +200,6 @@ uv run taac-package-infer \
 | `uv is required but not found` | 本地安装 `uv`，或显式设置 `TAAC_RUNNER=python` 并确认依赖已安装 |
 | `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地 smoke 不传数据路径；维护实验例外 |
 | 找不到默认 `schema.json` | 传 `--schema-path docs/archive/files/schema/sample_1000_raw.schema.json` |
-| 找不到 checkpoint | 确认 `--run-dir` 或 `--checkpoint` 指向包含 `global_step*.best_model/` 的目录 |
+| 找不到 checkpoint | 确认 `--run-dir` 或 `--checkpoint` 指向包含 `global_step*/` 的目录 |
 | 推理缺 `train_config.json` 或 `schema.json` | checkpoint 目录不完整，需要使用训练产物目录而不是只拷贝权重 |
 | CUDA OOM | 降低 `--batch_size`、序列长度、模型宽度或改用 `--device cpu` 做链路检查 |

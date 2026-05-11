@@ -15,6 +15,7 @@ from torch.utils.data import IterableDataset
 from taac2026.domain.config import PCVRDataPipelineConfig
 from taac2026.infrastructure.data.batch_converter import (
     PCVRRecordBatchConverter,
+    SEQUENCE_STATS_DIM,
     build_pcvr_column_plan,
 )
 from taac2026.infrastructure.data.observation import (
@@ -361,6 +362,10 @@ class PCVRParquetDataset(IterableDataset):
                 shape=(self.batch_size, self.sequence_max_lengths[domain]),
                 dtype=torch.long,
             )
+            tensor_specs[f"{domain}_stats"] = PCVRSharedTensorSpec(
+                shape=(self.batch_size, SEQUENCE_STATS_DIM),
+                dtype=torch.float32,
+            )
         return tensor_specs
 
     def build_shared_batch_cache(self, num_workers: int) -> PCVRSharedBatchCache:
@@ -596,17 +601,33 @@ def _base_tensor_specs(
             shape=(batch_size, user_int_dim),
             dtype=torch.long,
         ),
+        "user_int_missing_mask": PCVRSharedTensorSpec(
+            shape=(batch_size, user_int_dim),
+            dtype=torch.bool,
+        ),
         "user_dense_feats": PCVRSharedTensorSpec(
             shape=(batch_size, user_dense_dim),
             dtype=torch.float32,
+        ),
+        "user_dense_missing_mask": PCVRSharedTensorSpec(
+            shape=(batch_size, user_dense_dim),
+            dtype=torch.bool,
         ),
         "item_int_feats": PCVRSharedTensorSpec(
             shape=(batch_size, item_int_dim),
             dtype=torch.long,
         ),
+        "item_int_missing_mask": PCVRSharedTensorSpec(
+            shape=(batch_size, item_int_dim),
+            dtype=torch.bool,
+        ),
         "item_dense_feats": PCVRSharedTensorSpec(
             shape=(batch_size, 0),
             dtype=torch.float32,
+        ),
+        "item_dense_missing_mask": PCVRSharedTensorSpec(
+            shape=(batch_size, 0),
+            dtype=torch.bool,
         ),
         "label": PCVRSharedTensorSpec(shape=(batch_size,), dtype=torch.long),
         "timestamp": PCVRSharedTensorSpec(shape=(batch_size,), dtype=torch.long),

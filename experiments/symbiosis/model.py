@@ -1,12 +1,14 @@
-"""Symbiosis v2: unified token-stream PCVR model.
+"""Symbiosis v3: unified token-stream PCVR model.
 
-This implementation keeps the experiment package focused on the current TAAC
-data shape: strong item-side fields, very long and repetitive sequence domains,
-and a latency-constrained inference path.  The ablation surface is intentionally
-small and maps to structural choices instead of legacy parallel readers.
+Explicit role tokens (recent/memory/global) replace the collapsed free-latent
+pooler.  SwiGLU FFN, gated pooling, cross/global interaction tokens, and
+random-chunk sparse tokenization are the default.
 """
 
 from __future__ import annotations
+
+import math
+import random
 
 import torch
 import torch.nn as nn
@@ -16,7 +18,6 @@ from taac2026.api import (
     EmbeddingParameterMixin,
     FeatureEmbeddingBank,
     ModelInput,
-    NonSequentialTokenizer,
     RMSNorm,
     SequenceTokenizer,
     choose_num_heads,
@@ -24,10 +25,16 @@ from taac2026.api import (
     make_padding_mask,
     masked_mean,
     maybe_gradient_checkpoint,
-    safe_key_padding_mask,
     scaled_dot_product_attention,
     sinusoidal_positions,
 )
+
+
+SEQUENCE_STATS_DIM = 6
+
+
+def _feature_width(feature_specs: list[tuple[int, int, int]]) -> int:
+    return max((offset + length for _vocab_size, offset, length in feature_specs), default=0)
 
 
 def configure_rms_norm_runtime(*, rms_norm_backend: str, rms_norm_block_rows: int) -> None:
@@ -37,35 +44,66 @@ def configure_rms_norm_runtime(*, rms_norm_backend: str, rms_norm_block_rows: in
     )
 
 
-class FieldTokenProjector(nn.Module):
-    """Projects each sparse field as a separate token for unified interaction."""
+def _torch_is_compiling() -> bool:
+    compiler = getattr(torch, "compiler", None)
+    is_compiling = getattr(compiler, "is_compiling", None)
+    if callable(is_compiling) and is_compiling():
+        return True
+    dynamo = getattr(torch, "_dynamo", None)
+    dynamo_is_compiling = getattr(dynamo, "is_compiling", None)
+    return bool(callable(dynamo_is_compiling) and dynamo_is_compiling())
 
+
+class RandomChunkNonSequentialTokenizer(nn.Module):
     def __init__(
         self,
         feature_specs: list[tuple[int, int, int]],
         emb_dim: int,
         d_model: int,
+        num_tokens: int,
         emb_skip_threshold: int,
+        compress_high_cardinality: bool,
+        seed: int,
     ) -> None:
         super().__init__()
-        self.bank = FeatureEmbeddingBank(feature_specs, emb_dim, emb_skip_threshold)
+        self.bank = FeatureEmbeddingBank(
+            feature_specs,
+            emb_dim,
+            emb_skip_threshold,
+            compress_high_cardinality=compress_high_cardinality,
+        )
         self.feature_count = len(feature_specs)
-        self.d_model = d_model
-        self.project = nn.Sequential(
-            nn.Linear(emb_dim, d_model),
-            nn.SiLU(),
-            nn.LayerNorm(d_model),
+        self.num_tokens = max(1, int(num_tokens)) if self.feature_count > 0 else 0
+        self.d_model = int(d_model)
+        indices = list(range(self.feature_count))
+        random.Random(int(seed)).shuffle(indices)
+        self.chunks = [indices[index :: self.num_tokens] for index in range(self.num_tokens)] if self.num_tokens > 0 else []
+        self.projects = nn.ModuleList(
+            nn.Sequential(
+                nn.Linear(emb_dim, d_model),
+                nn.SiLU(),
+                nn.LayerNorm(d_model),
+            )
+            for _ in self.chunks
         )
 
     @property
-    def num_tokens(self) -> int:
-        return self.feature_count
+    def embeddings(self):  # type: ignore[no-untyped-def]
+        return self.bank.embeddings
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        tokens = self.bank(features)
-        if tokens.shape[1] == 0:
-            return features.new_zeros(features.shape[0], 0, self.d_model, dtype=torch.float32)
-        return self.project(tokens)
+    def forward(self, int_feats: torch.Tensor) -> torch.Tensor:
+        batch_size = int_feats.shape[0]
+        if self.num_tokens <= 0:
+            return int_feats.new_zeros(batch_size, 0, self.d_model, dtype=torch.float32)
+        field_tokens = self.bank(int_feats)
+        pieces: list[torch.Tensor] = []
+        for chunk, project in zip(self.chunks, self.projects, strict=True):
+            if chunk:
+                chunk_tokens = field_tokens[:, chunk, :].mean(dim=1)
+            else:
+                chunk_tokens = int_feats.new_zeros(batch_size, self.bank.output_dim, dtype=torch.float32)
+            pieces.append(project(chunk_tokens))
+        return torch.stack(pieces, dim=1)
 
 
 class DensePacketTokenizer(nn.Module):
@@ -108,18 +146,64 @@ class DensePacketTokenizer(nn.Module):
         )
 
 
-class FeedForward(nn.Module):
+class SequenceStatsTokenizer(nn.Module):
+    def __init__(self, domain_count: int, d_model: int) -> None:
+        super().__init__()
+        self.input_dim = int(domain_count) * SEQUENCE_STATS_DIM
+        self.d_model = int(d_model)
+        if self.input_dim > 0:
+            self.project = nn.Sequential(
+                RMSNorm(self.input_dim),
+                nn.Linear(self.input_dim, d_model),
+                nn.SiLU(),
+                nn.LayerNorm(d_model),
+            )
+        else:
+            self.project = None
+
+    @property
+    def num_tokens(self) -> int:
+        return int(self.project is not None)
+
+    def forward(
+        self,
+        stats_by_domain: dict[str, torch.Tensor] | None,
+        domains: list[str],
+        reference: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.project is None:
+            return reference.new_zeros(reference.shape[0], 0, self.d_model, dtype=torch.float32)
+        pieces: list[torch.Tensor] = []
+        batch_size = int(reference.shape[0])
+        for domain in domains:
+            stats = stats_by_domain.get(domain) if stats_by_domain is not None else None
+            if stats is None:
+                stats = reference.new_zeros(batch_size, SEQUENCE_STATS_DIM, dtype=torch.float32)
+            pieces.append(self._normalize(stats.to(reference.device)))
+        return self.project(torch.cat(pieces, dim=-1)).unsqueeze(1)
+
+    def _normalize(self, stats: torch.Tensor) -> torch.Tensor:
+        normalized = torch.nan_to_num(stats.float(), nan=0.0, posinf=0.0, neginf=0.0).clone()
+        if normalized.shape[-1] >= 3:
+            normalized[..., :3] = torch.log1p(normalized[..., :3].clamp_min(0.0))
+        if normalized.shape[-1] >= 5:
+            normalized[..., 3:5] = normalized[..., 3:5].clamp(0.0, 1.0)
+        if normalized.shape[-1] >= 6:
+            normalized[..., 5] = torch.log1p(normalized[..., 5].clamp_min(0.0))
+        return normalized
+
+
+class SwiGLUFeedForward(nn.Module):
     def __init__(self, d_model: int, hidden_mult: int, dropout: float) -> None:
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(d_model, d_model * hidden_mult),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * hidden_mult, d_model),
-        )
+        hidden_dim = d_model * hidden_mult
+        self.up = nn.Linear(d_model, hidden_dim * 2)
+        self.dropout = nn.Dropout(dropout)
+        self.down = nn.Linear(hidden_dim, d_model)
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
-        return self.net(tokens)
+        gate, value = self.up(tokens).chunk(2, dim=-1)
+        return self.down(self.dropout(nn.functional.silu(gate) * value))
 
 
 class UnifiedSelfAttention(nn.Module):
@@ -157,11 +241,28 @@ class UnifiedInteractionBlock(nn.Module):
         self.attn_norm = RMSNorm(d_model)
         self.attention = UnifiedSelfAttention(d_model, num_heads, dropout)
         self.ffn_norm = RMSNorm(d_model)
-        self.ffn = FeedForward(d_model, hidden_mult, dropout)
+        self.ffn = SwiGLUFeedForward(d_model, hidden_mult, dropout)
+
+    def forward(self, tokens: torch.Tensor, padding_mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        attn_tokens = tokens + self.attention(self.attn_norm(tokens), padding_mask)
+        ffn_tokens = attn_tokens + self.ffn(self.ffn_norm(attn_tokens))
+        return ffn_tokens, attn_tokens
+
+
+class GatedTokenPooler(nn.Module):
+    def __init__(self, d_model: int) -> None:
+        super().__init__()
+        self.score = nn.Linear(d_model, 1)
 
     def forward(self, tokens: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
-        tokens = tokens + self.attention(self.attn_norm(tokens), padding_mask)
-        return tokens + self.ffn(self.ffn_norm(tokens))
+        if tokens.shape[1] == 0:
+            return tokens.new_zeros(tokens.shape[0], tokens.shape[-1])
+        scores = self.score(tokens).squeeze(-1).masked_fill(padding_mask, float("-inf"))
+        all_padded = padding_mask.all(dim=1, keepdim=True)
+        scores = scores.masked_fill(all_padded, 0.0)
+        weights = torch.softmax(scores.float(), dim=-1).to(tokens.dtype).unsqueeze(-1)
+        pooled = (tokens * weights).sum(dim=1)
+        return pooled * (~all_padded).to(tokens.dtype)
 
 
 class LearnedBlockCompressor(nn.Module):
@@ -187,8 +288,9 @@ class LearnedBlockCompressor(nn.Module):
         block_mask = padding_mask.view(batch_size, -1, self.block_size)
         values = self.value_projection(blocks)
         logits = self.weight_projection(blocks) + self.position_bias.view(1, 1, self.block_size, d_model)
-        logits = logits.masked_fill(block_mask.unsqueeze(-1), torch.finfo(logits.dtype).min)
-        weights = torch.softmax(logits.float(), dim=2).to(values.dtype)
+        logits = logits.masked_fill(block_mask.unsqueeze(-1), float("-inf"))
+        weights = torch.softmax(logits.float(), dim=2)
+        weights = weights.nan_to_num(nan=0.0).to(values.dtype)
         weights = weights * (~block_mask).to(values.dtype).unsqueeze(-1)
         weights = weights / weights.sum(dim=2, keepdim=True).clamp_min(torch.finfo(weights.dtype).eps)
         block_tokens = self.output_norm((weights * values).sum(dim=2))
@@ -227,46 +329,10 @@ class SparseBlockIndexer(nn.Module):
         scores_by_head = torch.relu(torch.einsum("bhi,bni->bhn", query_heads, keys))
         head_weights = torch.softmax(self.head_weight(query), dim=-1).unsqueeze(-1)
         scores = (scores_by_head * head_weights).sum(dim=1)
-        scores = scores.masked_fill(block_mask, torch.finfo(scores.dtype).min)
+        scores = scores.masked_fill(block_mask, float("-inf"))
         indices = torch.topk(scores, k=keep_count, dim=1).indices
         gather_index = indices.unsqueeze(-1).expand(-1, -1, blocks.shape[-1])
         return blocks.gather(1, gather_index), block_mask.gather(1, indices)
-
-
-class TargetAwareLatentPooler(nn.Module):
-    """Pools bounded sequence memory into fixed-budget candidate-aware latents."""
-
-    def __init__(self, d_model: int, latent_tokens: int) -> None:
-        super().__init__()
-        self.latent_tokens = max(1, int(latent_tokens))
-        self.score_scale = float(d_model) ** -0.5
-        self.latents = nn.Parameter(torch.randn(self.latent_tokens, d_model) * 0.02)
-        self.query_projection = nn.Linear(d_model, d_model)
-        self.key_projection = nn.Linear(d_model, d_model)
-        self.value_projection = nn.Linear(d_model, d_model)
-        self.output_norm = RMSNorm(d_model)
-
-    def forward(
-        self,
-        query: torch.Tensor,
-        tokens: torch.Tensor,
-        padding_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        valid = (~padding_mask).to(tokens.dtype).unsqueeze(-1)
-        masked_tokens = tokens * valid
-        latent_query = self.latents.unsqueeze(0) + self.query_projection(query).unsqueeze(1)
-        keys = self.key_projection(masked_tokens)
-        values = self.value_projection(masked_tokens) * valid
-        scores = torch.einsum("bld,bnd->bln", latent_query, keys) * self.score_scale
-        safe_mask = safe_key_padding_mask(padding_mask).unsqueeze(1)
-        scores = scores.masked_fill(safe_mask, torch.finfo(scores.dtype).min)
-        weights = torch.softmax(scores.float(), dim=-1).to(values.dtype)
-        latents = torch.einsum("bln,bnd->bld", weights, values)
-        all_padded = padding_mask.all(dim=1, keepdim=True)
-        latents = self.output_norm(latents)
-        latents = latents * (~all_padded).to(latents.dtype).unsqueeze(-1)
-        latent_mask = all_padded.expand(-1, self.latent_tokens)
-        return latents, latent_mask
 
 
 class SequenceMemoryEncoder(nn.Module):
@@ -279,13 +345,14 @@ class SequenceMemoryEncoder(nn.Module):
         d_model: int,
         num_time_buckets: int,
         emb_skip_threshold: int,
+        seq_id_threshold: int,
+        compress_high_cardinality: bool,
         *,
         num_index_heads: int,
         recent_tokens: int,
         memory_block_size: int,
         memory_top_k: int,
         use_compressed_memory: bool,
-        latent_tokens_per_domain: int,
     ) -> None:
         super().__init__()
         self.seq_domains = sorted(seq_vocab_sizes)
@@ -294,10 +361,16 @@ class SequenceMemoryEncoder(nn.Module):
         self.memory_block_size = max(1, int(memory_block_size))
         self.memory_top_k = max(0, int(memory_top_k))
         self.use_compressed_memory = bool(use_compressed_memory)
-        self.latent_tokens_per_domain = max(0, int(latent_tokens_per_domain))
         self.sequence_tokenizers = nn.ModuleDict(
             {
-                domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model, num_time_buckets, emb_skip_threshold)
+                domain: SequenceTokenizer(
+                    vocab_sizes,
+                    emb_dim,
+                    d_model,
+                    num_time_buckets,
+                    seq_id_threshold or emb_skip_threshold,
+                    compress_high_cardinality=compress_high_cardinality,
+                )
                 for domain, vocab_sizes in seq_vocab_sizes.items()
             }
         )
@@ -305,14 +378,152 @@ class SequenceMemoryEncoder(nn.Module):
             {domain: LearnedBlockCompressor(d_model, self.memory_block_size) for domain in self.seq_domains}
         )
         self.block_indexers = nn.ModuleDict({domain: SparseBlockIndexer(d_model, num_index_heads) for domain in self.seq_domains})
-        self.latent_poolers = nn.ModuleDict(
-            {
-                domain: TargetAwareLatentPooler(d_model, self.latent_tokens_per_domain)
-                for domain in self.seq_domains
-            }
-            if self.latent_tokens_per_domain > 0
-            else {}
-        )
+        self.role_norm = RMSNorm(d_model)
+        self._training_diagnostics_enabled = False
+        self._token_health_collecting = False
+        self._token_health_scalars: dict[str, float] = {}
+        self._token_health_total_valid_latents = 0.0
+        self._token_health_total_latent_slots = 0.0
+        self._token_health_total_empty_sequences = 0.0
+        self._token_health_total_sequence_observations = 0.0
+        self._token_health_total_sequence_length = 0.0
+        self._token_health_batch_size = 0
+
+    @property
+    def tokens_per_domain(self) -> int:
+        return 3
+
+    def set_tensorboard_diagnostics_enabled(self, enabled: bool) -> None:
+        self.set_training_diagnostics_enabled(enabled)
+
+    def set_training_diagnostics_enabled(self, enabled: bool) -> None:
+        self._training_diagnostics_enabled = bool(enabled)
+        if not enabled:
+            self._token_health_collecting = False
+
+    def consume_tensorboard_scalars(self, phase: str) -> dict[str, float]:
+        return self.consume_training_scalars(phase=phase)
+
+    def consume_training_scalars(self, phase: str) -> dict[str, float]:
+        scalars = self._token_health_scalars
+        self._token_health_scalars = {}
+        clean_phase = str(phase).strip().replace("/", "_") or "train"
+        tagged_scalars: dict[str, float] = {}
+        for metric_path, value in scalars.items():
+            metric_family, metric_name = metric_path.split("/", 1)
+            tagged_scalars[f"Symbiosis/{metric_family}/{clean_phase}/{metric_name}"] = value
+        return tagged_scalars
+
+    def _should_collect_token_health(self) -> bool:
+        return self._training_diagnostics_enabled and not _torch_is_compiling()
+
+    def _begin_token_health_collection(self) -> None:
+        self._token_health_collecting = self._should_collect_token_health()
+        if not self._token_health_collecting:
+            return
+        self._token_health_scalars = {}
+        self._token_health_total_valid_latents = 0.0
+        self._token_health_total_latent_slots = 0.0
+        self._token_health_total_empty_sequences = 0.0
+        self._token_health_total_sequence_observations = 0.0
+        self._token_health_total_sequence_length = 0.0
+        self._token_health_batch_size = 0
+
+    def _finish_token_health_collection(self) -> None:
+        if not self._token_health_collecting:
+            return
+        if self._token_health_total_latent_slots > 0.0:
+            self._put_token_health_scalar(
+                "token_health/all/latent_valid_ratio",
+                self._token_health_total_valid_latents / self._token_health_total_latent_slots,
+            )
+        if self._token_health_batch_size > 0:
+            self._put_token_health_scalar(
+                "token_health/all/active_latent_tokens_mean",
+                self._token_health_total_valid_latents / float(self._token_health_batch_size),
+            )
+        if self._token_health_total_sequence_observations > 0.0:
+            self._put_token_health_scalar(
+                "token_health/all/empty_sequence_rate",
+                self._token_health_total_empty_sequences / self._token_health_total_sequence_observations,
+            )
+            self._put_token_health_scalar(
+                "token_health/all/seq_len_mean",
+                self._token_health_total_sequence_length / self._token_health_total_sequence_observations,
+            )
+        self._token_health_collecting = False
+
+    def _put_token_health_scalar(self, metric_path: str, value: float | torch.Tensor) -> None:
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return
+            value = float(value.detach().float().mean().cpu())
+        else:
+            value = float(value)
+        if math.isfinite(value):
+            self._token_health_scalars[metric_path] = value
+
+    def _record_token_diversity(
+        self,
+        domain: str,
+        latents: torch.Tensor,
+        latent_mask: torch.Tensor,
+    ) -> None:
+        nonempty_samples = ~latent_mask.detach().all(dim=1)
+        if not bool(nonempty_samples.any()):
+            return
+        sample_latents = latents.detach().float()[nonempty_samples]
+        token_count = sample_latents.shape[1]
+        norms = sample_latents.norm(dim=-1)
+        prefix = f"latent_diversity/{domain}"
+        self._put_token_health_scalar(f"{prefix}/token_norm_mean", norms.mean())
+        self._put_token_health_scalar(f"{prefix}/token_norm_std", norms.std(unbiased=False))
+
+        if token_count <= 1:
+            self._put_token_health_scalar(f"{prefix}/effective_rank", float(token_count))
+            return
+
+        normalized = nn.functional.normalize(sample_latents, dim=-1, eps=1.0e-12)
+        cosine = torch.einsum("bld,bmd->blm", normalized, normalized)
+        row_indices, col_indices = torch.triu_indices(token_count, token_count, offset=1, device=latents.device)
+        pairwise = cosine[:, row_indices, col_indices]
+        self._put_token_health_scalar(f"{prefix}/mean_pairwise_cosine", pairwise.mean())
+        self._put_token_health_scalar(f"{prefix}/max_pairwise_cosine", pairwise.max())
+
+        eigenvalues = torch.linalg.eigvalsh(cosine.float()).clamp_min(0.0)
+        eigenvalue_sum = eigenvalues.sum(dim=-1, keepdim=True)
+        valid_rank = eigenvalue_sum.squeeze(-1) > 1.0e-12
+        if bool(valid_rank.any()):
+            probabilities = eigenvalues[valid_rank] / eigenvalue_sum[valid_rank]
+            entropy = -(probabilities * probabilities.clamp_min(1.0e-12).log()).sum(dim=-1)
+            self._put_token_health_scalar(f"{prefix}/effective_rank", entropy.exp().mean())
+
+    def _record_role_token_health(
+        self,
+        *,
+        domain: str,
+        seq_len: torch.Tensor,
+        tokens: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> None:
+        if not self._token_health_collecting:
+            return
+        clean_domain = str(domain).replace("/", "_")
+        valid_tokens = ~mask.detach()
+        seq_len_float = seq_len.detach().float()
+        self._token_health_batch_size = max(self._token_health_batch_size, int(seq_len.shape[0]))
+        self._token_health_total_valid_latents += float(valid_tokens.sum().cpu())
+        self._token_health_total_latent_slots += float(mask.numel())
+        self._token_health_total_empty_sequences += float((seq_len <= 0).sum().cpu())
+        self._token_health_total_sequence_observations += float(seq_len.numel())
+        self._token_health_total_sequence_length += float(seq_len_float.sum().cpu())
+        prefix = f"token_health/{clean_domain}"
+        self._put_token_health_scalar(f"{prefix}/latent_valid_ratio", valid_tokens.float().mean())
+        self._put_token_health_scalar(f"{prefix}/active_latent_tokens_mean", valid_tokens.sum(dim=1).float().mean())
+        self._put_token_health_scalar(f"{prefix}/empty_sequence_rate", (seq_len <= 0).float().mean())
+        self._put_token_health_scalar(f"{prefix}/seq_len_mean", seq_len_float.mean())
+        self._put_token_health_scalar(f"{prefix}/seq_len_p90", torch.quantile(seq_len_float, 0.9))
+        self._record_token_diversity(clean_domain, tokens, mask)
 
     def _recent_window(
         self,
@@ -357,53 +568,22 @@ class SequenceMemoryEncoder(nn.Module):
         tokens = tokens + positions
         return tokens * (~padding_mask).to(tokens.dtype).unsqueeze(-1)
 
-    def _latent_memory_tokens(
-        self,
-        query: torch.Tensor,
-        domain: str,
-        tokens: torch.Tensor,
-        padding_mask: torch.Tensor,
-        seq_len: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        source_pieces: list[torch.Tensor] = []
-        source_masks: list[torch.Tensor] = []
-
-        recent_tokens, recent_mask = self._recent_window(tokens, seq_len)
-        if recent_tokens.shape[1] > 0:
-            source_pieces.append(self._add_recent_positions(recent_tokens, recent_mask))
-            source_masks.append(recent_mask)
-
-        if self.use_compressed_memory:
-            blocks, block_mask = self._compressed_blocks(domain, tokens, padding_mask)
-            blocks, block_mask = self._select_topk_blocks(query, domain, blocks, block_mask)
-            if blocks.shape[1] > 0:
-                source_pieces.append(blocks)
-                source_masks.append(block_mask)
-
-        global_token = masked_mean(tokens, padding_mask).unsqueeze(1)
-        global_mask = padding_mask.all(dim=1, keepdim=True)
-        source_pieces.append(global_token)
-        source_masks.append(global_mask)
-
-        source_tokens = torch.cat(source_pieces, dim=1)
-        source_mask = torch.cat(source_masks, dim=1)
-        return self.latent_poolers[domain](query, source_tokens, source_mask)
-
     def _compact_raw_sequence(
         self,
         sequence: torch.Tensor,
         time_buckets: torch.Tensor | None,
         lengths: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor, tuple[tuple[str, int], ...]]:
         batch_size, feature_count, max_len = sequence.shape
         if max_len <= 0:
             empty_sequence = sequence.new_zeros(batch_size, feature_count, 0)
             empty_mask = torch.ones(batch_size, 0, dtype=torch.bool, device=sequence.device)
-            return empty_sequence, None, empty_mask
+            return empty_sequence, None, empty_mask, ()
 
         clamped_lengths = lengths.clamp(min=0, max=max_len).to(torch.long)
         positions: list[torch.Tensor] = []
         masks: list[torch.Tensor] = []
+        source_segments: list[tuple[str, int]] = []
 
         recent_keep = min(self.recent_tokens, max_len)
         prefix_capacity = max(0, max_len - recent_keep)
@@ -415,6 +595,7 @@ class SequenceMemoryEncoder(nn.Module):
             memory_lengths = prefix_lengths.clamp_max(memory_keep)
             positions.append(memory_positions)
             masks.append(offsets.unsqueeze(0) >= memory_lengths.unsqueeze(1))
+            source_segments.append(("memory", int(memory_keep)))
 
         if recent_keep > 0:
             offsets = torch.arange(recent_keep, device=sequence.device)
@@ -423,11 +604,12 @@ class SequenceMemoryEncoder(nn.Module):
             recent_lengths = clamped_lengths.clamp_max(recent_keep)
             positions.append(recent_positions)
             masks.append(offsets.unsqueeze(0) >= recent_lengths.unsqueeze(1))
+            source_segments.append(("recent", int(recent_keep)))
 
         if not positions:
             empty_sequence = sequence.new_zeros(batch_size, feature_count, 0)
             empty_mask = torch.ones(batch_size, 0, dtype=torch.bool, device=sequence.device)
-            return empty_sequence, None, empty_mask
+            return empty_sequence, None, empty_mask, ()
 
         gather_positions = torch.cat(positions, dim=1)
         padding_mask = torch.cat(masks, dim=1)
@@ -440,9 +622,41 @@ class SequenceMemoryEncoder(nn.Module):
             else:
                 time_positions = gather_positions.clamp_max(time_buckets.shape[1] - 1)
                 compact_time_buckets = time_buckets.gather(1, time_positions)
-        return compact_sequence, compact_time_buckets, padding_mask
+        return compact_sequence, compact_time_buckets, padding_mask, tuple(source_segments)
 
-    def _latent_memory_tokens_from_raw(
+    def _segment_tokens(
+        self,
+        tokens: torch.Tensor,
+        padding_mask: torch.Tensor,
+        source_segments: tuple[tuple[str, int], ...],
+        segment_name: str,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        offset = 0
+        for name, segment_size in source_segments:
+            next_offset = offset + segment_size
+            if name == segment_name:
+                return tokens[:, offset:next_offset, :], padding_mask[:, offset:next_offset]
+            offset = next_offset
+        empty_tokens = tokens.new_zeros(tokens.shape[0], 0, tokens.shape[-1])
+        empty_mask = torch.ones(tokens.shape[0], 0, dtype=torch.bool, device=tokens.device)
+        return empty_tokens, empty_mask
+
+    def _pool_role_token(
+        self,
+        query: torch.Tensor,
+        tokens: torch.Tensor,
+        padding_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if tokens.shape[1] == 0:
+            token = query.new_zeros(query.shape[0], 1, self.d_model)
+            mask = torch.ones(query.shape[0], 1, dtype=torch.bool, device=query.device)
+            return token, mask
+        token = masked_mean(tokens, padding_mask).unsqueeze(1)
+        mask = padding_mask.all(dim=1, keepdim=True)
+        token = self.role_norm(token + query.unsqueeze(1))
+        return token, mask
+
+    def _role_tokens_from_raw(
         self,
         query: torch.Tensor,
         domain: str,
@@ -450,68 +664,68 @@ class SequenceMemoryEncoder(nn.Module):
         time_buckets: torch.Tensor | None,
         seq_len: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        compact_sequence, compact_time_buckets, compact_mask = self._compact_raw_sequence(sequence, time_buckets, seq_len)
+        compact_sequence, compact_time_buckets, compact_mask, source_segments = self._compact_raw_sequence(
+            sequence,
+            time_buckets,
+            seq_len,
+        )
         if compact_sequence.shape[2] == 0:
-            pooler = self.latent_poolers[domain]
-            empty_tokens = query.new_zeros(query.shape[0], pooler.latent_tokens, self.d_model)
-            empty_mask = torch.ones(query.shape[0], pooler.latent_tokens, dtype=torch.bool, device=query.device)
-            return empty_tokens, empty_mask
-        tokens = self.sequence_tokenizers[domain](compact_sequence, compact_time_buckets)
-        tokens = self._add_recent_positions(tokens, compact_mask)
-        return self.latent_poolers[domain](query, tokens, compact_mask)
+            tokens = query.new_zeros(query.shape[0], self.tokens_per_domain, self.d_model)
+            mask = torch.ones(query.shape[0], self.tokens_per_domain, dtype=torch.bool, device=query.device)
+            self._record_role_token_health(domain=domain, seq_len=seq_len, tokens=tokens, mask=mask)
+            return tokens, mask
+
+        compact_tokens = self.sequence_tokenizers[domain](compact_sequence, compact_time_buckets)
+        recent_tokens, recent_mask = self._segment_tokens(compact_tokens, compact_mask, source_segments, "recent")
+        recent_tokens = self._add_recent_positions(recent_tokens, recent_mask)
+        recent_token, recent_token_mask = self._pool_role_token(query, recent_tokens, recent_mask)
+
+        memory_tokens, memory_mask = self._segment_tokens(compact_tokens, compact_mask, source_segments, "memory")
+        if self.use_compressed_memory and memory_tokens.shape[1] > 0:
+            blocks, block_mask = self._compressed_blocks(domain, memory_tokens, memory_mask)
+            blocks, block_mask = self._select_topk_blocks(query, domain, blocks, block_mask)
+            memory_token, memory_token_mask = self._pool_role_token(query, blocks, block_mask)
+        else:
+            memory_token, memory_token_mask = self._pool_role_token(query, memory_tokens, memory_mask)
+
+        global_token, global_token_mask = self._pool_role_token(query, compact_tokens, compact_mask)
+
+        tokens = torch.cat([recent_token, memory_token, global_token], dim=1)
+        mask = torch.cat([recent_token_mask, memory_token_mask, global_token_mask], dim=1)
+        self._record_role_token_health(domain=domain, seq_len=seq_len, tokens=tokens, mask=mask)
+        return tokens, mask
 
     def forward(
         self,
         inputs: ModelInput,
         query: torch.Tensor,
     ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[int]]:
+        self._begin_token_health_collection()
         pieces: list[torch.Tensor] = []
         masks: list[torch.Tensor] = []
         domain_indices: list[int] = []
         for domain_index, domain in enumerate(self.seq_domains):
             raw_sequence = inputs.seq_data[domain]
             seq_len = inputs.seq_lens[domain].to(raw_sequence.device).clamp_max(raw_sequence.shape[2])
-            if self.latent_tokens_per_domain > 0:
-                latent_tokens, latent_mask = self._latent_memory_tokens_from_raw(
-                    query,
-                    domain,
-                    raw_sequence,
-                    inputs.seq_time_buckets.get(domain),
-                    seq_len,
-                )
-                pieces.append(latent_tokens)
-                masks.append(latent_mask)
-                domain_indices.append(domain_index)
-                continue
-
-            tokens = self.sequence_tokenizers[domain](raw_sequence, inputs.seq_time_buckets.get(domain))
-            padding_mask = make_padding_mask(seq_len, tokens.shape[1])
-
-            recent_tokens, recent_mask = self._recent_window(tokens, seq_len)
-            if recent_tokens.shape[1] > 0:
-                recent_tokens = self._add_recent_positions(recent_tokens, recent_mask)
-                masks.append(recent_mask)
-                pieces.append(recent_tokens)
-                domain_indices.append(domain_index)
-
-            if self.use_compressed_memory:
-                blocks, block_mask = self._compressed_blocks(domain, tokens, padding_mask)
-                blocks, block_mask = self._select_topk_blocks(query, domain, blocks, block_mask)
-                if blocks.shape[1] > 0:
-                    pieces.append(blocks)
-                    masks.append(block_mask)
-                    domain_indices.append(domain_index)
-
-            global_token = masked_mean(tokens, padding_mask).unsqueeze(1)
-            global_mask = padding_mask.all(dim=1, keepdim=True)
-            pieces.append(global_token)
-            masks.append(global_mask)
+            role_tokens, role_mask = self._role_tokens_from_raw(
+                query,
+                domain,
+                raw_sequence,
+                inputs.seq_time_buckets.get(domain),
+                seq_len,
+            )
+            pieces.append(role_tokens)
+            masks.append(role_mask)
             domain_indices.append(domain_index)
+        self._finish_token_health_collection()
         return pieces, masks, domain_indices
 
 
 class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
     """Unified sequence-memory and field-interaction PCVR model."""
+
+    _SHORTCUT_SPAN_NAMES = frozenset({"candidate", "cross", "global"})
+    _CLASSIFIER_SPAN_NAMES = ("candidate", "cross", "context", "item", "sequence")
 
     def __init__(
         self,
@@ -543,62 +757,67 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         ns_tokenizer_type: str = "rankmixer",
         user_ns_tokens: int = 5,
         item_ns_tokens: int = 2,
-        symbiosis_use_field_tokens: bool = False,
         symbiosis_use_dense_packets: bool = True,
         symbiosis_use_sequence_memory: bool = True,
         symbiosis_use_compressed_memory: bool = True,
         symbiosis_use_candidate_token: bool = True,
         symbiosis_use_item_prior: bool = True,
         symbiosis_use_domain_type: bool = True,
+        symbiosis_use_cross_token: bool = True,
+        symbiosis_use_global_token: bool = True,
+        symbiosis_sparse_seed: int = 20260511,
         symbiosis_memory_block_size: int = 32,
         symbiosis_memory_top_k: int = 8,
         symbiosis_recent_tokens: int = 32,
-        symbiosis_sequence_latent_tokens: int = 3,
         symbiosis_compile_fusion_core: bool = True,
+        symbiosis_shortcut_dropout_rate: float = 0.0,
+        symbiosis_compress_large_ids: bool = True,
+        symbiosis_use_missing_signals: bool = True,
+        symbiosis_use_sequence_stats: bool = True,
     ) -> None:
         super().__init__()
-        del num_queries, seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, use_rope, rope_base, seq_id_threshold
+        del num_queries, seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, use_rope, rope_base, ns_tokenizer_type
         num_heads = choose_num_heads(d_model, num_heads)
         self.d_model = int(d_model)
         self.action_num = int(action_num)
         self.gradient_checkpointing = bool(gradient_checkpointing)
         self.seq_domains = sorted(seq_vocab_sizes)
-        self.symbiosis_use_field_tokens = bool(symbiosis_use_field_tokens)
         self.symbiosis_use_dense_packets = bool(symbiosis_use_dense_packets)
         self.symbiosis_use_sequence_memory = bool(symbiosis_use_sequence_memory)
         self.symbiosis_use_compressed_memory = bool(symbiosis_use_compressed_memory)
         self.symbiosis_use_candidate_token = bool(symbiosis_use_candidate_token)
         self.symbiosis_use_item_prior = bool(symbiosis_use_item_prior)
         self.symbiosis_use_domain_type = bool(symbiosis_use_domain_type)
+        self.symbiosis_use_cross_token = bool(symbiosis_use_cross_token)
+        self.symbiosis_use_global_token = bool(symbiosis_use_global_token)
+        self.symbiosis_sparse_seed = int(symbiosis_sparse_seed)
         self.symbiosis_memory_block_size = max(1, int(symbiosis_memory_block_size))
         self.symbiosis_memory_top_k = max(0, int(symbiosis_memory_top_k))
         self.symbiosis_recent_tokens = max(0, int(symbiosis_recent_tokens))
-        self.symbiosis_sequence_latent_tokens = max(0, int(symbiosis_sequence_latent_tokens))
         self.symbiosis_compile_fusion_core = bool(symbiosis_compile_fusion_core)
+        self.symbiosis_shortcut_dropout_rate = min(1.0, max(0.0, float(symbiosis_shortcut_dropout_rate)))
+        self.symbiosis_compress_large_ids = bool(symbiosis_compress_large_ids)
+        self.symbiosis_use_missing_signals = bool(symbiosis_use_missing_signals)
+        self.symbiosis_use_sequence_stats = bool(symbiosis_use_sequence_stats)
 
-        if self.symbiosis_use_field_tokens:
-            self.user_sparse = FieldTokenProjector(user_int_feature_specs, emb_dim, d_model, emb_skip_threshold)
-            self.item_sparse = FieldTokenProjector(item_int_feature_specs, emb_dim, d_model, emb_skip_threshold)
-        else:
-            force_auto_split = ns_tokenizer_type == "rankmixer"
-            self.user_sparse = NonSequentialTokenizer(
-                user_int_feature_specs,
-                user_ns_groups,
-                emb_dim,
-                d_model,
-                user_ns_tokens,
-                emb_skip_threshold,
-                force_auto_split=force_auto_split,
-            )
-            self.item_sparse = NonSequentialTokenizer(
-                item_int_feature_specs,
-                item_ns_groups,
-                emb_dim,
-                d_model,
-                item_ns_tokens,
-                emb_skip_threshold,
-                force_auto_split=force_auto_split,
-            )
+        self.user_sparse = RandomChunkNonSequentialTokenizer(
+            user_int_feature_specs,
+            emb_dim,
+            d_model,
+            user_ns_tokens,
+            emb_skip_threshold,
+            self.symbiosis_compress_large_ids,
+            self.symbiosis_sparse_seed,
+        )
+        self.item_sparse = RandomChunkNonSequentialTokenizer(
+            item_int_feature_specs,
+            emb_dim,
+            d_model,
+            item_ns_tokens,
+            emb_skip_threshold,
+            self.symbiosis_compress_large_ids,
+            self.symbiosis_sparse_seed + 1,
+        )
 
         if self.symbiosis_use_dense_packets:
             self.user_dense = DensePacketTokenizer(user_dense_dim, d_model, max_packets=2)
@@ -611,8 +830,30 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
             user_dense_tokens = int(user_dense_dim > 0)
             item_dense_tokens = int(item_dense_dim > 0)
 
+        user_missing_dim = _feature_width(user_int_feature_specs) + int(user_dense_dim)
+        item_missing_dim = _feature_width(item_int_feature_specs) + int(item_dense_dim)
+        if self.symbiosis_use_missing_signals:
+            self.user_missing = DensePacketTokenizer(user_missing_dim, d_model, max_packets=2)
+            self.item_missing = DensePacketTokenizer(item_missing_dim, d_model, max_packets=1)
+            user_missing_tokens = self.user_missing.num_tokens
+            item_missing_tokens = self.item_missing.num_tokens
+        else:
+            self.user_missing = None
+            self.item_missing = None
+            user_missing_tokens = 0
+            item_missing_tokens = 0
+
+        self.sequence_stats_tokenizer = (
+            SequenceStatsTokenizer(len(self.seq_domains), d_model)
+            if self.symbiosis_use_sequence_stats
+            else None
+        )
+        sequence_stats_tokens = self.sequence_stats_tokenizer.num_tokens if self.sequence_stats_tokenizer is not None else 0
+
         self.num_ns = self.user_sparse.num_tokens + self.item_sparse.num_tokens
         self.num_ns += user_dense_tokens + item_dense_tokens + int(self.symbiosis_use_candidate_token)
+        self.num_ns += int(self.symbiosis_use_cross_token) + int(self.symbiosis_use_global_token)
+        self.num_ns += user_missing_tokens + item_missing_tokens + sequence_stats_tokens
 
         self.sequence_memory = (
             SequenceMemoryEncoder(
@@ -621,33 +862,164 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
                 d_model,
                 num_time_buckets,
                 emb_skip_threshold,
+                seq_id_threshold,
+                self.symbiosis_compress_large_ids,
                 num_index_heads=num_heads,
                 recent_tokens=self.symbiosis_recent_tokens,
                 memory_block_size=self.symbiosis_memory_block_size,
                 memory_top_k=self.symbiosis_memory_top_k,
                 use_compressed_memory=self.symbiosis_use_compressed_memory,
-                latent_tokens_per_domain=self.symbiosis_sequence_latent_tokens,
             )
             if self.symbiosis_use_sequence_memory
             else None
         )
+        self.num_sequence_tokens = (self.sequence_memory.tokens_per_domain * len(self.seq_domains)) if self.sequence_memory else 0
 
-        type_count = 5 + len(self.seq_domains)
+        self.sequence_type_base = 7
+        next_type_id = self.sequence_type_base + len(self.seq_domains)
+        self.missing_type_id = next_type_id
+        if self.symbiosis_use_missing_signals:
+            next_type_id += 1
+        self.sequence_stats_type_id = next_type_id
+        if self.symbiosis_use_sequence_stats:
+            next_type_id += 1
+        type_count = next_type_id
         self.type_embedding = nn.Embedding(type_count, d_model)
         self.candidate_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
         self.sequence_query_projection = nn.Sequential(RMSNorm(d_model * 2), nn.Linear(d_model * 2, d_model), nn.SiLU())
+        self.cross_project = nn.Sequential(RMSNorm(d_model * 4), nn.Linear(d_model * 4, d_model), nn.SiLU(), nn.LayerNorm(d_model))
+        self.global_project = nn.Sequential(RMSNorm(d_model * 4), nn.Linear(d_model * 4, d_model), nn.SiLU(), nn.LayerNorm(d_model))
         self.blocks = nn.ModuleList(
-            [UnifiedInteractionBlock(d_model, num_heads, hidden_mult, dropout_rate) for _ in range(max(1, num_blocks))]
+            [
+                UnifiedInteractionBlock(d_model, num_heads, hidden_mult, dropout_rate)
+                for _ in range(max(1, num_blocks))
+            ]
         )
         self.final_norm = RMSNorm(d_model)
+        self.context_pooler = GatedTokenPooler(d_model)
+        self.item_pooler = GatedTokenPooler(d_model)
+        self.sequence_pooler = GatedTokenPooler(d_model)
+        self.cross_pooler = GatedTokenPooler(d_model)
         self.classifier = nn.Sequential(
-            nn.Linear(d_model * 3, d_model),
+            nn.Linear(d_model * 5, d_model),
             nn.SiLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(d_model, action_num),
         )
         self._fusion_core_compiled = False
         self._compiled_fusion_core = None
+        self._training_diagnostics_enabled = False
+        self._fusion_rank_scalars: dict[str, float] = {}
+        self._span_usage_scalars: dict[str, float] = {}
+
+    def set_tensorboard_diagnostics_enabled(self, enabled: bool) -> None:
+        self.set_training_diagnostics_enabled(enabled)
+
+    def set_training_diagnostics_enabled(self, enabled: bool) -> None:
+        self._training_diagnostics_enabled = bool(enabled)
+        if self.sequence_memory is not None:
+            self.sequence_memory.set_training_diagnostics_enabled(enabled)
+
+    def consume_tensorboard_scalars(self, *, phase: str) -> dict[str, float]:
+        return self.consume_training_scalars(phase=phase)
+
+    def consume_training_scalars(self, *, phase: str) -> dict[str, float]:
+        scalars = self.sequence_memory.consume_training_scalars(phase) if self.sequence_memory is not None else {}
+        clean_phase = str(phase).strip().replace("/", "_") or "train"
+        for metric_name, value in self._fusion_rank_scalars.items():
+            scalars[f"Symbiosis/fusion_rank/{clean_phase}/{metric_name}"] = value
+        self._fusion_rank_scalars = {}
+        for metric_name, value in self._span_usage_scalars.items():
+            scalars[f"Symbiosis/span_usage/{clean_phase}/{metric_name}"] = value
+        self._span_usage_scalars = {}
+        return scalars
+
+    def _should_collect_fusion_rank(self) -> bool:
+        return self._training_diagnostics_enabled and not _torch_is_compiling()
+
+    def _record_fusion_rank(self, metric_name: str, tokens: torch.Tensor, padding_mask: torch.Tensor) -> None:
+        if not self._should_collect_fusion_rank() or tokens.shape[1] <= 1:
+            return
+        valid_samples = ~padding_mask.detach().all(dim=1)
+        if not bool(valid_samples.any()):
+            return
+        sample_tokens = tokens.detach().float()[valid_samples]
+        sample_mask = padding_mask.detach()[valid_samples]
+        sample_tokens = sample_tokens * (~sample_mask).to(sample_tokens.dtype).unsqueeze(-1)
+        singular_values = torch.linalg.svdvals(sample_tokens)
+        total = singular_values.sum(dim=-1, keepdim=True)
+        valid = total.squeeze(-1) > 1.0e-12
+        if not bool(valid.any()):
+            return
+        probabilities = singular_values[valid] / total[valid]
+        entropy = -(probabilities * probabilities.clamp_min(1.0e-12).log()).sum(dim=-1)
+        value = float(entropy.exp().mean().cpu())
+        if math.isfinite(value):
+            self._fusion_rank_scalars[metric_name] = value
+
+    def _should_collect_span_usage(self) -> bool:
+        return self._training_diagnostics_enabled and not _torch_is_compiling()
+
+    def _put_span_usage_scalar(self, metric_name: str, value: float | torch.Tensor) -> None:
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return
+            value = float(value.detach().float().mean().cpu())
+        else:
+            value = float(value)
+        if math.isfinite(value):
+            self._span_usage_scalars[metric_name] = value
+
+    def _record_span_usage(
+        self,
+        span_name: str,
+        tokens: torch.Tensor,
+        padding_mask: torch.Tensor,
+        summary: torch.Tensor,
+    ) -> None:
+        if not self._should_collect_span_usage():
+            return
+        clean_name = str(span_name).replace("/", "_")
+        valid_tokens = ~padding_mask.detach()
+        self._put_span_usage_scalar(f"{clean_name}/active_token_ratio", valid_tokens.float().mean())
+        self._put_span_usage_scalar(f"{clean_name}/summary_norm_mean", summary.detach().float().norm(dim=-1).mean())
+        if bool(valid_tokens.any()):
+            token_norms = tokens.detach().float().norm(dim=-1)
+            self._put_span_usage_scalar(f"{clean_name}/token_norm_mean", token_norms[valid_tokens].mean())
+        else:
+            self._put_span_usage_scalar(f"{clean_name}/token_norm_mean", 0.0)
+
+    def _record_classifier_span_usage(self) -> None:
+        if not self._should_collect_span_usage():
+            return
+        first_layer = self.classifier[0]
+        if not isinstance(first_layer, nn.Linear) or first_layer.weight.shape[1] != self.d_model * len(self._CLASSIFIER_SPAN_NAMES):
+            return
+        block_norms: dict[str, torch.Tensor] = {}
+        for span_index, span_name in enumerate(self._CLASSIFIER_SPAN_NAMES):
+            start = span_index * self.d_model
+            end = start + self.d_model
+            block_norms[span_name] = first_layer.weight[:, start:end].detach().float().norm()
+        total_norm = sum(block_norms.values()).clamp_min(1.0e-12)
+        for span_name, block_norm in block_norms.items():
+            self._put_span_usage_scalar(f"{span_name}/classifier_weight_norm", block_norm)
+            self._put_span_usage_scalar(f"{span_name}/classifier_weight_share", block_norm / total_norm)
+
+    def _shortcut_dropout_enabled(self) -> bool:
+        return self.training and torch.is_grad_enabled() and self.symbiosis_shortcut_dropout_rate > 0.0
+
+    def _maybe_apply_span_dropout(
+        self,
+        span_name: str,
+        tokens: torch.Tensor,
+        padding_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if tokens.shape[1] == 0 or span_name not in self._SHORTCUT_SPAN_NAMES or not self._shortcut_dropout_enabled():
+            return tokens, padding_mask
+        keep = torch.rand(tokens.shape[0], 1, device=tokens.device) >= self.symbiosis_shortcut_dropout_rate
+        tokens = tokens * keep.to(tokens.dtype).unsqueeze(-1)
+        padding_mask = padding_mask | (~keep).expand(-1, tokens.shape[1])
+        return tokens, padding_mask
 
     def _type_ids(self, batch_size: int, token_count: int, type_id: int, device: torch.device) -> torch.Tensor:
         return torch.full((batch_size, token_count), int(type_id), dtype=torch.long, device=device)
@@ -672,84 +1044,189 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         item_dense, item_dense_mask = self._add_type(item_dense_tokens, 3)
         return user_dense, user_dense_mask, item_dense, item_dense_mask
 
+    def _empty_aux_tokens(self, reference: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        tokens = reference.new_zeros(reference.shape[0], 0, self.d_model, dtype=torch.float32)
+        mask = torch.ones(reference.shape[0], 0, dtype=torch.bool, device=reference.device)
+        return tokens, mask
+
+    def _missing_mask_or_default(self, mask: torch.Tensor | None, features: torch.Tensor, *, dense: bool) -> torch.Tensor:
+        if mask is not None:
+            return mask.to(features.device).bool()
+        if dense:
+            return ~torch.isfinite(features.float())
+        return features <= 0
+
+    def _missing_tokens(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if not self.symbiosis_use_missing_signals or self.user_missing is None or self.item_missing is None:
+            user_empty, user_empty_mask = self._empty_aux_tokens(inputs.user_int_feats)
+            item_empty, item_empty_mask = self._empty_aux_tokens(inputs.item_int_feats)
+            return user_empty, user_empty_mask, item_empty, item_empty_mask
+
+        user_missing_features = torch.cat(
+            [
+                self._missing_mask_or_default(inputs.user_int_missing_mask, inputs.user_int_feats, dense=False).float(),
+                self._missing_mask_or_default(inputs.user_dense_missing_mask, inputs.user_dense_feats, dense=True).float(),
+            ],
+            dim=-1,
+        )
+        item_missing_features = torch.cat(
+            [
+                self._missing_mask_or_default(inputs.item_int_missing_mask, inputs.item_int_feats, dense=False).float(),
+                self._missing_mask_or_default(inputs.item_dense_missing_mask, inputs.item_dense_feats, dense=True).float(),
+            ],
+            dim=-1,
+        )
+        user_tokens = dense_or_empty(self.user_missing(user_missing_features), user_missing_features, self.d_model)
+        item_tokens = dense_or_empty(self.item_missing(item_missing_features), item_missing_features, self.d_model)
+        user_missing, user_missing_mask = self._add_type(user_tokens, self.missing_type_id)
+        item_missing, item_missing_mask = self._add_type(item_tokens, self.missing_type_id)
+        return user_missing, user_missing_mask, item_missing, item_missing_mask
+
+    def _sequence_stats_tokens(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.sequence_stats_tokenizer is None:
+            return self._empty_aux_tokens(inputs.user_int_feats)
+        stats_tokens = self.sequence_stats_tokenizer(inputs.seq_stats, self.seq_domains, inputs.user_int_feats)
+        return self._add_type(stats_tokens, self.sequence_stats_type_id)
+
     def _sequence_tokens(
         self,
         inputs: ModelInput,
         query: torch.Tensor,
-    ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[int]]:
         if self.sequence_memory is None:
-            return [], []
+            return [], [], []
         pieces, masks, domain_indices = self.sequence_memory(inputs, query)
         typed_pieces: list[torch.Tensor] = []
         for tokens, domain_index in zip(pieces, domain_indices, strict=True):
             if tokens.shape[1] == 0 or not self.symbiosis_use_domain_type:
                 typed_pieces.append(tokens)
                 continue
-            type_ids = self._type_ids(tokens.shape[0], tokens.shape[1], 5 + domain_index, tokens.device)
+            type_ids = self._type_ids(tokens.shape[0], tokens.shape[1], self.sequence_type_base + domain_index, tokens.device)
             typed_pieces.append(tokens + self.type_embedding(type_ids))
-        return typed_pieces, masks
+        return typed_pieces, masks, domain_indices
 
-    def _encode_tokens(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor, int, int, int]:
+    def _encode_tokens(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor, dict[str, tuple[int, int]]]:
         user_sparse, user_sparse_mask, item_sparse, item_sparse_mask = self._sparse_tokens(inputs)
         user_dense, user_dense_mask, item_dense, item_dense_mask = self._dense_tokens(inputs)
+        user_missing, user_missing_mask, item_missing, item_missing_mask = self._missing_tokens(inputs)
+        sequence_stats, sequence_stats_mask = self._sequence_stats_tokens(inputs)
 
-        user_context = masked_mean(torch.cat([user_sparse, user_dense], dim=1), torch.cat([user_sparse_mask, user_dense_mask], dim=1))
-        item_summary = masked_mean(torch.cat([item_sparse, item_dense], dim=1), torch.cat([item_sparse_mask, item_dense_mask], dim=1))
+        user_context_tokens = torch.cat([user_sparse, user_dense, user_missing], dim=1)
+        user_context_mask = torch.cat([user_sparse_mask, user_dense_mask, user_missing_mask], dim=1)
+        item_context_tokens = torch.cat([item_sparse, item_dense, item_missing], dim=1)
+        item_context_mask = torch.cat([item_sparse_mask, item_dense_mask, item_missing_mask], dim=1)
+        user_context = masked_mean(user_context_tokens, user_context_mask)
+        item_summary = masked_mean(item_context_tokens, item_context_mask)
         sequence_query = self.sequence_query_projection(torch.cat([user_context, item_summary], dim=-1))
-        sequence_pieces, sequence_masks = self._sequence_tokens(inputs, sequence_query)
+        sequence_pieces, sequence_masks, _domain_indices = self._sequence_tokens(inputs, sequence_query)
+        sequence_summary_pieces = list(sequence_pieces)
+        sequence_summary_masks = list(sequence_masks)
+        if sequence_stats.shape[1] > 0:
+            sequence_summary_pieces.append(sequence_stats)
+            sequence_summary_masks.append(sequence_stats_mask)
+        if sequence_summary_pieces:
+            sequence_tokens_raw = torch.cat(sequence_summary_pieces, dim=1)
+            sequence_mask_raw = torch.cat(sequence_summary_masks, dim=1)
+            sequence_summary = masked_mean(sequence_tokens_raw, sequence_mask_raw)
+        else:
+            sequence_summary = user_context.new_zeros(user_context.shape)
 
         pieces: list[torch.Tensor] = []
         masks: list[torch.Tensor] = []
-        candidate_count = 0
+        spans: dict[str, tuple[int, int]] = {}
+
+        def add_piece(name: str, tokens: torch.Tensor, mask: torch.Tensor) -> None:
+            if tokens.shape[1] <= 0:
+                return
+            tokens, mask = self._maybe_apply_span_dropout(name, tokens, mask)
+            start = sum(piece.shape[1] for piece in pieces)
+            pieces.append(tokens)
+            masks.append(mask)
+            previous = spans.get(name)
+            spans[name] = (previous[0], start + tokens.shape[1]) if previous else (start, start + tokens.shape[1])
+
         if self.symbiosis_use_candidate_token:
             candidate = self.candidate_token.expand(inputs.user_int_feats.shape[0], -1, -1)
             if self.symbiosis_use_item_prior:
                 candidate = candidate + item_summary.unsqueeze(1)
             candidate, candidate_mask = self._add_type(candidate, 4)
-            pieces.append(candidate)
-            masks.append(candidate_mask)
-            candidate_count = 1
+            add_piece("candidate", candidate, candidate_mask)
 
-        for tokens, mask in (
-            (user_sparse, user_sparse_mask),
-            (user_dense, user_dense_mask),
-            *zip(sequence_pieces, sequence_masks, strict=True),
-            (item_sparse, item_sparse_mask),
-            (item_dense, item_dense_mask),
-        ):
-            if tokens.shape[1] > 0:
-                pieces.append(tokens)
-                masks.append(mask)
+        if self.symbiosis_use_cross_token:
+            cross_input = torch.cat([user_context, item_summary, user_context * item_summary, (user_context - item_summary).abs()], dim=-1)
+            cross_token = self.cross_project(cross_input).unsqueeze(1)
+            cross_token, cross_mask = self._add_type(cross_token, 5)
+            add_piece("cross", cross_token, cross_mask)
+
+        if self.symbiosis_use_global_token:
+            global_input = torch.cat([user_context, item_summary, sequence_summary, user_context * item_summary], dim=-1)
+            global_token = self.global_project(global_input).unsqueeze(1)
+            global_token, global_mask = self._add_type(global_token, 6)
+            add_piece("global", global_token, global_mask)
+
+        for tokens, mask in ((user_sparse, user_sparse_mask), (user_dense, user_dense_mask), (user_missing, user_missing_mask)):
+            add_piece("context", tokens, mask)
+        for tokens, mask in zip(sequence_pieces, sequence_masks, strict=True):
+            add_piece("sequence", tokens, mask)
+        add_piece("sequence", sequence_stats, sequence_stats_mask)
+        for tokens, mask in ((item_sparse, item_sparse_mask), (item_dense, item_dense_mask), (item_missing, item_missing_mask)):
+            add_piece("item", tokens, mask)
 
         tokens = torch.cat(pieces, dim=1)
         padding_mask = torch.cat(masks, dim=1)
-        context_start = candidate_count
-        item_start = tokens.shape[1] - item_sparse.shape[1] - item_dense.shape[1]
-        return tokens, padding_mask, candidate_count, context_start, item_start
+        return tokens, padding_mask, spans
 
     def _run_fusion_core(self, tokens: torch.Tensor, padding_mask: torch.Tensor) -> torch.Tensor:
-        for block in self.blocks:
-            tokens = maybe_gradient_checkpoint(
+        self._record_fusion_rank("input", tokens, padding_mask)
+        for block_index, block in enumerate(self.blocks):
+            tokens, _attn_tokens = maybe_gradient_checkpoint(
                 block,
                 tokens,
                 padding_mask,
                 enabled=self.gradient_checkpointing,
             )
-        return self.final_norm(tokens)
+            self._record_fusion_rank(f"block_{block_index}/attn", _attn_tokens, padding_mask)
+            self._record_fusion_rank(f"block_{block_index}/ffn", tokens, padding_mask)
+        tokens = self.final_norm(tokens)
+        self._record_fusion_rank("output", tokens, padding_mask)
+        return tokens
 
     def _embed(self, inputs: ModelInput) -> torch.Tensor:
-        tokens, padding_mask, candidate_count, context_start, item_start = self._encode_tokens(inputs)
+        tokens, padding_mask, spans = self._encode_tokens(inputs)
         fusion_core = self._compiled_fusion_core if self._compiled_fusion_core is not None else self._run_fusion_core
         tokens = fusion_core(tokens, padding_mask)
-        if candidate_count:
-            candidate_summary = tokens[:, 0, :]
-        else:
-            candidate_summary = masked_mean(tokens[:, context_start:item_start, :], padding_mask[:, context_start:item_start])
-        context_summary = masked_mean(tokens[:, context_start:item_start, :], padding_mask[:, context_start:item_start])
-        item_summary = masked_mean(tokens[:, item_start:, :], padding_mask[:, item_start:])
+        candidate_span = spans.get("candidate") or spans.get("context")
+        cross_span = spans.get("cross") or spans.get("candidate") or spans.get("context")
+        context_span = spans.get("context") or spans.get("sequence") or spans.get("candidate")
+        item_span = spans.get("item") or spans.get("candidate") or spans.get("context")
+        sequence_span = spans.get("sequence") or spans.get("context") or spans.get("candidate")
+
+        def span_tokens(span: tuple[int, int]) -> tuple[torch.Tensor, torch.Tensor]:
+            start, end = span
+            return tokens[:, start:end, :], padding_mask[:, start:end]
+
+        candidate_tokens, candidate_mask = span_tokens(candidate_span)
+        candidate_summary = masked_mean(candidate_tokens, candidate_mask)
+        cross_tokens, cross_mask = span_tokens(cross_span)
+        context_tokens, context_mask = span_tokens(context_span)
+        item_tokens, item_mask = span_tokens(item_span)
+        sequence_tokens, sequence_mask = span_tokens(sequence_span)
+        cross_summary = self.cross_pooler(cross_tokens, cross_mask)
+        context_summary = self.context_pooler(context_tokens, context_mask)
+        item_summary = self.item_pooler(item_tokens, item_mask)
+        sequence_summary = self.sequence_pooler(sequence_tokens, sequence_mask)
         if not self.symbiosis_use_item_prior:
             item_summary = torch.zeros_like(item_summary)
-        return torch.cat([candidate_summary, context_summary, item_summary], dim=-1)
+        if "global" in spans:
+            global_tokens, global_mask = span_tokens(spans["global"])
+            self._record_span_usage("global", global_tokens, global_mask, masked_mean(global_tokens, global_mask))
+        self._record_span_usage("candidate", candidate_tokens, candidate_mask, candidate_summary)
+        self._record_span_usage("cross", cross_tokens, cross_mask, cross_summary)
+        self._record_span_usage("context", context_tokens, context_mask, context_summary)
+        self._record_span_usage("item", item_tokens, item_mask, item_summary)
+        self._record_span_usage("sequence", sequence_tokens, sequence_mask, sequence_summary)
+        self._record_classifier_span_usage()
+        return torch.cat([candidate_summary, cross_summary, context_summary, item_summary, sequence_summary], dim=-1)
 
     @property
     def uses_internal_compile(self) -> bool:

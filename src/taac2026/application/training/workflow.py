@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -37,7 +38,7 @@ class PCVRTrainContext:
     tf_events_dir: Path
     schema_path: Path
     runtime_execution: RuntimeExecutionConfig
-    writer: Any
+    reporter: Any
 
     @property
     def data_pipeline_config(self):
@@ -166,9 +167,11 @@ def default_build_train_trainer(
         reinit_sparse_every_n_steps=context.args.reinit_sparse_every_n_steps,
         reinit_cardinality_threshold=context.args.reinit_cardinality_threshold,
         ckpt_params=checkpoint_params,
-        writer=context.writer,
+        reporter=context.reporter,
         schema_path=context.schema_path,
         eval_every_n_steps=context.args.eval_every_n_steps,
+        validation_probe_mode=context.args.validation_probe_mode,
+        early_stopping_metric=context.args.early_stopping_metric,
         train_config=context.config,
         runtime_execution=context.runtime_execution,
     )
@@ -238,10 +241,156 @@ class BuildTrainSummaryHook(Protocol):
         ...
 
 
+class TrainReporter(Protocol):
+    def train_step(self, *, step: int, loss: float, loss_components: Mapping[str, float], dense_lr: float) -> None:
+        ...
+
+    def validation_step(
+        self,
+        *,
+        step: int,
+        auc: float,
+        logloss: float,
+        metrics: Mapping[str, float],
+        score_diagnostics: Mapping[str, float | int],
+        probe_metrics: Mapping[str, float],
+        probe_score_diagnostics: Mapping[str, float | int],
+    ) -> None:
+        ...
+
+    def should_collect_model_scalars(self, *, phase: str, step: int | None, trainer: Any) -> bool:
+        ...
+
+    def set_model_diagnostics_enabled(self, model: torch.nn.Module, enabled: bool) -> None:
+        ...
+
+    def consume_model_scalars(self, model: torch.nn.Module, *, phase: str) -> Mapping[str, float]:
+        ...
+
+    def model_scalars(self, *, phase: str, step: int, scalars: Mapping[str, float]) -> None:
+        ...
+
+    def close(self) -> None:
+        ...
+
+
+class NoopTrainReporter:
+    def train_step(self, *, step: int, loss: float, loss_components: Mapping[str, float], dense_lr: float) -> None:
+        pass
+
+    def validation_step(
+        self,
+        *,
+        step: int,
+        auc: float,
+        logloss: float,
+        metrics: Mapping[str, float],
+        score_diagnostics: Mapping[str, float | int],
+        probe_metrics: Mapping[str, float],
+        probe_score_diagnostics: Mapping[str, float | int],
+    ) -> None:
+        pass
+
+    def should_collect_model_scalars(self, *, phase: str, step: int | None, trainer: Any) -> bool:
+        return False
+
+    def set_model_diagnostics_enabled(self, model: torch.nn.Module, enabled: bool) -> None:
+        pass
+
+    def consume_model_scalars(self, model: torch.nn.Module, *, phase: str) -> Mapping[str, float]:
+        return {}
+
+    def model_scalars(self, *, phase: str, step: int, scalars: Mapping[str, float]) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class TensorBoardTrainReporter:
+    def __init__(self, log_dir: Path) -> None:
+        from torch.utils.tensorboard import SummaryWriter
+
+        self.writer = SummaryWriter(log_dir)
+
+    def train_step(self, *, step: int, loss: float, loss_components: Mapping[str, float], dense_lr: float) -> None:
+        self.writer.add_scalar("Loss/train", float(loss), int(step))
+        for name, value in loss_components.items():
+            self.writer.add_scalar(f"Loss/train/{name}", float(value), int(step))
+        self.writer.add_scalar("LR/dense", float(dense_lr), int(step))
+
+    def validation_step(
+        self,
+        *,
+        step: int,
+        auc: float,
+        logloss: float,
+        metrics: Mapping[str, float],
+        score_diagnostics: Mapping[str, float | int],
+        probe_metrics: Mapping[str, float],
+        probe_score_diagnostics: Mapping[str, float | int],
+    ) -> None:
+        del metrics
+        self.writer.add_scalar("AUC/valid", float(auc), int(step))
+        self.writer.add_scalar("LogLoss/valid", float(logloss), int(step))
+        for metric_name, value in score_diagnostics.items():
+            self.writer.add_scalar(f"score/{metric_name}", float(value), int(step))
+        for metric_name, value in probe_metrics.items():
+            self.writer.add_scalar(f"Probe/{metric_name}", float(value), int(step))
+        for metric_name, value in probe_score_diagnostics.items():
+            self.writer.add_scalar(f"Probe/score/{metric_name}", float(value), int(step))
+        self.writer.flush()
+
+    def should_collect_model_scalars(self, *, phase: str, step: int | None, trainer: Any) -> bool:
+        del phase
+        if step is None:
+            return False
+        interval = int(trainer.runtime_execution.progress_log_interval_steps)
+        return (
+            step == 1
+            or (interval > 0 and step % interval == 0)
+            or (trainer.eval_every_n_steps > 0 and step % trainer.eval_every_n_steps == 0)
+            or (trainer.max_steps > 0 and step == trainer.max_steps)
+        )
+
+    def set_model_diagnostics_enabled(self, model: torch.nn.Module, enabled: bool) -> None:
+        set_enabled = getattr(model, "set_training_diagnostics_enabled", None)
+        if not callable(set_enabled):
+            set_enabled = getattr(model, "set_tensorboard_diagnostics_enabled", None)
+        if callable(set_enabled):
+            set_enabled(enabled)
+
+    def consume_model_scalars(self, model: torch.nn.Module, *, phase: str) -> Mapping[str, float]:
+        consume_scalars = getattr(model, "consume_training_scalars", None)
+        if not callable(consume_scalars):
+            consume_scalars = getattr(model, "consume_tensorboard_scalars", None)
+        if not callable(consume_scalars):
+            return {}
+        return consume_scalars(phase=phase)
+
+    def model_scalars(self, *, phase: str, step: int, scalars: Mapping[str, float]) -> None:
+        del phase
+        for tag, value in scalars.items():
+            self.writer.add_scalar(str(tag), float(value), int(step))
+
+    def close(self) -> None:
+        self.writer.close()
+
+
+class BuildTrainReporterHook(Protocol):
+    def __call__(self, context: PCVRTrainContext) -> TrainReporter:
+        ...
+
+
+def default_build_train_reporter(context: PCVRTrainContext) -> TrainReporter:
+    return TensorBoardTrainReporter(context.tf_events_dir)
+
+
 @dataclass(frozen=True, slots=True)
 class PCVRTrainHooks:
     build_data: BuildTrainDataHook = default_build_train_data
     build_model: BuildTrainModelHook = default_build_train_model
+    build_reporter: BuildTrainReporterHook = default_build_train_reporter
     build_trainer: BuildTrainTrainerHook = default_build_train_trainer
     run_training: RunTrainingHook = default_run_training
     build_summary: BuildTrainSummaryHook = default_build_train_summary
@@ -258,15 +407,20 @@ __all__ = [
     "DEFAULT_PCVR_TRAIN_HOOKS",
     "BuildTrainDataHook",
     "BuildTrainModelHook",
+    "BuildTrainReporterHook",
     "BuildTrainSummaryHook",
     "BuildTrainTrainerHook",
+    "NoopTrainReporter",
     "PCVRTrainContext",
     "PCVRTrainDataBundle",
     "PCVRTrainHooks",
     "RunTrainingHook",
+    "TensorBoardTrainReporter",
+    "TrainReporter",
     "build_pcvr_train_hooks",
     "default_build_train_data",
     "default_build_train_model",
+    "default_build_train_reporter",
     "default_build_train_summary",
     "default_build_train_trainer",
     "default_run_training",

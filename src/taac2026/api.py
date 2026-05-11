@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from taac2026.application.experiments.factory import create_pcvr_experiment
+from taac2026.application.training.workflow import NoopTrainReporter, TensorBoardTrainReporter, TrainReporter
 from taac2026.domain.config import (
     PCVRDataCacheConfig,
     PCVRDataConfig,
@@ -15,6 +16,7 @@ from taac2026.domain.config import (
     PCVRSparseOptimizerConfig,
     PCVRSequenceCropConfig,
     PCVRTrainConfig,
+    PCVRValidationConfig,
 )
 from taac2026.infrastructure.modeling.model_contract import ModelInput
 from taac2026.domain.runtime_config import PCVRLossConfig, PCVRLossTermConfig, RuntimeExecutionConfig
@@ -65,6 +67,7 @@ __all__ = [
     "FlashAttentionBackend",
     "ModelInput",
     "NonSequentialTokenizer",
+    "NoopTrainReporter",
     "PCVRDataCacheConfig",
     "PCVRDataConfig",
     "PCVRDataPipelineConfig",
@@ -78,9 +81,12 @@ __all__ = [
     "PCVRSequenceCropConfig",
     "PCVRSparseOptimizerConfig",
     "PCVRTrainConfig",
+    "PCVRValidationConfig",
     "RMSNorm",
     "RuntimeExecutionConfig",
     "SequenceTokenizer",
+    "TensorBoardTrainReporter",
+    "TrainReporter",
     "causal_valid_attention_mask",
     "choose_num_heads",
     "configure_flash_attention_runtime",

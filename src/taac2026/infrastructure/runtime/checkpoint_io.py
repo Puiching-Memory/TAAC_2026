@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -55,8 +54,11 @@ class PCVRTrainerSupportMixin:
                 continue
             orthogonalize_gradient(gradient)
 
-    def _build_step_dir_name(self, global_step: int, is_best: bool = False) -> str:
-        return build_checkpoint_dir_name(global_step, self.ckpt_params, is_best=is_best)
+    def _build_step_dir_name(
+        self,
+        global_step: int,
+    ) -> str:
+        return build_checkpoint_dir_name(global_step, self.ckpt_params)
 
     def _write_sidecar_files(self, checkpoint_dir: Path) -> None:
         write_checkpoint_sidecars(
@@ -68,20 +70,12 @@ class PCVRTrainerSupportMixin:
     def _save_step_checkpoint(
         self,
         global_step: int,
-        is_best: bool = False,
-        skip_model_file: bool = False,
     ) -> Path:
-        checkpoint_dir = self.save_dir / self._build_step_dir_name(global_step, is_best=is_best)
-        if not skip_model_file:
-            save_checkpoint_state_dict(self.model.state_dict(), checkpoint_dir)
+        checkpoint_dir = self.save_dir / self._build_step_dir_name(global_step)
+        save_checkpoint_state_dict(self.model.state_dict(), checkpoint_dir)
         self._write_sidecar_files(checkpoint_dir)
         logger.info("Saved checkpoint to {}", preferred_checkpoint_path(checkpoint_dir))
         return checkpoint_dir
-
-    def _remove_old_best_dirs(self) -> None:
-        for old_dir in self.save_dir.glob("global_step*.best_model"):
-            shutil.rmtree(old_dir)
-            logger.info("Removed old best_model dir: {}", old_dir)
 
     def _batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
         device_batch: dict[str, Any] = {}
@@ -98,31 +92,23 @@ class PCVRTrainerSupportMixin:
         val_auc: float,
         val_logloss: float,
     ) -> None:
-        old_best = self.early_stopping.best_score
-        is_likely_new_best = (
-            old_best is None
-            or val_auc > old_best + self.early_stopping.delta
+        stop_score = self.validation_early_stopping_score(val_auc, val_logloss)
+        logger.info(
+            "Validation early stopping monitor | metric={} score={}",
+            self.early_stopping_metric,
+            stop_score,
         )
-        if not is_likely_new_best:
-            self.early_stopping(val_auc, self.model, {
-                "best_val_AUC": val_auc,
-                "best_val_logloss": val_logloss,
-                "best_val_score_diagnostics": self.last_eval_diagnostics,
-            }, step=total_step)
-            return
-
-        best_dir = self.save_dir / self._build_step_dir_name(total_step, is_best=True)
-        self.early_stopping.checkpoint_path = str(preferred_checkpoint_path(best_dir))
-        self._remove_old_best_dirs()
-
-        self.early_stopping(val_auc, self.model, {
+        extra_metrics = {
+            "early_stopping_metric": self.early_stopping_metric,
+            "early_stopping_score": stop_score,
             "best_val_AUC": val_auc,
             "best_val_logloss": val_logloss,
             "best_val_score_diagnostics": self.last_eval_diagnostics,
-        }, step=total_step)
-
-        if self.early_stopping.best_score != old_best and Path(self.early_stopping.checkpoint_path).exists():
-            self._save_step_checkpoint(total_step, is_best=True, skip_model_file=True)
+            "best_val_probe_metrics": getattr(self, "last_eval_probe_metrics", {}),
+            "best_val_probe_score_diagnostics": getattr(self, "last_eval_probe_diagnostics", {}),
+        }
+        self.early_stopping(stop_score, self.model, extra_metrics, step=total_step)
+        self._save_step_checkpoint(total_step)
 
     def _infinite_train_batches(self) -> Iterator[dict[str, Any]]:
         start_step = 0
@@ -191,11 +177,7 @@ class PCVRTrainerSupportMixin:
         )
 
     def _write_eval_diagnostics(self, total_step: int) -> None:
-        if self.writer is None or not self.last_eval_diagnostics:
-            return
-        for metric_name, value in self.last_eval_diagnostics.items():
-            self.writer.add_scalar(f"score/{metric_name}", float(value), total_step)
-        self.writer.flush()
+        del total_step
 
 
 __all__ = ["PCVRTrainerSupportMixin"]

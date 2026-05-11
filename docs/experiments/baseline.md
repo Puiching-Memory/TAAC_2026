@@ -94,7 +94,7 @@ ModelInput(
 训练 checkpoint 目录需要包含：
 
 ```text
-global_step*.best_model/
+global_step*/
 ├── model.safetensors
 ├── schema.json
 └── train_config.json

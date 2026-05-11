@@ -7,7 +7,7 @@ from collections.abc import Iterable
 import torch
 import torch.nn as nn
 
-from taac2026.infrastructure.modeling.embeddings import FeatureEmbeddingBank
+from taac2026.infrastructure.modeling.embeddings import FeatureEmbeddingBank, hash_compress_ids
 
 
 class NonSequentialTokenizer(nn.Module):
@@ -19,10 +19,16 @@ class NonSequentialTokenizer(nn.Module):
 		d_model: int,
 		num_tokens: int = 0,
 		emb_skip_threshold: int = 0,
+		compress_high_cardinality: bool = False,
 		force_auto_split: bool = False,
 	) -> None:
 		super().__init__()
-		self.bank = FeatureEmbeddingBank(feature_specs, emb_dim, emb_skip_threshold)
+		self.bank = FeatureEmbeddingBank(
+			feature_specs,
+			emb_dim,
+			emb_skip_threshold,
+			compress_high_cardinality=compress_high_cardinality,
+		)
 		self.groups = [list(group) for group in groups] or [[index] for index in range(len(feature_specs))]
 		self.feature_count = len(feature_specs)
 		self.num_tokens = int(num_tokens) if num_tokens > 0 else len(self.groups)
@@ -86,18 +92,30 @@ class SequenceTokenizer(nn.Module):
 		d_model: int,
 		num_time_buckets: int = 0,
 		emb_skip_threshold: int = 0,
+		compress_high_cardinality: bool = False,
 	) -> None:
 		super().__init__()
 		self.vocab_sizes = [int(value) for value in vocab_sizes]
 		self.emb_dim = emb_dim
+		self.compress_high_cardinality = bool(compress_high_cardinality)
 		self.embeddings = nn.ModuleList()
+		self.compressed_embeddings = nn.ModuleList()
 		self._embedding_index: list[int] = []
+		self._compressed_embedding_index: list[int] = []
 		for vocab_size in self.vocab_sizes:
-			should_skip = vocab_size <= 0 or (emb_skip_threshold > 0 and vocab_size > emb_skip_threshold)
-			if should_skip:
+			if vocab_size <= 0:
 				self._embedding_index.append(-1)
+				self._compressed_embedding_index.append(-1)
+			elif emb_skip_threshold > 0 and vocab_size > emb_skip_threshold and self.compress_high_cardinality:
+				self._embedding_index.append(-1)
+				self._compressed_embedding_index.append(len(self.compressed_embeddings))
+				self.compressed_embeddings.append(nn.Embedding(int(emb_skip_threshold) + 1, emb_dim, padding_idx=0))
+			elif emb_skip_threshold > 0 and vocab_size > emb_skip_threshold:
+				self._embedding_index.append(-1)
+				self._compressed_embedding_index.append(-1)
 			else:
 				self._embedding_index.append(len(self.embeddings))
+				self._compressed_embedding_index.append(-1)
 				self.embeddings.append(nn.Embedding(vocab_size + 1, emb_dim, padding_idx=0))
 		input_dim = max(1, len(self.vocab_sizes) * emb_dim)
 		self.project = nn.Sequential(nn.Linear(input_dim, d_model), nn.SiLU(), nn.LayerNorm(d_model))
@@ -105,7 +123,7 @@ class SequenceTokenizer(nn.Module):
 		self.reset_parameters()
 
 	def reset_parameters(self) -> None:
-		for embedding in self.embeddings:
+		for embedding in [*self.embeddings, *self.compressed_embeddings]:
 			nn.init.xavier_normal_(embedding.weight)
 			embedding.weight.data[0].zero_()
 		if self.time_embedding is not None:
@@ -117,12 +135,17 @@ class SequenceTokenizer(nn.Module):
 		pieces: list[torch.Tensor] = []
 		for feature_index in range(feature_count):
 			embedding_index = self._embedding_index[feature_index] if feature_index < len(self._embedding_index) else -1
-			if embedding_index < 0:
+			compressed_index = self._compressed_embedding_index[feature_index] if feature_index < len(self._compressed_embedding_index) else -1
+			if embedding_index >= 0:
+				vocab_size = self.vocab_sizes[feature_index]
+				values = sequence[:, feature_index, :].to(torch.long).clamp(min=0, max=vocab_size)
+				pieces.append(self.embeddings[embedding_index](values))
+			elif compressed_index >= 0:
+				embedding = self.compressed_embeddings[compressed_index]
+				values = sequence[:, feature_index, :].to(torch.long).clamp(min=0)
+				pieces.append(embedding(hash_compress_ids(values, embedding.num_embeddings - 1)))
+			else:
 				pieces.append(sequence.new_zeros(batch_size, seq_len, self.emb_dim, dtype=torch.float32))
-				continue
-			vocab_size = self.vocab_sizes[feature_index]
-			values = sequence[:, feature_index, :].to(torch.long).clamp(min=0, max=vocab_size)
-			pieces.append(self.embeddings[embedding_index](values))
 		if pieces:
 			token_input = torch.cat(pieces, dim=-1)
 		else:

@@ -103,13 +103,6 @@ def resolve_checkpoint_path(run_dir: Path, checkpoint_path: Path | None = None) 
         return candidate
 
     resolved_run_dir = run_dir.expanduser().resolve()
-    best_candidates = sorted(
-        resolved_run_dir.glob(f"global_step*.best_model/{PRIMARY_CHECKPOINT_FILENAME}"),
-        key=checkpoint_step,
-    )
-    if best_candidates:
-        return best_candidates[-1]
-
     all_candidates = sorted(
         resolved_run_dir.glob(f"global_step*/{PRIMARY_CHECKPOINT_FILENAME}"),
         key=checkpoint_step,
@@ -124,7 +117,10 @@ def resolve_checkpoint_path(run_dir: Path, checkpoint_path: Path | None = None) 
     raise FileNotFoundError(f"no {PRIMARY_CHECKPOINT_FILENAME} checkpoint found under {resolved_run_dir}")
 
 
-def build_checkpoint_dir_name(global_step: int, checkpoint_params: dict[str, Any] | None = None, *, is_best: bool = False) -> str:
+def build_checkpoint_dir_name(
+    global_step: int,
+    checkpoint_params: dict[str, Any] | None = None,
+) -> str:
     if global_step < 0:
         raise ValueError("global_step must be non-negative")
     params = checkpoint_params or {}
@@ -133,8 +129,6 @@ def build_checkpoint_dir_name(global_step: int, checkpoint_params: dict[str, Any
         if key in params:
             parts.append(f"{key}={params[key]}")
     name = ".".join(parts)
-    if is_best:
-        name += ".best_model"
     validate_checkpoint_dir_name(name)
     return name
 

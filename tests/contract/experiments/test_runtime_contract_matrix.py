@@ -514,7 +514,6 @@ def test_build_pcvr_model_leaves_shared_flash_attention_runtime_to_application(t
     [
         (Path("global_step0"), 0),
         (Path("global_step12.layer=2"), 12),
-        (Path("global_step12.layer=2.best_model"), 12),
         (Path("global_step3.head=4") / "model.safetensors", 3),
         (Path("global_step0007"), 7),
         (Path("global_step9.hidden=64.extra_token"), 9),
@@ -545,23 +544,22 @@ def test_validate_checkpoint_dir_name_rejects_invalid_names(name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("global_step", "params", "is_best", "expected"),
+    ("global_step", "params", "expected"),
     [
-        (0, None, False, "global_step0"),
-        (1, {"layer": 2}, False, "global_step1.layer=2"),
-        (1, {"head": 4}, False, "global_step1.head=4"),
-        (7, {"hidden": 128, "unused": 9}, False, "global_step7.hidden=128"),
-        (9, {"layer": "02", "head": "04"}, True, "global_step9.layer=02.head=04.best_model"),
-        (12, {"layer": 2, "head": 4, "hidden": 64}, True, "global_step12.layer=2.head=4.hidden=64.best_model"),
+        (0, None, "global_step0"),
+        (1, {"layer": 2}, "global_step1.layer=2"),
+        (1, {"head": 4}, "global_step1.head=4"),
+        (7, {"hidden": 128, "unused": 9}, "global_step7.hidden=128"),
+        (9, {"layer": "02", "head": "04"}, "global_step9.layer=02.head=04"),
+        (12, {"layer": 2, "head": 4, "hidden": 64}, "global_step12.layer=2.head=4.hidden=64"),
     ],
 )
 def test_build_checkpoint_dir_name_cases(
     global_step: int,
     params: dict[str, object] | None,
-    is_best: bool,
     expected: str,
 ) -> None:
-    assert build_checkpoint_dir_name(global_step, params, is_best=is_best) == expected
+    assert build_checkpoint_dir_name(global_step, params) == expected
 
 
 def test_build_checkpoint_dir_name_rejects_negative_global_step() -> None:
@@ -574,7 +572,6 @@ def test_build_checkpoint_dir_name_rejects_negative_global_step() -> None:
     [
         "explicit_file",
         "explicit_dir",
-        "best_model",
         "latest_step",
         "direct_checkpoint",
         "missing",
@@ -596,16 +593,6 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
         model_path = candidate_dir / "model.safetensors"
         model_path.write_text("manual", encoding="utf-8")
         assert resolve_checkpoint_path(run_dir, candidate_dir) == model_path.resolve()
-        return
-
-    if scenario == "best_model":
-        older = run_dir / "global_step1.best_model"
-        newer = run_dir / "global_step2.best_model"
-        older.mkdir()
-        newer.mkdir()
-        (older / "model.safetensors").write_text("old", encoding="utf-8")
-        (newer / "model.safetensors").write_text("new", encoding="utf-8")
-        assert resolve_checkpoint_path(run_dir) == (newer / "model.safetensors").resolve()
         return
 
     if scenario == "latest_step":
@@ -643,7 +630,7 @@ def test_write_checkpoint_sidecars_cases(
     include_train_config: bool,
     expected_keys: set[str],
 ) -> None:
-    checkpoint_dir = tmp_path / "global_step1.best_model"
+    checkpoint_dir = tmp_path / "global_step1"
     schema_path = tmp_path / "schema.json"
     if include_schema:
         schema_path.write_text('{"schema": true}\n', encoding="utf-8")

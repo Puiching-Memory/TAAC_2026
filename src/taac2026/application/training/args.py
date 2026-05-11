@@ -17,9 +17,11 @@ from taac2026.domain.config import (
     DenseOptimizerType,
     FlashAttentionBackend,
     NSTokenizerType,
+    PCVREarlyStoppingMetric,
     PCVRDataSamplingStrategy,
     PCVRDataSplitStrategy,
     PCVRTrainConfig,
+    PCVRValidationProbeMode,
     RMSNormBackend,
     RankMixerMode,
     SeqEncoderType,
@@ -88,6 +90,8 @@ class PCVRTrainCLIArgs:
     valid_timestamp_end: Annotated[int, _arg("--valid-timestamp-end")] = 0
     eval_every_n_steps: Annotated[int, _arg("--eval-every-n-steps")] = 5_000
     seq_max_lens: Annotated[str, _arg("--seq-max-lens")] = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
+    validation_probe_mode: Annotated[PCVRValidationProbeMode, _arg("--validation-probe-mode")] = "none"
+    early_stopping_metric: Annotated[PCVREarlyStoppingMetric, _arg("--early-stopping-metric")] = "auc"
 
     d_model: Annotated[int, _arg("--d-model")] = 64
     emb_dim: Annotated[int, _arg("--emb-dim")] = 64
@@ -372,9 +376,7 @@ def train_pcvr_model(
         "Resolved PCVR training runtime: {}", runtime_execution_summary(runtime_execution, args.device)
     )
 
-    from torch.utils.tensorboard import SummaryWriter
-
-    writer = SummaryWriter(tf_events_dir)
+    reporter = None
     telemetry = RuntimeTelemetry(
         label="training",
         device=args.device,
@@ -403,7 +405,23 @@ def train_pcvr_model(
             tf_events_dir=tf_events_dir,
             schema_path=schema_path,
             runtime_execution=runtime_execution,
-            writer=writer,
+            reporter=None,
+        )
+        reporter = train_hooks.build_reporter(context)
+        context = PCVRTrainContext(
+            model_module=context.model_module,
+            model_class_name=context.model_class_name,
+            package_dir=context.package_dir,
+            defaults=context.defaults,
+            args=context.args,
+            config=context.config,
+            data_dir=context.data_dir,
+            ckpt_dir=context.ckpt_dir,
+            log_dir=context.log_dir,
+            tf_events_dir=context.tf_events_dir,
+            schema_path=context.schema_path,
+            runtime_execution=context.runtime_execution,
+            reporter=reporter,
         )
         data_bundle = train_hooks.build_data(context)
         model = train_hooks.build_model(context, data_bundle)
@@ -425,7 +443,8 @@ def train_pcvr_model(
         write_json(ckpt_dir / "training_telemetry.json", summary["telemetry"])
         write_json(ckpt_dir / "training_summary.json", summary)
     finally:
-        writer.close()
+        if reporter is not None:
+            reporter.close()
 
     logger.info("Training complete!")
     return summary

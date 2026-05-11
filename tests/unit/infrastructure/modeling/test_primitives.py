@@ -102,3 +102,25 @@ def test_shared_tokenizers_return_stable_shapes() -> None:
     assert dense(torch.ones(2, 3)).shape == (2, 1, 6)
     assert sequence(torch.ones(2, 2, 5), torch.ones(2, 5)).shape == (2, 5, 6)
     assert norm(torch.ones(2, 5, 6)).shape == (2, 5, 6)
+
+
+def test_high_cardinality_ids_are_hash_compressed() -> None:
+    bank = FeatureEmbeddingBank([(10_000, 0, 2)], emb_dim=4, emb_skip_threshold=16, compress_high_cardinality=True)
+    tokens = bank(torch.tensor([[1, 9999], [0, 0]]))
+
+    assert tokens.shape == (2, 1, 4)
+    assert len(bank.embeddings) == 0
+    assert len(bank.compressed_embeddings) == 1
+    assert bank.compressed_embeddings[0].num_embeddings == 17
+    assert not torch.equal(tokens[0, 0], torch.zeros_like(tokens[0, 0]))
+    assert torch.equal(tokens[1, 0], torch.zeros_like(tokens[1, 0]))
+
+
+def test_high_cardinality_sequence_ids_are_hash_compressed() -> None:
+    sequence = SequenceTokenizer([10_000], emb_dim=4, d_model=6, emb_skip_threshold=16, compress_high_cardinality=True)
+    tokens = sequence(torch.tensor([[[1, 9999, 0]], [[0, 0, 0]]]))
+
+    assert tokens.shape == (2, 3, 6)
+    assert len(sequence.embeddings) == 0
+    assert len(sequence.compressed_embeddings) == 1
+    assert sequence.compressed_embeddings[0].num_embeddings == 17

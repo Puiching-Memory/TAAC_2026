@@ -24,6 +24,8 @@ PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range"]
 PCVRDataSamplingStrategy = Literal["step_random", "row_group_sweep"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
+PCVRValidationProbeMode = Literal["none", "drop_nonseq_sparse", "drop_all_sparse"]
+PCVREarlyStoppingMetric = Literal["auc", "logloss", "probe_auc", "probe_logloss", "probe_auc_retention"]
 RMSNormBackend = Literal["torch", "tilelang", "triton"]
 FlashAttentionBackend = Literal["torch", "tilelang"]
 RMS_NORM_BACKEND_CHOICES = ("torch", "tilelang", "triton")
@@ -34,6 +36,8 @@ DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
 PCVR_DATA_CACHE_MODE_CHOICES = ("none", "lru", "fifo", "lfu", "rr", "opt")
 PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_range")
 PCVR_DATA_SAMPLING_STRATEGY_CHOICES = ("step_random", "row_group_sweep")
+PCVR_VALIDATION_PROBE_MODE_CHOICES = ("none", "drop_nonseq_sparse", "drop_all_sparse")
+PCVR_EARLY_STOPPING_METRIC_CHOICES = ("auc", "logloss", "probe_auc", "probe_logloss", "probe_auc_retention")
 
 
 def _normalize_ns_group_map(groups: Mapping[str, Sequence[int]]) -> dict[str, list[int]]:
@@ -274,6 +278,25 @@ class PCVRNSConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PCVRValidationConfig:
+    probe_mode: PCVRValidationProbeMode = "none"
+    early_stopping_metric: PCVREarlyStoppingMetric = "auc"
+
+    def __post_init__(self) -> None:
+        if self.probe_mode not in PCVR_VALIDATION_PROBE_MODE_CHOICES:
+            raise ValueError(f"unsupported validation probe mode: {self.probe_mode}")
+        if self.early_stopping_metric not in PCVR_EARLY_STOPPING_METRIC_CHOICES:
+            raise ValueError(f"unsupported early stopping metric: {self.early_stopping_metric}")
+        if self.probe_mode == "none" and str(self.early_stopping_metric).startswith("probe_"):
+            raise ValueError("probe early stopping metrics require validation probe_mode != 'none'")
+    def to_flat_dict(self) -> dict[str, Any]:
+        return {
+            "validation_probe_mode": self.probe_mode,
+            "early_stopping_metric": self.early_stopping_metric,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PCVRTrainConfig:
     data: PCVRDataConfig = field(default_factory=PCVRDataConfig)
     data_pipeline: PCVRDataPipelineConfig = field(
@@ -287,6 +310,7 @@ class PCVRTrainConfig:
     )
     model: PCVRModelConfig = field(default_factory=PCVRModelConfig)
     ns: PCVRNSConfig = field(default_factory=PCVRNSConfig)
+    validation: PCVRValidationConfig = field(default_factory=PCVRValidationConfig)
 
     def to_flat_dict(self) -> dict[str, Any]:
         flat: dict[str, Any] = {}
@@ -295,6 +319,7 @@ class PCVRTrainConfig:
         flat.update(self.data_pipeline.to_flat_dict())
         flat["loss_terms"] = self.loss.to_list()
         flat.update(self.ns.to_flat_dict())
+        flat.update(self.validation.to_flat_dict())
         return flat
 REQUIRED_PCVR_TRAIN_CONFIG_KEYS = frozenset(PCVRTrainConfig().to_flat_dict())
 PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
@@ -306,6 +331,8 @@ PCVR_TRAIN_CONFIG_COMPAT_DEFAULTS = {
     "valid_timestamp_start": 0,
     "valid_timestamp_end": 0,
     "deterministic": True,
+    "validation_probe_mode": "none",
+    "early_stopping_metric": "auc",
 }
 
 

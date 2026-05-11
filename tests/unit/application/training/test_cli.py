@@ -17,6 +17,7 @@ from taac2026.domain.config import (
     PCVROptimizerConfig,
     PCVRSequenceCropConfig,
     PCVRTrainConfig,
+    PCVRValidationConfig,
 )
 from taac2026.application.training.cli import main, parse_train_args
 from taac2026.infrastructure.experiments.module_loader import load_module_from_path
@@ -259,6 +260,27 @@ def test_parse_pcvr_train_args_uses_runtime_progress_log_interval_default(tmp_pa
     assert args.progress_log_interval_steps == 77
 
 
+def test_parse_pcvr_train_args_accepts_validation_probe_flags(tmp_path: Path) -> None:
+    args = parse_pcvr_train_args(
+        [
+            "--validation-probe-mode",
+            "drop_all_sparse",
+            "--early-stopping-metric",
+            "probe_auc_retention",
+        ],
+        package_dir=tmp_path,
+        defaults=PCVRTrainConfig(
+            validation=PCVRValidationConfig(
+                probe_mode="drop_nonseq_sparse",
+                early_stopping_metric="probe_auc",
+            )
+        ),
+    )
+
+    assert args.validation_probe_mode == "drop_all_sparse"
+    assert args.early_stopping_metric == "probe_auc_retention"
+
+
 def test_default_build_train_model_configures_shared_flash_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -449,13 +471,16 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
 
     args = symbiosis_module.parse_symbiosis_train_args(
         [
-            "--no-symbiosis-use-field-tokens",
             "--no-symbiosis-use-dense-packets",
             "--no-symbiosis-use-sequence-memory",
             "--no-symbiosis-use-compressed-memory",
             "--no-symbiosis-use-candidate-token",
             "--no-symbiosis-use-item-prior",
             "--no-symbiosis-use-domain-type",
+            "--no-symbiosis-use-cross-token",
+            "--no-symbiosis-use-global-token",
+            "--symbiosis-sparse-seed",
+            "123",
             "--symbiosis-memory-block-size",
             "64",
             "--symbiosis-memory-top-k",
@@ -467,13 +492,15 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
         defaults=symbiosis_module.TRAIN_DEFAULTS,
     )
 
-    assert args.symbiosis_use_field_tokens is False
     assert args.symbiosis_use_dense_packets is False
     assert args.symbiosis_use_sequence_memory is False
     assert args.symbiosis_use_compressed_memory is False
     assert args.symbiosis_use_candidate_token is False
     assert args.symbiosis_use_item_prior is False
     assert args.symbiosis_use_domain_type is False
+    assert args.symbiosis_use_cross_token is False
+    assert args.symbiosis_use_global_token is False
+    assert args.symbiosis_sparse_seed == 123
     assert args.symbiosis_memory_block_size == 64
     assert args.symbiosis_memory_top_k == 4
     assert args.symbiosis_recent_tokens == 16

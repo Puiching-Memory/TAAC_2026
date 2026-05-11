@@ -38,6 +38,84 @@ class _DummyModel(torch.nn.Module):
         return logits, torch.empty(0)
 
 
+class _TrainingScalarDummyModel(_DummyModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.diagnostics_enabled = False
+        self.pending_scalars = 0
+
+    def set_training_diagnostics_enabled(self, enabled: bool) -> None:
+        self.diagnostics_enabled = bool(enabled)
+
+    def forward(self, model_input):
+        if self.diagnostics_enabled:
+            self.pending_scalars += 1
+        return super().forward(model_input)
+
+    def consume_training_scalars(self, *, phase: str) -> dict[str, float]:
+        if self.pending_scalars <= 0:
+            return {}
+        value = float(self.pending_scalars)
+        self.pending_scalars = 0
+        return {f"Dummy/{phase}/value": value}
+
+
+class _RecordingWriter:
+    def __init__(self) -> None:
+        self.scalars: list[tuple[str, float, int]] = []
+        self.flush_count = 0
+
+    def add_scalar(self, tag: str, scalar_value: float, global_step: int) -> None:
+        self.scalars.append((tag, float(scalar_value), int(global_step)))
+
+    def flush(self) -> None:
+        self.flush_count += 1
+
+
+class _RecordingReporter:
+    def __init__(self) -> None:
+        self.scalars: list[tuple[str, float, int]] = []
+
+    def train_step(self, *, step: int, loss: float, loss_components, dense_lr: float) -> None:
+        self.scalars.append(("Loss/train", float(loss), int(step)))
+        for name, value in loss_components.items():
+            self.scalars.append((f"Loss/train/{name}", float(value), int(step)))
+        self.scalars.append(("LR/dense", float(dense_lr), int(step)))
+
+    def validation_step(
+        self,
+        *,
+        step: int,
+        auc: float,
+        logloss: float,
+        metrics,
+        score_diagnostics,
+        probe_metrics,
+        probe_score_diagnostics,
+    ) -> None:
+        del metrics, score_diagnostics, probe_metrics, probe_score_diagnostics
+        self.scalars.append(("AUC/valid", float(auc), int(step)))
+        self.scalars.append(("LogLoss/valid", float(logloss), int(step)))
+
+    def should_collect_model_scalars(self, *, phase: str, step: int | None, trainer) -> bool:
+        del phase
+        if step is None:
+            return False
+        interval = int(trainer.runtime_execution.progress_log_interval_steps)
+        return step == 1 or (interval > 0 and step % interval == 0) or (trainer.max_steps > 0 and step == trainer.max_steps)
+
+    def set_model_diagnostics_enabled(self, model: torch.nn.Module, enabled: bool) -> None:
+        model.set_training_diagnostics_enabled(enabled)
+
+    def consume_model_scalars(self, model: torch.nn.Module, *, phase: str) -> dict[str, float]:
+        return model.consume_training_scalars(phase=phase)
+
+    def model_scalars(self, *, phase: str, step: int, scalars) -> None:
+        del phase
+        for tag, value in scalars.items():
+            self.scalars.append((tag, float(value), int(step)))
+
+
 class _InternalCompileDummyModel(_DummyModel):
     uses_internal_compile = True
 
@@ -58,6 +136,20 @@ class _MatrixDummyModel(torch.nn.Module):
     def forward(self, model_input):
         del model_input
         return self.weight.mean().view(1, 1) + self.bias.view(1, 1)
+
+    def predict(self, model_input):
+        logits = self.forward(model_input)
+        return logits, torch.empty(0)
+
+
+class _SparseProbeDummyModel(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bias = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, model_input):
+        sparse_score = model_input.user_int_feats[:, 0].float() + model_input.item_int_feats[:, 0].float()
+        return (sparse_score - 0.5 + self.bias).view(-1, 1)
 
     def predict(self, model_input):
         logits = self.forward(model_input)
@@ -88,6 +180,17 @@ def _dummy_batch(labels: list[float]) -> dict[str, object]:
         "item_int_feats": torch.zeros((batch_size, 1), dtype=torch.long),
         "user_dense_feats": torch.zeros((batch_size, 0), dtype=torch.float32),
         "item_dense_feats": torch.zeros((batch_size, 0), dtype=torch.float32),
+    }
+
+
+def _sparse_probe_batch() -> dict[str, object]:
+    return {
+        "label": torch.tensor([0.0, 1.0], dtype=torch.float32),
+        "_seq_domains": [],
+        "user_int_feats": torch.tensor([[0], [1]], dtype=torch.long),
+        "item_int_feats": torch.zeros((2, 1), dtype=torch.long),
+        "user_dense_feats": torch.zeros((2, 0), dtype=torch.float32),
+        "item_dense_feats": torch.zeros((2, 0), dtype=torch.float32),
     }
 
 
@@ -283,6 +386,29 @@ def test_trainer_runtime_execution_runs_train_and_predict_on_cpu(tmp_path) -> No
     assert math.isfinite(train_loss)
     assert eval_logits.shape == (1,)
     assert torch.equal(eval_labels, torch.tensor([0.0]))
+
+
+def test_trainer_writes_model_training_scalars(tmp_path) -> None:
+    reporter = _RecordingReporter()
+    trainer = PCVRPointwiseTrainer(
+        model=_TrainingScalarDummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[_dummy_batch([1.0])],
+        valid_loader=[_dummy_batch([0.0]), _dummy_batch([1.0])],
+        lr=1e-3,
+        max_steps=2,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+        reporter=reporter,
+        runtime_execution=RuntimeExecutionConfig(compile=False, progress_log_interval_steps=2),
+    )
+
+    trainer.train()
+
+    assert ("Dummy/train/value", 1.0, 1) in reporter.scalars
+    assert ("Dummy/train/value", 1.0, 2) in reporter.scalars
+    assert ("Dummy/valid/value", 1.0, 2) in reporter.scalars
 
 
 def test_set_seed_can_disable_cudnn_determinism() -> None:
@@ -602,3 +728,188 @@ def test_evaluate_records_score_diagnostics(tmp_path, log_capture) -> None:
     assert trainer.last_eval_diagnostics["negative_count"] == 2
     assert trainer.last_eval_diagnostics["positive_score_mean"] > trainer.last_eval_diagnostics["negative_score_mean"]
     assert "Validation score diagnostics" in log_capture.text
+
+
+def test_evaluate_records_sparse_drop_probe_metrics(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_SparseProbeDummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[_sparse_probe_batch()],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+        validation_probe_mode="drop_nonseq_sparse",
+        early_stopping_metric="probe_auc",
+    )
+
+    auc, logloss = trainer.evaluate(step=1)
+
+    assert auc == 1.0
+    assert math.isfinite(logloss)
+    assert trainer.last_eval_probe_metrics["auc"] == pytest.approx(0.5)
+    assert trainer.last_eval_probe_metrics["auc_retention"] == pytest.approx(0.0)
+    assert trainer.validation_early_stopping_score(auc, logloss) == pytest.approx(0.5)
+
+
+def test_validation_result_uses_configured_probe_early_stopping_metric(tmp_path) -> None:
+    early_stopping = EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2)
+    trainer = PCVRPointwiseTrainer(
+        model=_SparseProbeDummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=early_stopping,
+        validation_probe_mode="drop_nonseq_sparse",
+        early_stopping_metric="probe_auc",
+    )
+    trainer.last_eval_diagnostics = {"sample_count": 2}
+    trainer.last_eval_probe_metrics = {"auc": 0.6, "logloss": 0.4, "auc_retention": 0.5}
+    trainer.last_eval_probe_diagnostics = {"sample_count": 2}
+
+    trainer._handle_validation_result(total_step=1, val_auc=0.95, val_logloss=0.2)
+
+    assert early_stopping.best_score == pytest.approx(0.6)
+    assert early_stopping.best_extra_metrics is not None
+    assert early_stopping.best_extra_metrics["early_stopping_metric"] == "probe_auc"
+    assert early_stopping.best_extra_metrics["best_val_AUC"] == pytest.approx(0.95)
+
+
+def test_validation_result_saves_current_step_checkpoint(tmp_path) -> None:
+    early_stopping = EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=4)
+    trainer = PCVRPointwiseTrainer(
+        model=_SparseProbeDummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=early_stopping,
+        validation_probe_mode="drop_nonseq_sparse",
+        early_stopping_metric="probe_auc",
+    )
+    trainer.last_eval_diagnostics = {"sample_count": 2}
+    trainer.last_eval_probe_diagnostics = {"sample_count": 2}
+
+    trainer.last_eval_probe_metrics = {"auc": 0.6, "logloss": 0.4, "auc_retention": 0.5}
+    trainer._handle_validation_result(total_step=1, val_auc=0.90, val_logloss=0.2)
+    trainer.last_eval_probe_metrics = {"auc": 0.55, "logloss": 0.5, "auc_retention": 0.25}
+    trainer._handle_validation_result(total_step=2, val_auc=0.95, val_logloss=0.25)
+
+    checkpoint_root = tmp_path / "checkpoints"
+    assert (checkpoint_root / "global_step1" / "model.safetensors").exists()
+    assert (checkpoint_root / "global_step2" / "model.safetensors").exists()
+    assert early_stopping.best_score == pytest.approx(0.6)
+
+
+class _NaNProducingModel(torch.nn.Module):
+    """Model that produces NaN logits to test training NaN detection."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bias = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, model_input):
+        del model_input
+        return torch.tensor([[float("nan")]], dtype=torch.float32)
+
+    def predict(self, model_input):
+        return self.forward(model_input), torch.empty(0)
+
+
+def test_train_step_skips_backward_when_loss_is_nan(tmp_path, log_capture) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_NaNProducingModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+    )
+    initial_bias = trainer.model.bias.detach().clone()
+
+    with log_capture.at_level(logging.WARNING):
+        loss = trainer._train_step(_dummy_batch([1.0]))
+
+    assert math.isnan(loss)
+    # optim_step should NOT increment for a NaN step
+    assert trainer.optim_step == 0
+    # Model parameters should remain unchanged (no backward was performed)
+    assert torch.equal(trainer.model.bias.detach(), initial_bias)
+    assert "non-finite loss" in log_capture.text
+    assert "Skipping backward" in log_capture.text
+    # Loss components should all be nan
+    assert all(math.isnan(v) for v in trainer.last_train_loss_components.values())
+
+
+class _InfProducingModel(torch.nn.Module):
+    """Model that produces inf logits to test training inf detection."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bias = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, model_input):
+        del model_input
+        return torch.tensor([[float("inf")]], dtype=torch.float32)
+
+    def predict(self, model_input):
+        return self.forward(model_input), torch.empty(0)
+
+
+def test_train_step_skips_backward_when_loss_is_inf(tmp_path, log_capture) -> None:
+    """BCEWithLogitsLoss(inf) produces nan loss, which triggers the non-finite guard."""
+    trainer = PCVRPointwiseTrainer(
+        model=_InfProducingModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+    )
+    initial_bias = trainer.model.bias.detach().clone()
+
+    with log_capture.at_level(logging.WARNING):
+        loss = trainer._train_step(_dummy_batch([1.0]))
+
+    # BCEWithLogitsLoss maps inf logits to nan loss
+    assert not math.isfinite(loss)
+    assert trainer.optim_step == 0
+    assert torch.equal(trainer.model.bias.detach(), initial_bias)
+    assert "non-finite loss" in log_capture.text
+
+
+def test_train_step_proceeds_normally_with_finite_loss(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+    )
+    initial_bias = trainer.model.bias.detach().clone()
+
+    loss = trainer._train_step(_dummy_batch([1.0]))
+
+    assert math.isfinite(loss)
+    assert trainer.optim_step == 1
+    # Parameters should have changed
+    assert not torch.equal(trainer.model.bias.detach(), initial_bias)

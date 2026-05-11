@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from taac2026.infrastructure.modeling.model_contract import (
+    ModelInput,
     batch_to_model_input,
     build_feature_specs,
     load_ns_groups,
@@ -140,3 +141,29 @@ def test_batch_to_model_input_uses_zero_time_buckets_when_missing() -> None:
     assert set(model_input.seq_data) == {"seq_a"}
     assert model_input.seq_time_buckets["seq_a"].shape == (2, 3)
     assert torch.equal(model_input.seq_time_buckets["seq_a"], torch.zeros(2, 3, dtype=torch.long))
+
+
+def test_batch_to_model_input_exposes_missing_masks_and_sequence_stats() -> None:
+    batch = {
+        "user_int_feats": torch.tensor([[0, 2]], dtype=torch.long),
+        "item_int_feats": torch.tensor([[3]], dtype=torch.long),
+        "user_dense_feats": torch.tensor([[1.0, 0.0]]),
+        "item_dense_feats": torch.zeros(1, 0),
+        "user_int_missing_mask": torch.tensor([[True, False]]),
+        "item_int_missing_mask": torch.tensor([[False]]),
+        "user_dense_missing_mask": torch.tensor([[False, True]]),
+        "item_dense_missing_mask": torch.zeros(1, 0, dtype=torch.bool),
+        "_seq_domains": ["seq_a"],
+        "seq_a": torch.ones(1, 1, 2, dtype=torch.long),
+        "seq_a_len": torch.tensor([2]),
+        "seq_a_time_bucket": torch.tensor([[2, 1]], dtype=torch.long),
+        "seq_a_stats": torch.tensor([[2.0, 2.0, 1.0, 0.5, 1.0, 1.0]]),
+    }
+
+    model_input = batch_to_model_input(batch, ModelInput, torch.device("cpu"))
+
+    assert model_input.user_int_missing_mask is not None
+    assert model_input.seq_stats is not None
+    assert model_input.user_int_missing_mask.tolist() == [[True, False]]
+    assert model_input.user_dense_missing_mask.tolist() == [[False, True]]
+    assert model_input.seq_stats["seq_a"].tolist() == [[2.0, 2.0, 1.0, 0.5, 1.0, 1.0]]

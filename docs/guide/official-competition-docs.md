@@ -106,7 +106,7 @@ icon: lucide/book-open-text
 
 官方要求 checkpoint 目录名前缀为 `global_step`，目录名长度不超过 300 个字符，只使用字母、数字、下划线、连字符、等号和点号。
 
-本仓库训练产物会写出 `global_step*.best_model/model.safetensors`，并在同目录保存 `schema.json` 与 `train_config.json`。
+本仓库训练产物会写出 `global_step*/model.safetensors`，并在同目录保存 `schema.json` 与 `train_config.json`。
 
 ## 评测环境变量
 
