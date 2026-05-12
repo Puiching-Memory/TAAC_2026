@@ -50,16 +50,47 @@
 
 ## 我们的工作
 
-- **分层架构与依赖倒置** — Domain → Application → Infrastructure 单向依赖，核心度量与配置校验脱离 PyTorch，纯 CPU 可测
-- **插件式实验包** — 两文件接入完整链路：`__init__.py` 暴露入口 + `model.py` 履行契约，`importlib` 动态加载，实验间零耦合
-- **钩子驱动的可组合流程** — 训练 / 预测拆为可替换钩子（`build_data` · `build_model` · `build_trainer` …），只覆写差异，其余复用默认
-- **冻结 dataclass 配置** — `frozen=True, slots=True` 确保不可变与零 dict 开销，可安全传入多进程 worker，并自动兼容旧键名
-- **版本化边界契约** — sidecar / manifest 携带格式与版本号，Pydantic `extra="forbid"` 严格校验，版本不匹配即报错
-- **GPU 内核注册表** — FlashAttention · RMSNorm · EmbeddingBag 三类算子，torch / Triton / TileLang 三套后端，一行配置切换，编译自动缓存
-- **Step 级采样管线** — 以 optimizer step 而非 epoch 编排采样；缓存层 6 策略 × 变换层 3 操作可组合，确定性种子保证全链路可复现
-- **稀疏 / 密集双优化器** — Embedding 走 Adagrad，其余走 AdamW / Fused / Orthogonal / Muon，支持稀疏优化器定期重建
-- **版本化 Bundle 打包** — 一键产出 `code_package.zip` + 入口脚本 + manifest，打包与线上环境经 manifest 契约校验一致
-- **分层测试标记** — unit · contract · integration · gpu · benchmark 五级 pytest marker，CI 按层级调度，覆盖率门槛 70%
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**实验与模型**
+
+- **两文件接入新模型** — `__init__.py` + `model.py` 即可挂载实验，钩子覆写只替换差异部分
+- **6 个实验包一行切换** — Baseline、InterFormer、OneTrans、UniTok、UniRec、Symbiosis 共享数据管线与评估流程
+- **一键打包上线** — `taac-package-train` 产出 `code_package.zip`，平台契约校验确保线上线下一致
+
+</td>
+<td width="50%" valign="top">
+
+**数据与训练**
+
+- **Step 级流式管线** — Parquet 流式读取，5 种缓存策略，确定性种子全链路可复现
+- **可组合数据增强** — 序列裁剪、域级 Dropout、特征 Mask，每步动态生效
+- **一行切换 GPU 内核** — FlashAttention / RMSNorm 提供 torch / Triton / TileLang 三后端，编译自动缓存
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**工程与质量**
+
+- **CI 全覆盖** — lint + 单元 / 契约 / 集成 / 基准测试 + 文档构建
+- **分层测试** — `tests/` 按 unit / contract / integration / benchmark / gpu 组织
+- **工具脚本** — `tools/` 提供缓存清理、GitHub 维护等实用工具
+
+</td>
+<td valign="top">
+
+**AI 辅助与文档**
+
+- **5 个 Agent Skills** — 覆盖环境配置、实验集成、文档构建、平台 API 和容器清理
+- **全站技术文档** — Zensical 构建，涵盖架构、实验、论文、指南与诊断，`zensical serve` 本地预览
+
+</td>
+</tr>
+</table>
 
 ![PCVR Runtime Resources](figures/pcvr_diagnostics/pcvr_runtime_resources.svg)
 
@@ -104,8 +135,6 @@ bash run.sh infer --experiment experiments/baseline \
   --result-dir outputs/readme_infer \
   --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
 ```
-
-PCVR 本地 smoke 会通过 `datasets` 从 Hugging Face 缓存 `TAAC2026/data_sample_1000` 的 `demo_1000.parquet`，不再接受显式 `--dataset-path`。仓库不提交 parquet 数据；公开样例数据的唯一来源是 Hugging Face。样例 schema 归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`，这是基于线上格式和线下 parquet 读取反推得到的参考快照。本地命令建议显式传 `--schema-path`；线上 Bundle 仍由平台注入真实数据路径和 schema 路径。
 
 ### 生成线上 Bundle
 
@@ -157,8 +186,6 @@ uv run zensical serve
 | OneTrans    | [experiments/onetrans](experiments/onetrans)       | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                            |
 | UniTok      | [experiments/unitok](experiments/unitok)           | 统一 token-stream 实验包，将 field-level token、dense packet、行为事件和候选 token 放入同一 backbone          |
 | UniRec      | [experiments/unirec](experiments/unirec)           | UniRec 融合实验包，将 Hybrid SiLU attention、MoT、target-aware interest 和 BlockAttnRes 接入共享 PCVR runtime |
-
-更详细的训练命令、线上训练/推理打包说明和各实验包说明，可以看 [docs/getting-started.md](docs/getting-started.md)、[docs/guide/online-training-bundle.md](docs/guide/online-training-bundle.md)、[docs/guide/testing.md](docs/guide/testing.md)、[docs/experiments/index.md](docs/experiments/index.md) 和 [docs/architecture.md](docs/architecture.md)。官方平台规则和赛题说明可再参考 [docs/guide/official-competition-docs.md](docs/guide/official-competition-docs.md)。
 
 ------
 
@@ -295,7 +322,7 @@ data/sample_1000_raw/
 
 ## 相关工作
 以下按公开可访问资料整理，优先保留能直接借鉴代码、EDA、方法说明和赛事资料的链接，持续补充。
-调查时间: 2026-05-08
+调查时间: 2026-05-12
 
 **2025届：官方 / 公开代码**  
 - [TencentAdvertisingAlgorithmCompetition/baseline_2025](https://github.com/TencentAdvertisingAlgorithmCompetition/baseline_2025) 官方 parquet baseline，主体为 SASRec，并附带 faiss-based-ann 检索与 RQ-VAE 扩展入口。  
@@ -316,12 +343,15 @@ data/sample_1000_raw/
 - [SCUcookie/TAAC2026](https://github.com/SCUcookie/TAAC2026) 持续更新中的综合工作区，除 baseline 代码外还整理了 docs、evaluation、submission、tools 与 prompt 目录，适合跟踪训练、提交流程与文档沉淀。末次 commit 快照: `8b76d5d` / 2026-05-08 / `tidy version`。  
 - [ChinaStark/taac_comp](https://github.com/ChinaStark/taac_comp) 贴近官方 baseline 的公开工作区，新增了线上训练 bundle 目录与 pyproject 工程化包装，同时修复了单 Row Group parquet 的空训练切分问题。末次 commit 快照: `eaae182` / 2026-05-05 / `Add TAAC online training bundle workspace.`。  
 - [XiaolongWang-c/tencent-ad](https://github.com/XiaolongWang-c/tencent-ad) 面向 TAAC 2026 的备赛工程底座，采用 DuckDB + Parquet、统一 Sample 抽象、可配置标签映射和可插拔模型接口，便于快速替换 baseline。末次 commit 快照: `15f60c2` / 2026-05-03 / `Delete official_submission directory`。  
-- [ZhongKuang/TAAC2026-CLI](https://github.com/ZhongKuang/TAAC2026-CLI) 面向 Taiji / TAAC 训练、模型与评估页面的 agent-friendly CLI，支持抓取 metrics / 日志 / 代码、对比配置、安全提交训练、发布 checkpoint 和归档线上评估证据。末次 commit 快照: `693cecf` / 2026-05-06 / `feat: 增加评估证据抓取`。  
+- [ZhongKuang/TAAC2026-CLI](https://github.com/ZhongKuang/TAAC2026-CLI) 面向 Taiji / TAAC 训练、模型与评估页面的 agent-friendly CLI，支持抓取 metrics / 日志 / 代码、对比配置、安全提交训练、发布 checkpoint 和归档线上评估证据。末次 commit 快照: `571d8b1` / 2026-05-09 / `docs: 补充 taiji 输出目录检查规则`。  
+- [ucarcompany/TAAC2026-Agent-pro](https://github.com/ucarcompany/TAAC2026-Agent-pro) 基于 ZhongKuang/TAAC2026-CLI 的自主研究管线，新增「数据→文献→提案→人工审核→自主训练→排行榜提交」闭环，包含 HMAC 双签审核令牌、12 状态机训练循环、错误医生知识库、6 门提交升降级等模块，附带 Claude Code 部署配置与 233 项测试。末次 commit 快照: `177ed28` / 2026-05-08 / `M7: submit-escalate live submission to algo.qq.com leaderboard`。  
 - [suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest](https://github.com/suyanli220/TAAC-2026-Baseline-Tencent-Advertisement-Contest) DeepContextNet baseline，围绕 HSTU 风格序列建模、Global CLS 聚合、时间衰减 bucket 与 Muon 优化器组织训练。末次 commit 快照: `c91d492` / 2026-03-22 / `Update README.md`。  
 - [lioliominister/TAAC2026](https://github.com/lioliominister/TAAC2026) 围绕统一可堆叠骨干的 pCVR 工程骨架，包含 EDA 校验后的 schema、tokenizer / unified block 实现、统一入口以及推理时延测试。末次 commit 快照: `6ace95a` / 2026-04-23 / `feat: implement dataset.py with full data loading pipeline`。  
+- [Gray7118/taac2026-nzqk](https://github.com/Gray7118/taac2026-nzqk) 自包含 PCVR 训练工程，支持自适应 DDP 多卡训练、torch.compile 加速、AMP (bf16) 混合精度，附带 ns_groups.json 配置与独立 test/test_dp 脚本。末次 commit 快照: `6ac31f8` / 2026-05-10 / `feat: support adaptive ddp training`。  
 - [ZeroTrust01/KDD2026](https://github.com/ZeroTrust01/KDD2026) 偏工程化的 TAAC/KDD 2026 工作区，包含 DIN+DCN V2 baseline、统一 tokenizer/backbone 草图、DuckDB 预处理脚本、测试与时延基准目录。末次 commit 快照: `18a2b51` / 2026-03-30 / `refactor: env-var based hyperparams + remove kaggle_full_train.py`。  
 - [AugustusXu/GenAdvRec](https://github.com/AugustusXu/GenAdvRec) TAAC2026 PCVRHyFormer 基线实现，README 对数据列、模型结构、RankMixer / Group 两种 NS tokenizer 配置和训练参数说明较完整。末次 commit 快照: `96d1260` / 2026-04-27 / `update readme`。  
 - [tobegold574/TAAC2026](https://github.com/tobegold574/TAAC2026) 自包含 PCVRHyFormer baseline，围绕 MultiSeqHyFormerBlock、MultiSeqQueryGenerator 和 RankMixerBlock 组织多序列 pCVR 建模，并提供默认 run.sh 配置。末次 commit 快照: `d4ccfac` / 2026-04-29 / `README: write in Chinese`。  
+- [A-mess/TAAC2026](https://github.com/A-mess/TAAC2026) PCVRHyFormer 工程化工作区，包含 experiments 目录、RankMixer 特征重映射配置、uv 工程包装与 smoke test 文档，持续高频迭代。末次 commit 快照: `c5ae824` / 2026-05-12 / `Align feature remap infer with rankmixer config`。  
 - [wwWW-pig/TAAC2026_HyFormer](https://github.com/wwWW-pig/TAAC2026_HyFormer) 自包含 HyFormer 风格 pCVR baseline，使用 pyarrow IterableDataset 读取 Parquet，支持 BCE/Focal Loss、target-aware query 消融和稀疏 embedding 重初始化开关。末次 commit 快照: `9ffeb4f` / 2026-04-25 / `Document baseline and add target-aware query`。  
 - [Oka117/TAAC2026Baseline](https://github.com/Oka117/TAAC2026Baseline) 官方 baseline 的双语源码分析与本地化整理版，补充 requirements、友好的本地默认路径以及 HuggingFace 1k 样例 smoke test。末次 commit 快照: `99dce08` / 2026-04-28 / `Merge pull request #1 from royw52241-tech/chore/better-default-paths`。  
 - [Lireswallow/2026TAAC-model-checker](https://github.com/Lireswallow/2026TAAC-model-checker) 本地模型校验与官方沙箱前置模拟工具，内置可跑通的 demo 数据、schema 和轻微改造后的 baseline，便于替换 train.py / model.py 做提交前自检。末次 commit 快照: `f6dc853` / 2026-04-26 / `修改了一下`。  
@@ -332,6 +362,7 @@ data/sample_1000_raw/
 - [WestbrookLong/Hyformer_Pytorch](https://github.com/WestbrookLong/Hyformer_Pytorch) HyFormer 的非官方 PyTorch 复现与可运行训练工程，补上多序列分组、AMP、checkpoint 与 TAAC sample 训练脚本。末次 commit 快照: `8463549` / 2026-04-14 / `Initial commit`。  
 - [Maxsim111/QinShiHuang-TAAC2026](https://github.com/Maxsim111/QinShiHuang-TAAC2026) 秦始皇队仓库，当前重点是适配 TAAC demo 的 PyTorch DeepFM 训练工程，并保留 DeepInterestNetwork 目录与比赛环境定义。末次 commit 快照: `6fe6887` / 2026-04-09 / `Adapt DeepFM to Tencent demo dataset`。  
 - [wangjialin114/kdd-cup-2026-tencent](https://github.com/wangjialin114/kdd-cup-2026-tencent) 偏资料整理与项目骨架的公开仓库，汇总比赛背景、数据说明、时间线、奖金与基础目录结构，更适合作为入门索引而非成熟训练代码。末次 commit 快照: `50eb7d4` / 2026-04-02 / `feat: 初始化 KDD Cup 2026 项目仓库`。  
+- [ralgond/TAAC2026](https://github.com/ralgond/TAAC2026) 多模型探索工作区，同时包含 baseline、Behavior Encoder、DeepFM 与 Gated Fusion 四套方案，持续迭代中。末次 commit 快照: `65386d5` / 2026-05-12 / `Merge branch 'main'`。  
 
 **2026届：Kaggle / Notebook**  
 - [galegale05/TAAC2026 Baseline v3 - Final](https://www.kaggle.com/code/galegale05/taac2026-baseline-v3-final/notebook) Kaggle 上公开的 HSTU 风格时间特征 baseline notebook，可作为时间 bucket、session 切分和轻量级序列建模的补充参考。  
