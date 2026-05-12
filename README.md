@@ -364,6 +364,13 @@ data/sample_1000_raw/
 - [wangjialin114/kdd-cup-2026-tencent](https://github.com/wangjialin114/kdd-cup-2026-tencent) 偏资料整理与项目骨架的公开仓库，汇总比赛背景、数据说明、时间线、奖金与基础目录结构，更适合作为入门索引而非成熟训练代码。末次 commit 快照: `50eb7d4` / 2026-04-02 / `feat: 初始化 KDD Cup 2026 项目仓库`。  
 - [ralgond/TAAC2026](https://github.com/ralgond/TAAC2026) 多模型探索工作区，同时包含 baseline、Behavior Encoder、DeepFM 与 Gated Fusion 四套方案，持续迭代中。末次 commit 快照: `65386d5` / 2026-05-12 / `Merge branch 'main'`。  
 
+**2026届：Fork of [Puiching-Memory/TAAC_2026](https://github.com/Puiching-Memory/TAAC_2026)**  
+以下为本仓库的 GitHub Fork 中有独立贡献的代表性项目（截至 2026-05-12 共 74 个 fork，完整列表见 [Forks 页面](https://github.com/Puiching-Memory/TAAC_2026/forks)）。  
+- [LC1332/TAAC_2026-ref1](https://github.com/LC1332/TAAC_2026-ref1) 参考分支，星标 2，末次推送 2026-04-06。  
+- [DMax1314/TAAC_2026](https://github.com/DMax1314/TAAC_2026) 星标 1，末次推送 2026-05-12。  
+- [flycalm/TAAC_2026](https://github.com/flycalm/TAAC_2026) 星标 1，末次推送 2026-04-11。  
+- 其余 71 个 fork 汇总见 [GitHub Forks 页面](https://github.com/Puiching-Memory/TAAC_2026/forks)。  
+
 **2026届：Kaggle / Notebook**  
 - [galegale05/TAAC2026 Baseline v3 - Final](https://www.kaggle.com/code/galegale05/taac2026-baseline-v3-final/notebook) Kaggle 上公开的 HSTU 风格时间特征 baseline notebook，可作为时间 bucket、session 切分和轻量级序列建模的补充参考。  
 
