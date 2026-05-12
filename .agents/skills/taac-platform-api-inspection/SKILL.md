@@ -5,127 +5,38 @@ description: "Use when: inspecting TAAC/Taiji platform pages on taiji.algo.qq.co
 
 # TAAC Platform API Inspection
 
-Use this skill when a user asks to inspect TAAC/Taiji platform training pages,
-checkpoint pages, output details, metrics, plots, or model evaluation pages. The
-goal is to get structured data from the authenticated browser session instead of
-estimating values from screenshots.
+Use when a user asks to inspect TAAC/Taiji training pages or analyze metrics.
+Get structured data from the authenticated browser session. Never estimate
+values from screenshots.
 
-## Core Rule
+## Core Principles
 
-Prefer authenticated API calls through the shared browser context over visual
-inspection.
+- **Always use `page.evaluate()` + `fetch({ credentials: "include" })` for API
+  calls.** `page.context().request.get()` fails with `Storage.getCookies:
+  Method not found` in the MCP browser environment.
+- **Always summarize inside `page.evaluate()`.** Raw `tf_events` JSON is
+  50–200 KB and will be truncated into ephemeral resource files. Return only
+  compact summaries — one object per metric.
+- **Response interception + `page.reload()` is the fastest discovery method.**
+  One reload captures both `get_ckpt` and `tf_events` endpoints.
 
-Screenshots are useful for layout confirmation, but chart values should come
-from API JSON, page state, or DOM text whenever possible. Do not infer precise
-metric values from pixels when the logged-in browser can call the platform API.
+## Two-Step Pipeline
 
-## Tool Setup
+### Step 1: Navigate and discover endpoints
 
-Before using deferred browser tools, load them with `tool_search`. The tools most
-often needed are:
-
-- `read_page`: confirm the current URL, login state, visible tables, and page refs.
-- `run_playwright_code`: inspect network requests and call authenticated APIs.
-- `screenshot_page`: fallback only, or to confirm the page being analyzed.
-- `click_element`: navigate tabs only when direct API discovery is not enough.
-
-If the browser lands on `https://algo.qq.com/?type=login` or shows a public TAAC
-landing page, ask the user to finish login in the shared browser. Do not request
-or handle passwords, QR codes, tokens, or raw cookies in chat.
-
-## Workflow
-
-1. Confirm the page and login state with `read_page`.
-   - Record the actual URL.
-   - Extract job id, instance id, project/team id, checkpoint id, and visible
-     checkpoint names from the page or URL.
-   - Verify whether the page is a training detail page, checkpoint page, or a
-     login/landing fallback.
-
-2. Discover API endpoints from the browser context.
-   - Use `performance.getEntriesByType("resource")` to list loaded XHR/fetch
-     resources.
-   - Filter for likely API URLs containing terms such as `api`, `training`,
-     `ckpt`, `checkpoint`, `metric`, `scalar`, `plot`, `tensorboard`, `job`,
-     `instance`, `output`, or the current instance id.
-   - If resource entries are stale or incomplete, attach a temporary
-     `page.on("response")` listener and reload the current page.
-
-3. Call APIs with the browser context's authenticated cookie jar.
-   - Prefer `page.context().request.get(url)` for same-origin JSON endpoints.
-   - `page.evaluate(() => fetch(url, { credentials: "include" }))` is also
-     acceptable for same-origin APIs.
-   - If `page.context().request.get(...)` fails with a Playwright protocol error
-     such as `Storage.getCookies: Method not found`, do not retry the same path.
-     Switch to in-page `fetch(url, { credentials: "include" })`; it reuses the
-     logged-in page session without exposing cookies.
-   - Do not print cookie values. Do not copy cookies into terminal commands
-     unless there is no browser-context alternative.
-
-4. Parse structured data.
-   - For checkpoint tables, use JSON fields or DOM table text, not screenshots.
-   - For metrics, extract scalar series as `{name, step, value}` arrays or the
-     closest equivalent returned by the platform.
-   - For checkpoint output pages, the loaded endpoints often include:
-     - `/taskmanagement/api/v1/instances/external/<instance_id>/get_ckpt`
-     - `/taskmanagement/api/v1/instances/external/<instance_id>/tf_events`
-   - `tf_events` metric groups are usually nested under `json.data?.data`, not
-     directly under the top-level `json.data`. Each metric group is an array of chart objects like
-     `{date: [...], title: [...], value: [[...], ...]}`. Parse it by zipping
-     `date[j]` with `value[i][j]` for every `title[i]`.
-   - Summarize exact best steps, last steps, minima/maxima, and trend direction.
-   - For `Probe/*` metrics, compare `Probe/auc`, `Probe/logloss`, and
-     `Probe/auc_retention` against full `AUC/valid` and `LogLoss/valid`.
-
-5. Use screenshots only as a fallback.
-   - Take screenshots when API access fails, the chart library hides data, or the
-     user explicitly asks for visual confirmation.
-   - Label screenshot-derived values as approximate.
-
-## Useful Playwright Snippets
-
-Discover loaded API-like resources:
+Navigate to the checkpoint URL, then intercept XHR responses during reload:
 
 ```javascript
-return page.evaluate(() => {
-  const keywords = [
-    "api",
-    "training",
-    "ckpt",
-    "checkpoint",
-    "metric",
-    "scalar",
-    "plot",
-    "tensorboard",
-    "job",
-    "instance",
-    "output",
-  ];
-  return performance
-    .getEntriesByType("resource")
-    .map((entry) => ({ name: entry.name, type: entry.initiatorType }))
-    .filter((entry) => keywords.some((keyword) => entry.name.toLowerCase().includes(keyword)))
-    .slice(-100);
-});
-```
-
-Capture JSON responses during reload:
-
-```javascript
+// run_playwright_code — intercept + reload
 const captured = [];
-const keywords = ["api", "training", "ckpt", "metric", "scalar", "plot", "instance"];
+const keywords = ["api", "training", "ckpt", "metric", "scalar", "plot", "instance", "tf_events"];
 const handler = async (response) => {
   const url = response.url();
-  if (!keywords.some((keyword) => url.toLowerCase().includes(keyword))) return;
-  const contentType = response.headers()["content-type"] || "";
-  const item = { url, status: response.status(), contentType };
-  if (contentType.includes("json")) {
-    try {
-      const text = await response.text();
-      item.preview = text.slice(0, 4000);
-    } catch (error) {
-      item.error = String(error);
-    }
+  if (!keywords.some(kw => url.toLowerCase().includes(kw))) return;
+  const ct = response.headers()["content-type"] || "";
+  const item = { url, status: response.status(), contentType: ct };
+  if (ct.includes("json")) {
+    try { item.preview = (await response.text()).slice(0, 4000); } catch (e) { item.error = String(e); }
   }
   captured.push(item);
 };
@@ -135,139 +46,114 @@ page.off("response", handler);
 return captured;
 ```
 
-Call a discovered JSON endpoint with browser cookies:
+This surfaces:
+- `.../external/<instance_id>/get_ckpt` — checkpoint list, sizes, publish status
+- `.../external/<instance_id>/tf_events` — all scalar metrics
+
+Extract `<instance_id>` from the URL: it's the last path segment
+(`95d1b0469e0fba1e019e1811651b16d5` in a typical checkpoint URL).
+
+If the browser redirects to `https://algo.qq.com/?type=login`, stop and ask the
+user to log in first.
+
+### Step 2: Fetch and summarize metrics in-browser
 
 ```javascript
-const response = await page.context().request.get(endpointUrl, {
-  headers: { accept: "application/json,text/plain,*/*" },
-});
-const text = await response.text();
-return {
-  url: endpointUrl,
-  status: response.status(),
-  ok: response.ok(),
-  contentType: response.headers()["content-type"] || "",
-  bodyPreview: text.slice(0, 12000),
-};
-```
+// run_playwright_code — fetch + summarize
+return page.evaluate(async () => {
+  const url = 'https://taiji.algo.qq.com/taskmanagement/api/v1/instances/external/<INSTANCE_ID>/tf_events';
+  const json = await (await fetch(url, { credentials: 'include' })).json();
+  const groups = json.data?.data ?? {};
+  const summaries = [];
 
-Fallback API call when browser-context requests cannot read cookies in the MCP
-browser environment:
+  for (const [group, charts] of Object.entries(groups)) {
+    if (!Array.isArray(charts)) continue;
+    for (const chart of charts) {
+      const dates = chart.date || [];
+      const titles = chart.title || [];
+      const values = chart.value || [];
+      for (let i = 0; i < titles.length; i++) {
+        const name = titles[i];
+        const vals = values[i] || [];
+        const points = dates
+          .map((step, j) => ({ step: +step, value: +vals[j] }))
+          .filter(p => Number.isFinite(p.step) && Number.isFinite(p.value));
+        if (!points.length) continue;
 
-```javascript
-return page.evaluate(async (endpointUrl) => {
-  const response = await fetch(endpointUrl, {
-    credentials: "include",
-    headers: { accept: "application/json,text/plain,*/*" },
-  });
-  const text = await response.text();
-  return {
-    status: response.status,
-    ok: response.ok,
-    contentType: response.headers.get("content-type") || "",
-    bodyPreview: text.slice(0, 12000),
-  };
-}, endpointUrl);
-```
+        let min = points[0], max = points[0];
+        for (const p of points) {
+          if (p.value < min.value) min = p;
+          if (p.value > max.value) max = p;
+        }
+        const n = points.length;
+        const earlyN = Math.max(1, Math.floor(n * 0.2));
+        const lateN = Math.max(1, Math.floor(n * 0.2));
+        const earlyAvg = points.slice(0, earlyN).reduce((s, p) => s + p.value, 0) / earlyN;
+        const lateAvg = points.slice(n - lateN).reduce((s, p) => s + p.value, 0) / lateN;
+        const trend = lateAvg > earlyAvg * 1.005 ? '↑' : lateAvg < earlyAvg * 0.995 ? '↓' : '→';
 
-Parse TAAC `tf_events` scalars from checkpoint pages:
-
-```javascript
-const json = await (await fetch(tfEventsUrl, { credentials: "include" })).json();
-const groups = json.data?.data ?? {};
-const series = [];
-for (const [group, charts] of Object.entries(groups)) {
-  if (!Array.isArray(charts)) continue;
-  for (const chart of charts) {
-    const dates = chart.date || [];
-    const titles = chart.title || [];
-    const values = chart.value || [];
-    for (let i = 0; i < titles.length; i++) {
-      const points = dates
-        .map((step, j) => ({ step: Number(step), value: Number((values[i] || [])[j]) }))
-        .filter((point) => Number.isFinite(point.step) && Number.isFinite(point.value));
-      if (points.length) series.push({ group, name: titles[i], points });
+        summaries.push({
+          group, name, count: n,
+          first: [points[0].step, +points[0].value.toFixed(6)],
+          last:  [points[n-1].step, +points[n-1].value.toFixed(6)],
+          min:   [min.step, +min.value.toFixed(6)],
+          max:   [max.step, +max.value.toFixed(6)],
+          trend
+        });
+      }
     }
   }
-}
-return series;
+  return summaries;
+});
 ```
 
-Summarize a scalar series without returning huge JSON:
+Replace `<INSTANCE_ID>` with the value from Step 1. The result is a compact
+array, e.g. `{group:"AUC", name:"AUC/valid", first:[500,0.7929],
+last:[5000,0.8296], min:[500,0.7929], max:[2500,0.8346], trend:"↑"}`.
 
-```javascript
-function summarize(name, points) {
-  const first = points[0];
-  const last = points[points.length - 1];
-  const min = points.reduce((best, point) => (point.value < best.value ? point : best), first);
-  const max = points.reduce((best, point) => (point.value > best.value ? point : best), first);
-  return { name, count: points.length, first, last, min, max };
-}
-```
+## Analysis Framework
 
-Extract visible table text without screenshots:
+When reporting results, structure the analysis around these signals:
 
-```javascript
-return page.locator("table").evaluateAll((tables) =>
-  tables.map((table) => table.innerText)
-);
-```
+### Primary signals (always check)
 
-## Known Pitfalls From Browser MCP Runs
+| Signal | What to look for |
+|--------|-----------------|
+| **Overfitting** | Train Loss ↓ while valid AUC peaks then ↓ or LogLoss ↑ |
+| **Best checkpoint** | The step where valid AUC is maximized (not the final step) |
+| **Convergence** | Is valid AUC still rising at the end, or plateaued? |
+| **Score separation** | `score_margin_mean` trend; positive/negative score divergence |
 
-- Long browser tool results may be written to ephemeral chat-session resource
-  files. Those paths can be difficult to re-open reliably if copied from a
-  truncated tool message. Prefer returning compact summaries from
-  `page.evaluate` instead of large raw API payloads.
-- If a tool result says “Large tool result written to file” and `read_file`
-  repeatedly fails with an `ENOENT` path, stop chasing that cache path. Re-run a
-  smaller browser-side aggregation that returns only the needed metrics.
-- Do not assume `json.data` is the metric group map. Inspect response shape once
-  with a shallow `Object.keys`/sample query, then parse the actual nesting.
-- Do not assume all metric groups are arrays. Guard with `Array.isArray(...)`
-  before iterating to avoid `TypeError: charts is not iterable`.
-- Platform chart tags may be nested under names such as `Probe/score/...`, not
-  only `Probe/...` or `score/...`. First list metric names for a group before
-  choosing exact tags.
-- Browser console errors from WeChat login probes, telemetry, or preload
-  warnings are usually not training failures. Treat them as page noise unless
-  the platform API itself returns an auth error or non-success payload.
-- When analyzing Symbiosis runs, inspect `Symbiosis/latent_diversity/...` and
-  `Symbiosis/latent_attention/...` in addition to AUC/LogLoss. Repeated values
-  like `effective_rank ~= 1`, `mean_pairwise_cosine ~= 1`, or
-  `slot_overlap_mean ~= 1` indicate latent-token collapse even if full
-  `AUC/valid` is improving.
-- If checkpoints are listed as `best_auc`, `best_model`, and `best_probe_auc`,
-  compare full validation metrics against probe metrics before recommending a
-  checkpoint. Full AUC can keep improving after probe robustness degrades.
+### Symbiosis-specific signals (when present)
 
-## Safety And Hygiene
+| Signal | What to look for |
+|--------|-----------------|
+| **Token collapse** | `effective_rank` ~1, `mean_pairwise_cosine` ~1, `max_pairwise_cosine` ~1 |
+| **Token health** | `latent_valid_ratio` across seq_a/b/c/d — are tokens meaningful? |
+| **Diversity trend** | `effective_rank` ↑, `mean_pairwise_cosine` ↓ = good; opposite = bad |
+| **Span usage** | `active_token_ratio` for candidate/cross/context/item/sequence spans |
 
-- Never expose raw cookies, authorization headers, CSRF tokens, QR codes, or
-  session identifiers in chat output.
-- Do not click destructive or state-changing buttons such as `Publish`,
-  `Delete`, `Cancel`, or `Submit` unless the user explicitly asks.
-- Prefer browser-context requests over terminal `curl`; the browser context keeps
-  cookies in memory and avoids leaking them into shell history or logs.
-- If a terminal API call is unavoidable, use a temporary file outside the repo,
-  avoid echoing secrets, and delete the temporary file before finishing.
-- Do not commit downloaded platform payloads, screenshots, cookies, or temporary
-  API captures.
+### Probe metrics (when present)
 
-## Reporting Pattern
+Compare `Probe/auc`, `Probe/logloss`, `Probe/auc_retention` against
+`AUC/valid` and `LogLoss/valid`. Probe degradation while full metrics improve
+indicates fragile representations.
 
-When reporting training analysis, include:
+## Pitfalls
 
-- checkpoint selected and publish status;
-- exact or structured metric values when available;
-- trend comparison between full metrics and hard probe metrics;
-- whether values came from API JSON, DOM text, or screenshot fallback;
-- any access limitation, such as login redirect or 401.
+- **Don't return raw JSON.** If you see "Large tool result written to file",
+  you've already failed — re-run with in-browser summarization.
+- **`json.data?.data` not `json.data`.** The `tf_events` endpoint nests metric
+  groups one level deeper than expected.
+- **Guard with `Array.isArray(charts)`.** Not all entries under `json.data?.data`
+  are arrays.
+- **Console noise is normal.** WeChat login probes (`localhost.weixin.qq.com`,
+  `ERR_CONNECTION_CLOSED`), preload warnings, and telemetry errors are page
+  noise, not training failures.
+- **Don't click Publish/Delete/Cancel/Submit** unless the user explicitly asks.
 
-For TAAC training pages, a strong summary usually compares:
+## Safety
 
-- `AUC/valid` vs `Probe/auc`;
-- `LogLoss/valid` vs `Probe/logloss`;
-- `Probe/auc_retention` trend;
-- score distribution diagnostics such as `score_std`, positive/negative means,
-  and sample counts.
+- Never expose cookies, tokens, or authorization headers.
+- Prefer browser-context requests over terminal `curl`.
+- Don't commit downloaded platform payloads or screenshots.
