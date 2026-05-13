@@ -16,7 +16,7 @@ icon: lucide/server
 - 公共 PyPI、Astral、GitHub、PyTorch 官方索引和 conda-forge 不应作为任务启动依赖。
 - Tencent PyPI / Anaconda 镜像在继承平台代理时可达。
 - 可见 GPU 是约 `0.2x NVIDIA H20`，可用显存约 19.6 GiB；不要按整卡 H20 设计 batch size。
-- `gcc`、`g++`、`make`、`nvcc` 可用；`cmake`、`ninja`、`pkg-config` 缺失。
+- `gcc`/`g++` 11.4.0、`make` 4.3、`nvcc` 12.6.77 可用；`cmake`、`ninja`、`pkg-config` 缺失。
 
 ## 对训练配置的影响
 
@@ -73,6 +73,28 @@ python -m pip install -i https://mirrors.cloud.tencent.com/pypi/simple/ <package
 | 内存          | 日志中约 2.2 TiB，无 swap                          |
 
 CPU、总内存和磁盘看起来宽裕，但作业实际可用资源仍可能受平台调度影响。训练排障时以当前任务日志为准。
+
+## 编译工具链
+
+线上容器具备最基础的 C/C++ 编译能力，但缺少现代原生构建辅助工具。
+
+| 工具       | 状态 | 版本或说明                   |
+| ---------- | ---- | ---------------------------- |
+| gcc        | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
+| g++        | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
+| cc         | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
+| c++        | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
+| make       | 可用 | GNU Make 4.3                 |
+| nvcc       | 可用 | 12.6.77                      |
+| cmake      | 缺失 | 日志中记录为 missing         |
+| ninja      | 缺失 | 日志中记录为 missing         |
+| pkg-config | 缺失 | 日志中记录为 missing         |
+
+对实际任务的影响主要有三点：
+
+- 依赖 setuptools + gcc/make 即可完成的轻量源码构建，理论上还有机会成功，但仍会受到代理与出网问题限制。
+- 依赖 cmake、ninja 或 pkg-config 的 Python 包、CUDA 扩展、C++ 原生算子和部分第三方库，不能假设可以在任务启动时现编现装。
+- 即使 gcc 与 nvcc 同时存在，也不代表线上可以临时编译完整自定义算子链路，因为缺少构建工具和外网依赖之后，常见源码安装流程通常还是会失败。
 
 ## 排障速查
 
