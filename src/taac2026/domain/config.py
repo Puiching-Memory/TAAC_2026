@@ -20,7 +20,7 @@ NSTokenizerType = Literal["group", "rankmixer"]
 NSGroupingStrategy = Literal["explicit", "singleton"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
 PCVRDataCacheMode = Literal["none", "lru", "fifo", "lfu", "rr", "opt"]
-PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range"]
+PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range", "user_hash", "sample_hash"]
 PCVRDataSamplingStrategy = Literal["step_random", "row_group_sweep"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
@@ -34,7 +34,7 @@ FLASH_ATTENTION_BACKEND_CHOICES = ("torch", "tilelang")
 
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
 PCVR_DATA_CACHE_MODE_CHOICES = ("none", "lru", "fifo", "lfu", "rr", "opt")
-PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_range")
+PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_range", "user_hash", "sample_hash")
 PCVR_DATA_SAMPLING_STRATEGY_CHOICES = ("step_random", "row_group_sweep")
 PCVR_VALIDATION_PROBE_MODE_CHOICES = ("none", "drop_nonseq_sparse", "drop_all_sparse")
 PCVR_EARLY_STOPPING_METRIC_CHOICES = ("auc", "logloss", "probe_auc", "probe_logloss", "probe_auc_retention")
@@ -230,6 +230,30 @@ class PCVROptimizerConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PCVREMAConfig:
+    enabled: bool = False
+    decay: float = 0.999
+    start_step: int = 0
+    update_every_n_steps: int = 1
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.decay < 1.0:
+            raise ValueError("ema decay must be in [0.0, 1.0)")
+        if self.start_step < 0:
+            raise ValueError("ema start_step must be non-negative")
+        if self.update_every_n_steps < 1:
+            raise ValueError("ema update_every_n_steps must be positive")
+
+    def to_flat_dict(self) -> dict[str, Any]:
+        return {
+            "ema_enabled": self.enabled,
+            "ema_decay": self.decay,
+            "ema_start_step": self.start_step,
+            "ema_update_every_n_steps": self.update_every_n_steps,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PCVRSparseOptimizerConfig:
     sparse_lr: float = 0.05
     sparse_weight_decay: float = 0.0
@@ -316,6 +340,7 @@ class PCVRTrainConfig:
         default_factory=PCVRDataPipelineConfig
     )
     optimizer: PCVROptimizerConfig = field(default_factory=PCVROptimizerConfig)
+    ema: PCVREMAConfig = field(default_factory=PCVREMAConfig)
     runtime: RuntimeExecutionConfig = field(default_factory=RuntimeExecutionConfig)
     loss: PCVRLossConfig = field(default_factory=PCVRLossConfig)
     sparse_optimizer: PCVRSparseOptimizerConfig = field(
@@ -329,6 +354,7 @@ class PCVRTrainConfig:
         flat: dict[str, Any] = {}
         for group in (self.data, self.optimizer, self.runtime, self.sparse_optimizer, self.model):
             flat.update(_dataclass_flat_dict(group))
+        flat.update(self.ema.to_flat_dict())
         flat.update(self.data_pipeline.to_flat_dict())
         flat["loss_terms"] = self.loss.to_list()
         flat.update(self.ns.to_flat_dict())

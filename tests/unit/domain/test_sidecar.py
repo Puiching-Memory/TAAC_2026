@@ -15,6 +15,7 @@ def test_load_pcvr_train_config_sidecar_accepts_current_payload() -> None:
     loaded = load_pcvr_train_config_sidecar(payload)
 
     assert loaded["batch_size"] == 32
+    assert loaded["ema_enabled"] is False
     assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
 
 
@@ -22,6 +23,7 @@ def test_load_pcvr_train_config_sidecar_wraps_legacy_flat_payload() -> None:
     loaded = load_pcvr_train_config_sidecar({"batch_size": 64})
 
     assert loaded["batch_size"] == 64
+    assert loaded["ema_decay"] == pytest.approx(0.999)
     assert loaded["train_config_version"] == PCVR_TRAIN_CONFIG_VERSION
 
 

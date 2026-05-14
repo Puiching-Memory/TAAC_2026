@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 from taac2026.domain.config import (
     PCVR_DATA_SAMPLING_STRATEGY_CHOICES,
+    PCVR_DATA_SPLIT_STRATEGY_CHOICES,
     PCVRDataPipelineConfig,
 )
 from taac2026.domain.schema import BUCKET_BOUNDARIES, NUM_TIME_BUCKETS, FeatureSchema
@@ -23,7 +24,7 @@ from taac2026.infrastructure.data.observation import (
     pcvr_timestamp_range_to_dict,
     plan_pcvr_row_group_split,
 )
-from taac2026.infrastructure.data.parquet_dataset import PCVRParquetDataset
+from taac2026.infrastructure.data.parquet_dataset import PCVRHashSplitFilter, PCVRParquetDataset
 from taac2026.infrastructure.logging import logger
 
 
@@ -66,11 +67,12 @@ def get_pcvr_data(
     _validate_get_pcvr_data_args(split_strategy, sampling_strategy)
 
     row_groups = collect_pcvr_row_groups(data_dir)
-    split_plan, train_timestamp_range, valid_timestamp_range = _resolve_split_plan(
+    split_plan, train_timestamp_range, valid_timestamp_range, train_hash_filter, valid_hash_filter = _resolve_split_plan(
         row_groups,
         split_strategy=split_strategy,
         valid_ratio=valid_ratio,
         train_ratio=train_ratio,
+        seed=seed,
         train_timestamp_start=train_timestamp_start,
         train_timestamp_end=train_timestamp_end,
         valid_timestamp_start=valid_timestamp_start,
@@ -79,6 +81,7 @@ def get_pcvr_data(
     effective_sampling_strategy = _effective_sampling_strategy(
         sampling_strategy,
         train_timestamp_range=train_timestamp_range,
+        train_hash_filter=train_hash_filter,
     )
     effective_buffer_batches = _effective_buffer_batches(
         buffer_batches,
@@ -99,6 +102,7 @@ def get_pcvr_data(
         buffer_batches=effective_buffer_batches,
         row_group_range=split_plan.train_row_group_range,
         timestamp_range=train_timestamp_range,
+        hash_split_filter=train_hash_filter,
         clip_vocab=clip_vocab,
         data_pipeline_config=train_pipeline_config,
         is_training=True,
@@ -127,6 +131,7 @@ def get_pcvr_data(
         buffer_batches=0,
         row_group_range=split_plan.valid_row_group_range,
         timestamp_range=valid_timestamp_range,
+        hash_split_filter=valid_hash_filter,
         clip_vocab=clip_vocab,
         data_pipeline_config=valid_pipeline_config,
         is_training=True,
@@ -148,7 +153,7 @@ def get_pcvr_data(
 
 
 def _validate_get_pcvr_data_args(split_strategy: str, sampling_strategy: str) -> None:
-    if split_strategy not in {"row_group_tail", "timestamp_range"}:
+    if split_strategy not in PCVR_DATA_SPLIT_STRATEGY_CHOICES:
         raise ValueError(f"unsupported split_strategy={split_strategy!r}")
     if sampling_strategy not in PCVR_DATA_SAMPLING_STRATEGY_CHOICES:
         raise ValueError(f"unsupported sampling_strategy={sampling_strategy!r}")
@@ -160,11 +165,18 @@ def _resolve_split_plan(
     split_strategy: str,
     valid_ratio: float,
     train_ratio: float,
+    seed: int,
     train_timestamp_start: int,
     train_timestamp_end: int,
     valid_timestamp_start: int,
     valid_timestamp_end: int,
-) -> tuple[PCVRRowGroupSplitPlan, PCVRTimestampRange | None, PCVRTimestampRange | None]:
+) -> tuple[
+    PCVRRowGroupSplitPlan,
+    PCVRTimestampRange | None,
+    PCVRTimestampRange | None,
+    PCVRHashSplitFilter | None,
+    PCVRHashSplitFilter | None,
+]:
     if split_strategy == "row_group_tail":
         return (
             plan_pcvr_row_group_split(
@@ -174,13 +186,62 @@ def _resolve_split_plan(
             ),
             None,
             None,
+            None,
+            None,
         )
-    return _timestamp_split_plan(
+    if split_strategy == "timestamp_range":
+        split_plan, train_range, valid_range = _timestamp_split_plan(
+            row_groups,
+            train_timestamp_start=train_timestamp_start,
+            train_timestamp_end=train_timestamp_end,
+            valid_timestamp_start=valid_timestamp_start,
+            valid_timestamp_end=valid_timestamp_end,
+        )
+        return split_plan, train_range, valid_range, None, None
+    split_plan, train_filter, valid_filter = _hash_split_plan(
         row_groups,
-        train_timestamp_start=train_timestamp_start,
-        train_timestamp_end=train_timestamp_end,
-        valid_timestamp_start=valid_timestamp_start,
-        valid_timestamp_end=valid_timestamp_end,
+        split_strategy=split_strategy,
+        valid_ratio=valid_ratio,
+        train_ratio=train_ratio,
+        seed=seed,
+    )
+    return split_plan, None, None, train_filter, valid_filter
+
+
+def _hash_split_plan(
+    row_groups: list[tuple[str, int, int]],
+    *,
+    split_strategy: str,
+    valid_ratio: float,
+    train_ratio: float,
+    seed: int,
+) -> tuple[PCVRRowGroupSplitPlan, PCVRHashSplitFilter, PCVRHashSplitFilter]:
+    if not 0.0 < valid_ratio < 1.0:
+        raise ValueError("hash split strategies require 0 < valid_ratio < 1")
+    total_rows = sum(row_count for _path, _row_group_index, row_count in row_groups)
+    estimated_valid_rows = max(1, round(total_rows * valid_ratio))
+    estimated_train_rows = max(1, round((total_rows - estimated_valid_rows) * max(0.0, min(1.0, train_ratio))))
+    split_plan = PCVRRowGroupSplitPlan(
+        total_row_groups=len(row_groups),
+        train_row_groups=len(row_groups),
+        valid_row_groups=len(row_groups),
+        train_row_group_range=(0, len(row_groups)),
+        valid_row_group_range=(0, len(row_groups)),
+        train_rows=estimated_train_rows,
+        valid_rows=estimated_valid_rows,
+        reuse_train_for_valid=False,
+    )
+    logger.info(
+        "Hash split: strategy={}, valid_ratio={}, train_ratio={}, seed={}",
+        split_strategy,
+        valid_ratio,
+        train_ratio,
+        seed,
+    )
+    return (
+        split_plan,
+        PCVRHashSplitFilter(strategy=split_strategy, role="train", valid_ratio=valid_ratio, seed=seed),
+        PCVRHashSplitFilter(strategy=split_strategy, role="valid", valid_ratio=valid_ratio, seed=seed),
     )
 
 
@@ -233,11 +294,12 @@ def _effective_sampling_strategy(
     sampling_strategy: str,
     *,
     train_timestamp_range: PCVRTimestampRange | None,
+    train_hash_filter: PCVRHashSplitFilter | None,
 ) -> str:
-    if sampling_strategy != "step_random" or train_timestamp_range is None:
+    if sampling_strategy != "step_random" or (train_timestamp_range is None and train_hash_filter is None):
         return sampling_strategy
     logger.warning(
-        "step_random sampling is not supported with timestamp_range filtering; "
+        "step_random sampling is not supported with row-level split filtering; "
         "using row_group_sweep for the training split"
     )
     return "row_group_sweep"

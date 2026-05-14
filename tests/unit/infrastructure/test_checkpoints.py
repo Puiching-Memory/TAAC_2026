@@ -18,8 +18,8 @@ from taac2026.infrastructure.checkpoints import (
 
 
 def test_resolve_checkpoint_uses_latest_step(tmp_path: Path) -> None:
-    old_dir = tmp_path / "global_step1.layer=2"
-    new_dir = tmp_path / "global_step2.layer=2"
+    old_dir = tmp_path / "global_step1.AUC=0.91"
+    new_dir = tmp_path / "global_step2.AUC=0.95"
     old_dir.mkdir()
     new_dir.mkdir()
     (old_dir / PRIMARY_CHECKPOINT_FILENAME).write_text("old", encoding="utf-8")
@@ -33,8 +33,8 @@ def test_validate_checkpoint_name_rejects_non_global_step_prefix() -> None:
         validate_checkpoint_dir_name("best")
 
 
-def test_build_checkpoint_dir_name_uses_global_step_prefix() -> None:
-    assert build_checkpoint_dir_name(12, {"layer": 2, "head": 4, "hidden": 64}) == "global_step12.layer=2.head=4.hidden=64"
+def test_build_checkpoint_dir_name_uses_validation_auc_suffix() -> None:
+    assert build_checkpoint_dir_name(12, {"auc": 0.8123456, "head": 4, "hidden": 64}) == "global_step12.AUC=0.812346"
 
 
 def test_write_checkpoint_sidecars_persists_explicit_ns_group_config(tmp_path: Path) -> None:

@@ -70,6 +70,17 @@ def test_build_inference_bundle_contains_runtime_sources(tmp_path: Path) -> None
     assert "project/tests/unit/test_package_inference.py" not in names
 
 
+def test_build_inference_bundle_supports_online_dataset_eda(tmp_path: Path) -> None:
+    output_dir = tmp_path / "online_dataset_eda_bundle"
+
+    result = build_inference_bundle("experiments/online_dataset_eda", output_dir=output_dir)
+
+    names = code_package_names(result.code_package_path)
+    assert "project/experiments/online_dataset_eda/__init__.py" in names
+    assert "project/experiments/online_dataset_eda/runner.py" in names
+    assert "project/src/taac2026/application/evaluation/cli.py" in names
+
+
 @pytest.mark.parametrize(
     "experiment",
     NON_BASELINE_EXPERIMENTS,

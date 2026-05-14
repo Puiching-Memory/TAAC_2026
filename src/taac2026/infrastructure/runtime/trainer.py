@@ -5,7 +5,8 @@ from __future__ import annotations
 import sys
 import time
 import math
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from taac2026.domain.runtime_config import DENSE_OPTIMIZER_TYPE_CHOICES, PCVRLos
 from taac2026.infrastructure.logging import logger
 from taac2026.infrastructure.modeling.tensors import sigmoid_probabilities_numpy
 from taac2026.infrastructure.runtime.checkpoint_io import PCVRTrainerSupportMixin
+from taac2026.infrastructure.runtime.ema import ExponentialMovingAverage
 from taac2026.infrastructure.runtime.execution import (
     EarlyStopping,
     compute_pcvr_loss,
@@ -158,6 +160,10 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         scheduler_type: str = "none",
         warmup_steps: int = 0,
         min_lr_ratio: float = 0.0,
+        ema_enabled: bool = False,
+        ema_decay: float = 0.999,
+        ema_start_step: int = 0,
+        ema_update_every_n_steps: int = 1,
         loss_terms: Any | None = None,
         sparse_lr: float = 0.05,
         sparse_weight_decay: float = 0.0,
@@ -256,6 +262,20 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             label="PCVR trainer predict",
         )
         self.grad_scaler = create_grad_scaler(self.runtime_execution, self.device)
+        self.ema: ExponentialMovingAverage | None = None
+        if ema_enabled:
+            self.ema = ExponentialMovingAverage.from_model(
+                self.model,
+                decay=float(ema_decay),
+                start_step=int(ema_start_step),
+                update_every_n_steps=int(ema_update_every_n_steps),
+            )
+            logger.info(
+                "PCVR model EMA enabled: decay={}, start_step={}, update_every_n_steps={}",
+                self.ema.decay,
+                self.ema.start_step,
+                self.ema.update_every_n_steps,
+            )
         self.loss_config = PCVRLossConfig.from_value(loss_terms)
         self.last_train_loss_components: dict[str, float] = {}
         self.reinit_sparse_every_n_steps = int(reinit_sparse_every_n_steps)
@@ -298,7 +318,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             "PCVRPointwiseTrainer loss_terms={}, "
             "dense_optimizer_type={}, scheduler_type={}, warmup_steps={}, min_lr_ratio={}, "
             "max_steps={}, reinit_sparse_every_n_steps={}, "
-            "validation_probe_mode={}, early_stopping_metric={}",
+            "ema_enabled={}, validation_probe_mode={}, early_stopping_metric={}",
             self.loss_config.summary(),
             self.dense_optimizer_type,
             self.scheduler_type,
@@ -306,6 +326,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             self.min_lr_ratio,
             self.max_steps,
             self.reinit_sparse_every_n_steps,
+            self.ema is not None,
             self.validation_probe_mode,
             self.early_stopping_metric,
         )
@@ -415,6 +436,23 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
     def _make_model_input(self, device_batch: dict[str, Any]) -> Any:
         return batch_to_model_input(device_batch, self.model_input_type, torch.device(self.device))
 
+    @contextmanager
+    def _ema_evaluation_context(self) -> Iterator[None]:
+        if self.ema is None:
+            yield
+            return
+        with self.ema.apply_to(self.model):
+            yield
+
+    def _update_ema(self, step: int) -> None:
+        if self.ema is not None:
+            self.ema.update(self.model, step=step)
+
+    def _sync_ema_after_model_reinit(self) -> None:
+        if self.ema is not None:
+            self.ema.copy_from(self.model)
+            logger.info("Synchronized model EMA after sparse parameter reinitialization")
+
     def _train_step(self, batch: dict[str, Any]) -> float:
         device_batch = self._batch_to_device(batch)
         label = device_batch["label"].float()
@@ -461,6 +499,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
             self.last_train_model_scalars = {}
         self._set_model_training_diagnostics_enabled(False)
 
+        optimizer_step_applied = True
         if self.grad_scaler is not None:
             self.grad_scaler.scale(loss).backward()
             self.grad_scaler.unscale_(self.dense_optimizer)
@@ -482,6 +521,7 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
 
             scale_after_update = self.grad_scaler.get_scale()
             if scale_after_update < scale_before_step:
+                optimizer_step_applied = False
                 logger.warning(
                     "Train step: GradScaler reduced scale {:.1e} -> {:.1e}, "
                     "indicating inf/nan gradients were found and optimizer step was skipped.",
@@ -498,6 +538,8 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
                 self.sparse_optimizer.step()
 
         self.optim_step += 1
+        if optimizer_step_applied:
+            self._update_ema(self.optim_step)
 
         return loss.item()
 
@@ -521,23 +563,24 @@ class PCVRPointwiseTrainer(PCVRTrainerSupportMixin):
         model_scalar_counts: dict[str, int] = {}
         collect_model_scalars = self.reporter.should_collect_model_scalars(phase="valid", step=step, trainer=self)
 
-        with torch.inference_mode():
-            for step_index, batch in pbar:
-                self._set_model_training_diagnostics_enabled(collect_model_scalars)
-                logits, labels = self._evaluate_step(batch)
-                if collect_model_scalars:
-                    self._accumulate_model_training_scalars("valid", model_scalar_sums, model_scalar_counts)
-                self._set_model_training_diagnostics_enabled(False)
-                all_logits_list.append(logits.detach())
-                all_labels_list.append(labels.detach())
-                current_batch = step_index + 1
-                if not use_tqdm and _should_log_progress(current_batch, total_valid_batches, log_interval):
-                    self._log_loop_progress(
-                        "Validation",
-                        current_batch,
-                        total_valid_batches,
-                        loop_started_at=loop_started_at,
-                    )
+        with self._ema_evaluation_context():
+            with torch.inference_mode():
+                for step_index, batch in pbar:
+                    self._set_model_training_diagnostics_enabled(collect_model_scalars)
+                    logits, labels = self._evaluate_step(batch)
+                    if collect_model_scalars:
+                        self._accumulate_model_training_scalars("valid", model_scalar_sums, model_scalar_counts)
+                    self._set_model_training_diagnostics_enabled(False)
+                    all_logits_list.append(logits.detach().clone())
+                    all_labels_list.append(labels.detach())
+                    current_batch = step_index + 1
+                    if not use_tqdm and _should_log_progress(current_batch, total_valid_batches, log_interval):
+                        self._log_loop_progress(
+                            "Validation",
+                            current_batch,
+                            total_valid_batches,
+                            loop_started_at=loop_started_at,
+                        )
 
         if use_tqdm:
             pbar.close()

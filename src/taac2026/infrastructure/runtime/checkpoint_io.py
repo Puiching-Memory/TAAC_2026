@@ -57,8 +57,12 @@ class PCVRTrainerSupportMixin:
     def _build_step_dir_name(
         self,
         global_step: int,
+        checkpoint_params: dict[str, Any] | None = None,
     ) -> str:
-        return build_checkpoint_dir_name(global_step, self.ckpt_params)
+        merged_params = dict(self.ckpt_params)
+        if checkpoint_params:
+            merged_params.update(checkpoint_params)
+        return build_checkpoint_dir_name(global_step, merged_params)
 
     def _write_sidecar_files(self, checkpoint_dir: Path) -> None:
         write_checkpoint_sidecars(
@@ -70,12 +74,19 @@ class PCVRTrainerSupportMixin:
     def _save_step_checkpoint(
         self,
         global_step: int,
+        checkpoint_params: dict[str, Any] | None = None,
     ) -> Path:
-        checkpoint_dir = self.save_dir / self._build_step_dir_name(global_step)
-        save_checkpoint_state_dict(self.model.state_dict(), checkpoint_dir)
+        checkpoint_dir = self.save_dir / self._build_step_dir_name(global_step, checkpoint_params)
+        save_checkpoint_state_dict(self._checkpoint_state_dict(), checkpoint_dir)
         self._write_sidecar_files(checkpoint_dir)
         logger.info("Saved checkpoint to {}", preferred_checkpoint_path(checkpoint_dir))
         return checkpoint_dir
+
+    def _checkpoint_state_dict(self) -> dict[str, torch.Tensor]:
+        ema = getattr(self, "ema", None)
+        if ema is not None:
+            return ema.state_dict()
+        return self.model.state_dict()
 
     def _batch_to_device(self, batch: dict[str, Any]) -> dict[str, Any]:
         device_batch: dict[str, Any] = {}
@@ -108,7 +119,7 @@ class PCVRTrainerSupportMixin:
             "best_val_probe_score_diagnostics": getattr(self, "last_eval_probe_diagnostics", {}),
         }
         self.early_stopping(stop_score, self.model, extra_metrics, step=total_step)
-        self._save_step_checkpoint(total_step)
+        self._save_step_checkpoint(total_step, {"auc": val_auc})
 
     def _infinite_train_batches(self) -> Iterator[dict[str, Any]]:
         start_step = 0
@@ -175,6 +186,9 @@ class PCVRTrainerSupportMixin:
             len(reinit_ptrs),
             restored,
         )
+        sync_ema = getattr(self, "_sync_ema_after_model_reinit", None)
+        if callable(sync_ema):
+            sync_ema()
 
     def _write_eval_diagnostics(self, total_step: int) -> None:
         del total_step

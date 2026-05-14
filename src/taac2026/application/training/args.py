@@ -71,6 +71,10 @@ class PCVRTrainCLIArgs:
     scheduler_type: Annotated[DenseLRSchedulerType, _arg("--scheduler-type")] = "none"
     warmup_steps: Annotated[int, _arg("--warmup-steps")] = 0
     min_lr_ratio: Annotated[float, _arg("--min-lr-ratio")] = 0.0
+    ema_enabled: Annotated[bool, _arg("--ema-enabled")] = False
+    ema_decay: Annotated[float, _arg("--ema-decay")] = 0.999
+    ema_start_step: Annotated[int, _arg("--ema-start-step")] = 0
+    ema_update_every_n_steps: Annotated[int, _arg("--ema-update-every-n-steps")] = 1
     amp: bool = False
     amp_dtype: Annotated[AMPDType, _arg("--amp-dtype")] = "bfloat16"
     compile: bool = False

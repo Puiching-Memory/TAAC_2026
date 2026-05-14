@@ -104,6 +104,30 @@ def test_shared_tokenizers_return_stable_shapes() -> None:
     assert norm(torch.ones(2, 5, 6)).shape == (2, 5, 6)
 
 
+def test_non_sequential_tokenizer_uses_missing_embeddings() -> None:
+    tokenizer = NonSequentialTokenizer([(10, 0, 1)], [[0]], emb_dim=4, d_model=6)
+    int_feats = torch.tensor([[0], [0]])
+    no_missing = tokenizer(int_feats, torch.tensor([[False], [False]]))
+    with_missing = tokenizer(int_feats, torch.tensor([[True], [True]]))
+
+    assert no_missing.shape == (2, 1, 6)
+    assert with_missing.shape == (2, 1, 6)
+    assert not torch.allclose(no_missing, with_missing)
+
+
+def test_dense_token_projector_uses_missing_indicators() -> None:
+    projector = DenseTokenProjector(input_dim=2, d_model=6)
+    features = torch.zeros(2, 2)
+    no_missing = projector(features, torch.tensor([[False, False], [False, False]]))
+    with_missing = projector(features, torch.tensor([[True, False], [True, False]]))
+
+    assert no_missing is not None
+    assert with_missing is not None
+    assert no_missing.shape == (2, 1, 6)
+    assert with_missing.shape == (2, 1, 6)
+    assert not torch.allclose(no_missing, with_missing)
+
+
 def test_high_cardinality_ids_are_hash_compressed() -> None:
     bank = FeatureEmbeddingBank([(10_000, 0, 2)], emb_dim=4, emb_skip_threshold=16, compress_high_cardinality=True)
     tokens = bank(torch.tensor([[1, 9999], [0, 0]]))

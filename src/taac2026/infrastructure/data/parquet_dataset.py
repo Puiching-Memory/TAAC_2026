@@ -4,6 +4,7 @@ import gc
 import zlib
 from collections import OrderedDict
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,17 @@ from taac2026.infrastructure.io.json import dumps
 from taac2026.infrastructure.logging import logger
 
 
+_HASH_SPLIT_DENOMINATOR = 1_000_003
+
+
+@dataclass(frozen=True, slots=True)
+class PCVRHashSplitFilter:
+    strategy: str
+    role: str
+    valid_ratio: float
+    seed: int = 0
+
+
 class PCVRParquetDataset(IterableDataset):
     def __init__(
         self,
@@ -49,6 +61,7 @@ class PCVRParquetDataset(IterableDataset):
         buffer_batches: int = 1,
         row_group_range: tuple[int, int] | None = None,
         timestamp_range: PCVRTimestampRange | None = None,
+        hash_split_filter: PCVRHashSplitFilter | None = None,
         clip_vocab: bool = True,
         is_training: bool = True,
         data_pipeline_config: PCVRDataPipelineConfig | None = None,
@@ -64,6 +77,7 @@ class PCVRParquetDataset(IterableDataset):
         self.dataset_role = str(dataset_role).strip() or "dataset"
         self.row_group_range = row_group_range
         self.timestamp_range = timestamp_range
+        self.hash_split_filter = hash_split_filter
         self.schema_path = Path(schema_path).expanduser().resolve()
         self.data_pipeline_config = data_pipeline_config or PCVRDataPipelineConfig()
         self.strict_time_filter_enabled = bool(
@@ -133,13 +147,14 @@ class PCVRParquetDataset(IterableDataset):
         logger.info("PCVR {} schema payload: {}", self.dataset_role, dumps(self.layout.raw_payload))
         logger.info(
             "PCVRParquetDataset: {} rows from {} file(s), batch_size={}, "
-            "buffer_batches={}, shuffle={}, timestamp_range={}",
+            "buffer_batches={}, shuffle={}, timestamp_range={}, hash_split={}",
             self.num_rows,
             len(self._parquet_files),
             self.batch_size,
             self.buffer_batches,
             self.shuffle,
             pcvr_timestamp_range_to_dict(self.timestamp_range),
+            self.hash_split_filter,
         )
 
     def _build_pipeline(
@@ -211,6 +226,29 @@ class PCVRParquetDataset(IterableDataset):
             mask &= timestamps >= start
         if end is not None:
             mask &= timestamps < end
+        if bool(mask.all()):
+            return batch_dict
+        if not bool(mask.any()):
+            return None
+        keep = mask.tolist()
+        return {
+            key: _filter_value_by_mask(value, mask, keep, row_count)
+            for key, value in batch_dict.items()
+        }
+
+    def filter_batch_by_runtime_split(
+        self,
+        batch_dict: dict[str, Any],
+        batch_context: _ScanBatchContext,
+    ) -> dict[str, Any] | None:
+        batch_dict = self.filter_batch_by_timestamp_range(batch_dict)
+        if batch_dict is None or self.hash_split_filter is None:
+            return batch_dict
+        timestamps = batch_dict["timestamp"]
+        row_count = int(timestamps.shape[0])
+        if row_count == 0:
+            return None
+        mask = _hash_split_mask(batch_dict, batch_context, self.hash_split_filter, row_count)
         if bool(mask.all()):
             return batch_dict
         if not bool(mask.any()):
@@ -419,7 +457,10 @@ class PCVRParquetDataset(IterableDataset):
                 batch_context.cache_key,
                 lambda record_batch=batch_context.record_batch: self.convert_record_batch(record_batch),
                 generator=generator,
-                preprocess=self.filter_batch_by_timestamp_range,
+                preprocess=lambda batch_dict, batch_context=batch_context: self.filter_batch_by_runtime_split(
+                    batch_dict,
+                    batch_context,
+                ),
             )
             if batch_dict is None:
                 continue
@@ -465,6 +506,7 @@ class PCVRParquetDataset(IterableDataset):
                     path_crc=current_path_crc,
                     row_group_index=row_group_index,
                     batch_index=batch_index,
+                    batch_start_row=batch_index * self.batch_size,
                 )
 
 
@@ -477,12 +519,14 @@ class _ScanBatchContext:
         path_crc: int,
         row_group_index: int,
         batch_index: int,
+        batch_start_row: int,
     ) -> None:
         self.cache_key = cache_key
         self.record_batch = record_batch
         self.path_crc = path_crc
         self.row_group_index = row_group_index
         self.batch_index = batch_index
+        self.batch_start_row = batch_start_row
 
 
 def _resolve_parquet_files(parquet_path: str) -> list[str]:
@@ -540,6 +584,55 @@ def _filter_value_by_mask(
     if isinstance(value, list) and len(value) == row_count:
         return [item for item, should_keep in zip(value, keep, strict=True) if should_keep]
     return value
+
+
+def _hash_split_mask(
+    batch_dict: dict[str, Any],
+    batch_context: _ScanBatchContext,
+    split_filter: PCVRHashSplitFilter,
+    row_count: int,
+) -> torch.Tensor:
+    timestamps = batch_dict["timestamp"]
+    device = timestamps.device
+    sample_values = torch.arange(
+        batch_context.batch_start_row,
+        batch_context.batch_start_row + row_count,
+        dtype=torch.long,
+        device=device,
+    )
+    sample_salt = int(split_filter.seed) ^ int(batch_context.path_crc) ^ (int(batch_context.row_group_index) << 32)
+    if split_filter.strategy == "user_hash":
+        user_int_feats = batch_dict.get("user_int_feats")
+        if isinstance(user_int_feats, torch.Tensor) and user_int_feats.ndim == 2 and user_int_feats.shape[1] > 0:
+            user_values = user_int_feats[:, 0].to(torch.long)
+            values = torch.where(user_values > 0, user_values, sample_values)
+            salt = int(split_filter.seed)
+        else:
+            values = sample_values
+            salt = sample_salt
+    else:
+        values = sample_values
+        salt = sample_salt
+    scores = torch.tensor(
+        [_stable_hash_score(int(value), salt) for value in values.detach().cpu().tolist()],
+        dtype=torch.long,
+        device=device,
+    )
+    threshold = max(1, min(_HASH_SPLIT_DENOMINATOR - 1, round(float(split_filter.valid_ratio) * _HASH_SPLIT_DENOMINATOR)))
+    is_valid = scores < threshold
+    if split_filter.role == "valid":
+        return is_valid
+    return ~is_valid
+
+
+def _stable_hash_score(value: int, salt: int) -> int:
+    mixed = (int(value) ^ int(salt)) & 0xFFFFFFFFFFFFFFFF
+    mixed ^= mixed >> 30
+    mixed = (mixed * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
+    mixed ^= mixed >> 27
+    mixed = (mixed * 0x94D049BB133111EB) & 0xFFFFFFFFFFFFFFFF
+    mixed ^= mixed >> 31
+    return int(mixed % _HASH_SPLIT_DENOMINATOR)
 
 
 def _cached_parquet_file(

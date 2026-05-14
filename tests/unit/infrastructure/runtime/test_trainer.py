@@ -8,6 +8,7 @@ import pytest
 import torch
 
 import taac2026.infrastructure.runtime.trainer as trainer_module
+from taac2026.infrastructure.checkpoints import load_checkpoint_state_dict
 from taac2026.infrastructure.runtime.checkpoint_io import PCVRTrainerSupportMixin
 from taac2026.infrastructure.runtime.trainer import PCVRPointwiseTrainer
 from taac2026.infrastructure.optimization.muon import Muon
@@ -804,9 +805,65 @@ def test_validation_result_saves_current_step_checkpoint(tmp_path) -> None:
     trainer._handle_validation_result(total_step=2, val_auc=0.95, val_logloss=0.25)
 
     checkpoint_root = tmp_path / "checkpoints"
-    assert (checkpoint_root / "global_step1" / "model.safetensors").exists()
-    assert (checkpoint_root / "global_step2" / "model.safetensors").exists()
+    assert (checkpoint_root / "global_step1.AUC=0.9" / "model.safetensors").exists()
+    assert (checkpoint_root / "global_step2.AUC=0.95" / "model.safetensors").exists()
     assert early_stopping.best_score == pytest.approx(0.95)
+
+
+def test_validation_result_saves_ema_checkpoint_when_enabled(tmp_path) -> None:
+    early_stopping = EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=4)
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=early_stopping,
+        ema_enabled=True,
+    )
+    assert trainer.ema is not None
+    with torch.no_grad():
+        trainer.model.bias.fill_(2.0)
+    trainer.ema.copy_from(trainer.model)
+    with torch.no_grad():
+        trainer.model.bias.fill_(5.0)
+    trainer.last_eval_diagnostics = {"sample_count": 1}
+
+    trainer._handle_validation_result(total_step=1, val_auc=0.90, val_logloss=0.2)
+
+    checkpoint = tmp_path / "checkpoints" / "global_step1.AUC=0.9" / "model.safetensors"
+    state = load_checkpoint_state_dict(checkpoint)
+    assert state["bias"].item() == pytest.approx(2.0)
+    assert trainer.model.bias.item() == pytest.approx(5.0)
+
+
+def test_evaluate_uses_ema_weights_and_restores_raw_model(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[_dummy_batch([0.0])],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+        ema_enabled=True,
+    )
+    assert trainer.ema is not None
+    with torch.no_grad():
+        trainer.model.bias.fill_(0.0)
+    trainer.ema.copy_from(trainer.model)
+    with torch.no_grad():
+        trainer.model.bias.fill_(10.0)
+
+    _auc, logloss = trainer.evaluate(step=1)
+
+    assert logloss == pytest.approx(math.log(2.0))
+    assert trainer.model.bias.item() == pytest.approx(10.0)
 
 
 class _NaNProducingModel(torch.nn.Module):
@@ -912,3 +969,50 @@ def test_train_step_proceeds_normally_with_finite_loss(tmp_path) -> None:
     assert trainer.optim_step == 1
     # Parameters should have changed
     assert not torch.equal(trainer.model.bias.detach(), initial_bias)
+
+
+def test_train_step_updates_ema_after_successful_optimizer_step(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_DummyModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+        ema_enabled=True,
+        ema_decay=0.0,
+    )
+
+    loss = trainer._train_step(_dummy_batch([1.0]))
+
+    assert math.isfinite(loss)
+    assert trainer.optim_step == 1
+    assert trainer.ema is not None
+    assert torch.equal(trainer.ema.state_dict()["bias"], trainer.model.bias.detach())
+
+
+def test_train_step_does_not_update_ema_when_loss_is_nan(tmp_path) -> None:
+    trainer = PCVRPointwiseTrainer(
+        model=_NaNProducingModel(),
+        model_input_type=_DummyModelInput,
+        train_loader=[],
+        valid_loader=[],
+        lr=1e-3,
+        max_steps=1,
+        device="cpu",
+        save_dir=tmp_path / "checkpoints",
+        early_stopping=EarlyStopping(tmp_path / "best" / "model.safetensors", patience_steps=2),
+        ema_enabled=True,
+        ema_decay=0.0,
+    )
+    assert trainer.ema is not None
+    initial_ema = trainer.ema.state_dict()["bias"].clone()
+
+    loss = trainer._train_step(_dummy_batch([1.0]))
+
+    assert math.isnan(loss)
+    assert trainer.optim_step == 0
+    assert torch.equal(trainer.ema.state_dict()["bias"], initial_ema)

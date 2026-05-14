@@ -21,6 +21,7 @@ class NonSequentialTokenizer(nn.Module):
 		emb_skip_threshold: int = 0,
 		compress_high_cardinality: bool = False,
 		force_auto_split: bool = False,
+		use_missing_embeddings: bool = True,
 	) -> None:
 		super().__init__()
 		self.bank = FeatureEmbeddingBank(
@@ -31,6 +32,11 @@ class NonSequentialTokenizer(nn.Module):
 		)
 		self.groups = [list(group) for group in groups] or [[index] for index in range(len(feature_specs))]
 		self.feature_count = len(feature_specs)
+		self.use_missing_embeddings = bool(use_missing_embeddings) and self.feature_count > 0
+		if self.use_missing_embeddings:
+			self.missing_embeddings = nn.Parameter(torch.empty(self.feature_count, emb_dim))
+		else:
+			self.register_parameter("missing_embeddings", None)
 		self.num_tokens = int(num_tokens) if num_tokens > 0 else len(self.groups)
 		self.auto_split = force_auto_split or self.num_tokens != len(self.groups)
 		if self.auto_split:
@@ -43,14 +49,22 @@ class NonSequentialTokenizer(nn.Module):
 		else:
 			self.project = nn.Sequential(nn.Linear(emb_dim, d_model), nn.LayerNorm(d_model))
 		self.d_model = d_model
+		self.reset_parameters()
+
+	def reset_parameters(self) -> None:
+		if self.missing_embeddings is not None:
+			nn.init.normal_(self.missing_embeddings, mean=0.0, std=0.02)
 
 	@property
 	def embeddings(self) -> Iterable[nn.Embedding]:
 		return self.bank.embeddings
 
-	def forward(self, int_feats: torch.Tensor) -> torch.Tensor:
+	def forward(self, int_feats: torch.Tensor, missing_mask: torch.Tensor | None = None) -> torch.Tensor:
 		batch_size = int_feats.shape[0]
 		feature_tokens = self.bank(int_feats)
+		if self.missing_embeddings is not None and missing_mask is not None and feature_tokens.shape[1] > 0:
+			mask = missing_mask[:, : feature_tokens.shape[1]].to(dtype=feature_tokens.dtype, device=feature_tokens.device)
+			feature_tokens = feature_tokens + mask.unsqueeze(-1) * self.missing_embeddings[: feature_tokens.shape[1]].unsqueeze(0)
 		if self.num_tokens <= 0:
 			return int_feats.new_zeros(batch_size, 0, self.d_model, dtype=torch.float32)
 		if self.auto_split:
@@ -70,17 +84,25 @@ class NonSequentialTokenizer(nn.Module):
 
 
 class DenseTokenProjector(nn.Module):
-	def __init__(self, input_dim: int, d_model: int) -> None:
+	def __init__(self, input_dim: int, d_model: int, *, use_missing_indicators: bool = True) -> None:
 		super().__init__()
 		self.input_dim = input_dim
+		self.use_missing_indicators = bool(use_missing_indicators)
 		if input_dim > 0:
-			self.project = nn.Sequential(nn.Linear(input_dim, d_model), nn.SiLU(), nn.LayerNorm(d_model))
+			project_input_dim = input_dim * 2 if self.use_missing_indicators else input_dim
+			self.project = nn.Sequential(nn.Linear(project_input_dim, d_model), nn.SiLU(), nn.LayerNorm(d_model))
 		else:
 			self.project = None
 
-	def forward(self, features: torch.Tensor) -> torch.Tensor | None:
+	def forward(self, features: torch.Tensor, missing_mask: torch.Tensor | None = None) -> torch.Tensor | None:
 		if self.project is None:
 			return None
+		if self.use_missing_indicators:
+			if missing_mask is None:
+				missing = features.new_zeros(features.shape)
+			else:
+				missing = missing_mask[:, : features.shape[1]].to(dtype=features.dtype, device=features.device)
+			features = torch.cat([features, missing], dim=-1)
 		return self.project(features).unsqueeze(1)
 
 

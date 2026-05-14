@@ -514,7 +514,7 @@ def test_build_pcvr_model_leaves_shared_flash_attention_runtime_to_application(t
     [
         (Path("global_step0"), 0),
         (Path("global_step12.layer=2"), 12),
-        (Path("global_step3.head=4") / "model.safetensors", 3),
+        (Path("global_step3.AUC=0.95") / "model.safetensors", 3),
         (Path("global_step0007"), 7),
         (Path("global_step9.hidden=64.extra_token"), 9),
         (Path("best_model"), -1),
@@ -547,11 +547,11 @@ def test_validate_checkpoint_dir_name_rejects_invalid_names(name: str) -> None:
     ("global_step", "params", "expected"),
     [
         (0, None, "global_step0"),
-        (1, {"layer": 2}, "global_step1.layer=2"),
-        (1, {"head": 4}, "global_step1.head=4"),
-        (7, {"hidden": 128, "unused": 9}, "global_step7.hidden=128"),
-        (9, {"layer": "02", "head": "04"}, "global_step9.layer=02.head=04"),
-        (12, {"layer": 2, "head": 4, "hidden": 64}, "global_step12.layer=2.head=4.hidden=64"),
+        (1, {"layer": 2}, "global_step1"),
+        (1, {"auc": 0.9}, "global_step1.AUC=0.9"),
+        (7, {"AUC": "0.912340", "unused": 9}, "global_step7.AUC=0.91234"),
+        (9, {"layer": "02", "head": "04"}, "global_step9"),
+        (12, {"layer": 2, "head": 4, "hidden": 64, "auc": 0.9501234}, "global_step12.AUC=0.950123"),
     ],
 )
 def test_build_checkpoint_dir_name_cases(
@@ -596,8 +596,8 @@ def test_resolve_checkpoint_path_cases(tmp_path: Path, scenario: str) -> None:
         return
 
     if scenario == "latest_step":
-        older = run_dir / "global_step1"
-        newer = run_dir / "global_step3.layer=2"
+        older = run_dir / "global_step1.AUC=0.9"
+        newer = run_dir / "global_step3.AUC=0.95"
         older.mkdir()
         newer.mkdir()
         (older / "model.safetensors").write_text("old", encoding="utf-8")

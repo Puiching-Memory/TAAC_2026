@@ -324,6 +324,7 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
         self.seq_domains = sorted(seq_vocab_sizes)
         self.num_sequences = len(self.seq_domains)
         self.seq_keep_per_domain = max(1, int(seq_top_k))
+        self.sequence_stats_dim = 6
 
         force_auto_split = ns_tokenizer_type == "rankmixer"
         self.user_tokenizer = NonSequentialTokenizer(
@@ -342,18 +343,38 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
             d_model,
             item_ns_tokens,
             emb_skip_threshold,
+            compress_high_cardinality=True,
             force_auto_split=force_auto_split,
         )
         self.user_dense = DenseTokenProjector(user_dense_dim, d_model)
         self.item_dense = DenseTokenProjector(item_dense_dim, d_model)
         self.sequence_tokenizers = nn.ModuleDict(
             {
-                domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model, num_time_buckets, emb_skip_threshold)
+                domain: SequenceTokenizer(
+                    vocab_sizes,
+                    emb_dim,
+                    d_model,
+                    num_time_buckets,
+                    emb_skip_threshold,
+                    compress_high_cardinality=True,
+                )
                 for domain, vocab_sizes in seq_vocab_sizes.items()
             }
         )
-        self.num_ns = self.user_tokenizer.num_tokens + self.item_tokenizer.num_tokens
-        self.num_ns += int(user_dense_dim > 0) + int(item_dense_dim > 0)
+        self.user_ns_token_count = self.user_tokenizer.num_tokens + int(user_dense_dim > 0)
+        self.item_ns_token_count = self.item_tokenizer.num_tokens + int(item_dense_dim > 0)
+        self.num_ns = self.user_ns_token_count + self.item_ns_token_count
+        self.sequence_stats_projector = nn.Sequential(
+            nn.Linear(self.sequence_stats_dim, d_model),
+            nn.SiLU(),
+            nn.LayerNorm(d_model),
+        )
+        self.match_projector = nn.Sequential(
+            RMSNorm(d_model * 4),
+            nn.Linear(d_model * 4, d_model),
+            nn.SiLU(),
+            nn.LayerNorm(d_model),
+        )
 
         self.query_generator = SequenceQueryGenerator(
             d_model,
@@ -377,13 +398,13 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
         )
         hidden_dim = max(d_model, d_model * hidden_mult)
         self.fusion = nn.Sequential(
-            RMSNorm(d_model * 4),
-            nn.Linear(d_model * 4, hidden_dim),
+            RMSNorm(d_model * 6),
+            nn.Linear(d_model * 6, hidden_dim),
             nn.SiLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(hidden_dim, d_model),
         )
-        self.fusion_gate = nn.Sequential(nn.Linear(d_model * 4, d_model), nn.Sigmoid())
+        self.fusion_gate = nn.Sequential(nn.Linear(d_model * 6, d_model), nn.Sigmoid())
         self.out_norm = RMSNorm(d_model)
         self.classifier = nn.Sequential(
             RMSNorm(d_model),
@@ -398,16 +419,16 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
 
     def _encode_non_sequence(self, inputs: ModelInput) -> torch.Tensor:
         parts: list[torch.Tensor] = []
-        user_tokens = self.user_tokenizer(inputs.user_int_feats)
+        user_tokens = self.user_tokenizer(inputs.user_int_feats, inputs.user_int_missing_mask)
         if user_tokens.shape[1] > 0:
             parts.append(user_tokens)
-        user_dense = self.user_dense(inputs.user_dense_feats)
+        user_dense = self.user_dense(inputs.user_dense_feats, inputs.user_dense_missing_mask)
         if user_dense is not None:
             parts.append(user_dense)
-        item_tokens = self.item_tokenizer(inputs.item_int_feats)
+        item_tokens = self.item_tokenizer(inputs.item_int_feats, inputs.item_int_missing_mask)
         if item_tokens.shape[1] > 0:
             parts.append(item_tokens)
-        item_dense = self.item_dense(inputs.item_dense_feats)
+        item_dense = self.item_dense(inputs.item_dense_feats, inputs.item_dense_missing_mask)
         if item_dense is not None:
             parts.append(item_dense)
         if parts:
@@ -440,6 +461,46 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
             lengths.append(seq_len)
         return sequences, masks, lengths
 
+    def _sequence_stats_context(self, inputs: ModelInput, fallback: torch.Tensor) -> torch.Tensor:
+        vectors: list[torch.Tensor] = []
+        seq_stats = inputs.seq_stats or {}
+        for domain in self.seq_domains:
+            stats = seq_stats.get(domain)
+            if stats is None:
+                continue
+            stats = stats.to(dtype=fallback.dtype, device=fallback.device)
+            if stats.shape[-1] < self.sequence_stats_dim:
+                pad = stats.new_zeros(stats.shape[0], self.sequence_stats_dim - stats.shape[-1])
+                stats = torch.cat([stats, pad], dim=-1)
+            vectors.append(self.sequence_stats_projector(stats[:, : self.sequence_stats_dim]))
+        return self._average(vectors, fallback)
+
+    def _item_context(self, ns_tokens: torch.Tensor, fallback: torch.Tensor) -> torch.Tensor:
+        if self.item_ns_token_count <= 0 or ns_tokens.shape[1] <= self.user_ns_token_count:
+            return fallback
+        start = min(self.user_ns_token_count, ns_tokens.shape[1])
+        end = min(start + self.item_ns_token_count, ns_tokens.shape[1])
+        if end <= start:
+            return fallback
+        return masked_mean(ns_tokens[:, start:end, :])
+
+    def _matching_context(
+        self,
+        item_context: torch.Tensor,
+        sequence_context: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.match_projector(
+            torch.cat(
+                [
+                    item_context,
+                    sequence_context,
+                    item_context * sequence_context,
+                    (item_context - sequence_context).abs(),
+                ],
+                dim=-1,
+            )
+        )
+
     def _average(self, vectors: list[torch.Tensor], fallback: torch.Tensor) -> torch.Tensor:
         if not vectors:
             return fallback
@@ -466,6 +527,9 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
             [masked_mean(tokens, mask) for tokens, mask in zip(sequences, masks, strict=True)],
             zero_context,
         )
+        stats_context = self._sequence_stats_context(inputs, zero_context)
+        item_context = self._item_context(ns_tokens, zero_context)
+        matching_context = self._matching_context(item_context, sequence_context)
         recent_context = self._average(
             [
                 masked_last(tokens, seq_len) * (seq_len > 0).to(tokens.dtype).unsqueeze(-1)
@@ -473,9 +537,9 @@ class PCVRBaselinePlus(EmbeddingParameterMixin, nn.Module):
             ],
             zero_context,
         )
-        joined = torch.cat([query_context, ns_context, sequence_context, recent_context], dim=-1)
+        joined = torch.cat([query_context, ns_context, sequence_context, recent_context, stats_context, matching_context], dim=-1)
         candidate = self.fusion(joined)
-        residual = (query_context + ns_context + sequence_context + recent_context) * 0.25
+        residual = (query_context + ns_context + sequence_context + recent_context + stats_context + matching_context) / 6.0
         gate = self.fusion_gate(joined)
         return self.out_norm(gate * candidate + (1.0 - gate) * residual)
 

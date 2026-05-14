@@ -142,11 +142,6 @@ def default_build_train_trainer(
         patience_steps=context.args.patience_steps,
         label="model",
     )
-    checkpoint_params = {
-        "blocks": context.args.num_blocks,
-        "head": context.args.num_heads,
-        "hidden": context.args.d_model,
-    }
     return PCVRPointwiseTrainer(
         model=model,
         model_input_type=context.model_module.ModelInput,
@@ -161,12 +156,19 @@ def default_build_train_trainer(
         scheduler_type=context.args.scheduler_type,
         warmup_steps=context.args.warmup_steps,
         min_lr_ratio=context.args.min_lr_ratio,
+        ema_enabled=getattr(context.args, "ema_enabled", context.defaults.ema.enabled),
+        ema_decay=getattr(context.args, "ema_decay", context.defaults.ema.decay),
+        ema_start_step=getattr(context.args, "ema_start_step", context.defaults.ema.start_step),
+        ema_update_every_n_steps=getattr(
+            context.args,
+            "ema_update_every_n_steps",
+            context.defaults.ema.update_every_n_steps,
+        ),
         loss_terms=context.args.loss_terms,
         sparse_lr=context.args.sparse_lr,
         sparse_weight_decay=context.args.sparse_weight_decay,
         reinit_sparse_every_n_steps=context.args.reinit_sparse_every_n_steps,
         reinit_cardinality_threshold=context.args.reinit_cardinality_threshold,
-        ckpt_params=checkpoint_params,
         reporter=context.reporter,
         schema_path=context.schema_path,
         eval_every_n_steps=context.args.eval_every_n_steps,

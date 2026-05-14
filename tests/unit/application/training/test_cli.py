@@ -10,6 +10,7 @@ from taac2026.domain.config import (
     PCVRDataConfig,
     PCVRDataPipelineConfig,
     PCVRDomainDropoutConfig,
+    PCVREMAConfig,
     PCVRFeatureMaskConfig,
     PCVRNonSequentialSparseDropoutConfig,
     PCVRLossConfig,
@@ -239,6 +240,13 @@ def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
             "--no-deterministic",
             "--progress-log-interval-steps",
             "25",
+            "--ema-enabled",
+            "--ema-decay",
+            "0.99",
+            "--ema-start-step",
+            "10",
+            "--ema-update-every-n-steps",
+            "2",
             "--gradient-checkpointing",
         ],
         package_dir=tmp_path,
@@ -250,6 +258,10 @@ def test_parse_pcvr_train_args_accepts_runtime_flags(tmp_path: Path) -> None:
     assert args.compile is True
     assert args.deterministic is False
     assert args.progress_log_interval_steps == 25
+    assert args.ema_enabled is True
+    assert args.ema_decay == pytest.approx(0.99)
+    assert args.ema_start_step == 10
+    assert args.ema_update_every_n_steps == 2
     assert args.gradient_checkpointing is True
 
 
@@ -448,18 +460,8 @@ def test_parse_pcvr_train_args_rejects_symbiosis_ablation_flags(tmp_path: Path) 
     with pytest.raises(SystemExit):
         parse_pcvr_train_args(
             [
-                "--no-symbiosis-use-field-tokens",
-                "--no-symbiosis-use-dense-packets",
-                "--no-symbiosis-use-sequence-memory",
-                "--no-symbiosis-use-compressed-memory",
-                "--no-symbiosis-use-candidate-token",
-                "--no-symbiosis-use-item-prior",
-                "--no-symbiosis-use-domain-type",
-                "--symbiosis-memory-block-size",
-                "32",
-                "--symbiosis-memory-top-k",
-                "4",
-                "--symbiosis-recent-tokens",
+                "--no-symbiosis-v2-use-dense-tokens",
+                "--symbiosis-v2-recent-event-tokens",
                 "16",
             ],
             package_dir=tmp_path,
@@ -472,39 +474,33 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
 
     args = symbiosis_module.parse_symbiosis_train_args(
         [
-            "--no-symbiosis-use-dense-packets",
-            "--no-symbiosis-use-sequence-memory",
-            "--no-symbiosis-use-compressed-memory",
-            "--no-symbiosis-use-candidate-token",
-            "--no-symbiosis-use-item-prior",
-            "--no-symbiosis-use-domain-type",
-            "--no-symbiosis-use-cross-token",
-            "--no-symbiosis-use-global-token",
-            "--symbiosis-sparse-seed",
+            "--no-symbiosis-v2-use-dense-tokens",
+            "--no-symbiosis-v2-use-missing-tokens",
+            "--no-symbiosis-v2-use-sequence-stats-tokens",
+            "--no-symbiosis-v2-use-metadata-attention-bias",
+            "--no-symbiosis-v2-use-candidate-readout",
+            "--symbiosis-v2-tokenization-mode",
+            "group_compressed",
+            "--symbiosis-v2-sparse-seed",
             "123",
-            "--symbiosis-memory-block-size",
-            "64",
-            "--symbiosis-memory-top-k",
-            "4",
-            "--symbiosis-recent-tokens",
+            "--symbiosis-v2-recent-event-tokens",
             "16",
+            "--symbiosis-v2-memory-event-tokens",
+            "4",
         ],
         package_dir=symbiosis_module.EXPERIMENT.package_dir,
         defaults=symbiosis_module.TRAIN_DEFAULTS,
     )
 
-    assert args.symbiosis_use_dense_packets is False
-    assert args.symbiosis_use_sequence_memory is False
-    assert args.symbiosis_use_compressed_memory is False
-    assert args.symbiosis_use_candidate_token is False
-    assert args.symbiosis_use_item_prior is False
-    assert args.symbiosis_use_domain_type is False
-    assert args.symbiosis_use_cross_token is False
-    assert args.symbiosis_use_global_token is False
-    assert args.symbiosis_sparse_seed == 123
-    assert args.symbiosis_memory_block_size == 64
-    assert args.symbiosis_memory_top_k == 4
-    assert args.symbiosis_recent_tokens == 16
+    assert args.symbiosis_v2_use_dense_tokens is False
+    assert args.symbiosis_v2_use_missing_tokens is False
+    assert args.symbiosis_v2_use_sequence_stats_tokens is False
+    assert args.symbiosis_v2_use_metadata_attention_bias is False
+    assert args.symbiosis_v2_use_candidate_readout is False
+    assert args.symbiosis_v2_tokenization_mode == "group_compressed"
+    assert args.symbiosis_v2_sparse_seed == 123
+    assert args.symbiosis_v2_recent_event_tokens == 16
+    assert args.symbiosis_v2_memory_event_tokens == 4
 
 
 @pytest.mark.parametrize("dense_optimizer_type", ["orthogonal_adamw", "fused_adamw", "muon"])
@@ -663,6 +659,31 @@ def test_pcvr_train_config_serializes_optimizer_schedule_fields() -> None:
     assert flat_config["scheduler_type"] == "cosine"
     assert flat_config["warmup_steps"] == 64
     assert flat_config["min_lr_ratio"] == pytest.approx(0.2)
+
+
+def test_pcvr_train_config_serializes_ema_fields() -> None:
+    flat_config = PCVRTrainConfig(
+        ema=PCVREMAConfig(
+            enabled=True,
+            decay=0.995,
+            start_step=128,
+            update_every_n_steps=4,
+        )
+    ).to_flat_dict()
+
+    assert flat_config["ema_enabled"] is True
+    assert flat_config["ema_decay"] == pytest.approx(0.995)
+    assert flat_config["ema_start_step"] == 128
+    assert flat_config["ema_update_every_n_steps"] == 4
+
+
+def test_pcvr_ema_config_validates_values() -> None:
+    with pytest.raises(ValueError, match=r"\[0\.0, 1\.0\)"):
+        PCVREMAConfig(decay=1.0)
+    with pytest.raises(ValueError, match="start_step"):
+        PCVREMAConfig(start_step=-1)
+    with pytest.raises(ValueError, match="update_every_n_steps"):
+        PCVREMAConfig(update_every_n_steps=0)
 
 
 def test_pcvr_train_config_serializes_runtime_determinism_field() -> None:

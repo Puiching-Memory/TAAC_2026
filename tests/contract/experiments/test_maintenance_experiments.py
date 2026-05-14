@@ -12,12 +12,20 @@ import pyarrow.parquet as pq
 import pytest
 
 from tests.support.paths import locate_repo_root
-from taac2026.domain.requests import TrainRequest
+from taac2026.domain.requests import InferRequest, TrainRequest
 from taac2026.application.experiments.registry import load_experiment_package
-from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.json import dumps, loads
 
 
 REPO_ROOT = locate_repo_root(Path(__file__))
+RESULT_PREFIX = "ONLINE_DATASET_EDA_RESULT="
+
+
+def _online_eda_stdout_payload(output: str) -> dict[str, object]:
+    for line in output.splitlines():
+        if line.startswith(RESULT_PREFIX):
+            return loads(line.removeprefix(RESULT_PREFIX))
+    raise AssertionError(f"missing {RESULT_PREFIX!r} line in stdout: {output}")
 
 
 def _load_package_module(package_name: str):
@@ -319,14 +327,68 @@ def test_online_dataset_eda_experiment_prints_report_to_stdout(
         )
 
     captured = capsys.readouterr()
-    assert result["dataset_role"] == "online"
+    assert result["dataset_role"] == "train"
     assert result["row_count"] == 2
     assert result["sampled"] is True
-    assert "report_path" not in result
-    assert "chart_dir" not in result
-    assert "[online-eda] sink=stdout" in log_capture.text
-    assert "== Dataset ==" in captured.out
+    assert result["stdout_result"] is True
+    assert "[online-eda] scan=arrow-profile" in log_capture.text
+    payload = _online_eda_stdout_payload(captured.out)
+    assert payload["dataset_role"] == "train"
+    assert payload["row_count"] == 2
     assert not run_dir.exists()
+
+
+def test_online_dataset_eda_experiment_runs_as_inference_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    log_capture,
+) -> None:
+    online_dataset_eda_package = _load_package_module("online_dataset_eda")
+    experiment = online_dataset_eda_package.EXPERIMENT
+    schema_path = tmp_path / "schema.json"
+    dataset_path = tmp_path / "demo.parquet"
+    train_dir = tmp_path / "train_outputs"
+    result_dir = tmp_path / "infer_outputs"
+    _write_schema(schema_path)
+    _write_dataset(dataset_path)
+    monkeypatch.setattr(
+        online_dataset_eda_package,
+        "ONLINE_DATASET_EDA_CONFIG",
+        replace(online_dataset_eda_package.ONLINE_DATASET_EDA_CONFIG, max_rows=2),
+    )
+
+    train_result = experiment.train(
+        TrainRequest(
+            experiment="experiments/online_dataset_eda",
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            run_dir=train_dir,
+        )
+    )
+    train_payload = _online_eda_stdout_payload(capsys.readouterr().out)
+    reference_profile = tmp_path / "train-profile.json"
+    reference_profile.write_text(dumps(train_payload, trailing_newline=True), encoding="utf-8")
+
+    with log_capture.at_level(logging.INFO):
+        infer_result = experiment.infer(
+            InferRequest(
+                experiment="experiments/online_dataset_eda",
+                dataset_path=dataset_path,
+                schema_path=schema_path,
+                checkpoint_path=reference_profile,
+                result_dir=result_dir,
+            )
+        )
+
+    captured = capsys.readouterr()
+    assert infer_result["dataset_role"] == "infer"
+    assert infer_result["stdout_result"] is True
+    assert infer_result["reference_profile_path"] == str(reference_profile.resolve())
+    assert infer_result["risk_flags"] == []
+    payload = _online_eda_stdout_payload(captured.out)
+    assert payload["comparison"]["schema_signature_match"] is True
+    assert train_result["stdout_result"] is True
 
 
 def test_online_dataset_eda_experiment_rejects_extra_args(tmp_path: Path) -> None:

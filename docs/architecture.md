@@ -228,6 +228,19 @@ domain/ -> 标准库 / 轻量类型，不依赖 application 或 infrastructure
 
 `taac2026.api` 是给实验包的稳定门面。实验包直接 import 内部模块不是绝对禁止，但应该有明确理由。
 
+## 数据切分策略
+
+PCVR 训练入口支持四种验证切分策略，统一由 `PCVRDataConfig.split_strategy` 和训练 CLI 的 `--split-strategy` 控制：
+
+| 策略 | 用途 | 说明 |
+| ---- | ---- | ---- |
+| `row_group_tail` | 本地 smoke 和兼容默认 | 使用尾部 row group 做 valid，启动成本最低 |
+| `timestamp_range` | 首选线上泛化验证 | 显式指定 `--train-timestamp-start/end` 和 `--valid-timestamp-start/end`，模拟未来时间评测 |
+| `user_hash` | 用户级泛化验证 | 按首个 user sparse 特征稳定 hash 分桶，train/valid 用户尽量互斥；缺失 user key 时回退到样本位置 |
+| `sample_hash` | 样本级稳定验证 | 按文件、row group、行位置稳定 hash 分桶，适合没有可靠 user key 或时间窗的场景 |
+
+`timestamp_range`、`user_hash` 和 `sample_hash` 都是 row-level filter。为了避免随机取 batch 后被过滤为空，训练数据加载会把 `step_random` 自动降级为 `row_group_sweep`。隐藏评测出现 train/infer drift 时，优先使用 `timestamp_range`；没有可靠时间边界时，再用 `user_hash` 或 `sample_hash` 作为比随机切分更稳的验证口径。
+
 ## 边界契约与 Pydantic
 
 Pydantic 在这个仓库里主要用于跨边界 payload，而不是替代所有内部类型。适合使用 Pydantic 的位置包括：

@@ -10,7 +10,10 @@ import pyarrow.parquet as pq
 import pytest
 
 from tests.support.paths import locate_repo_root
-from taac2026.infrastructure.io.json import dumps
+from taac2026.infrastructure.io.json import dumps, loads
+
+
+RESULT_PREFIX = "ONLINE_DATASET_EDA_RESULT="
 
 
 def _load_online_eda_runner_module():
@@ -60,10 +63,21 @@ def _write_dataset(path: Path) -> None:
     pq.write_table(pa.table(columns), path)
 
 
+def _stdout_payload(captured: pytest.CaptureFixture[str] | str) -> dict[str, object]:
+    output = captured if isinstance(captured, str) else captured.readouterr().out
+    for line in output.splitlines():
+        if line.startswith(RESULT_PREFIX):
+            return loads(line.removeprefix(RESULT_PREFIX))
+    raise AssertionError(f"missing {RESULT_PREFIX!r} line in stdout: {output}")
+
+
 def _run_online_eda_runner(
     *,
     dataset_path: Path,
     schema_path: Path,
+    output_dir: Path | None = None,
+    reference_profile_path: Path | None = None,
+    dataset_role: str = "online",
     max_rows: int | None = None,
     sample_percent: float | None = None,
     config_overrides: dict[str, object] | None = None,
@@ -73,6 +87,9 @@ def _run_online_eda_runner(
     config = runner_module.OnlineDatasetEDAConfig(
         dataset_path=dataset_path.resolve(),
         schema_path=schema_path.resolve(),
+        output_dir=output_dir.resolve() if output_dir is not None else None,
+        reference_profile_path=reference_profile_path.resolve() if reference_profile_path is not None else None,
+        dataset_role=dataset_role,
         max_rows=max_rows,
         sample_percent=sample_percent,
         **overrides,
@@ -100,8 +117,11 @@ def test_online_dataset_eda_runner_prints_summary(
 
     assert report["row_count"] == 4
     assert "[online-eda] dataset=" in log_capture.text
-    assert "== Dataset ==" in captured.out
-    assert "== Top Null Rates ==" in captured.out
+    payload = _stdout_payload(captured.out)
+    assert payload["row_count"] == 4
+    assert payload["stats"]["null_rates"]
+    assert payload["stats"]["token_overlap_sketch"]
+    assert payload["approximation"]["token_overlap"]["k"] == 256
 
 
 def test_online_dataset_eda_runner_reports_first_layer_stats(
@@ -155,13 +175,13 @@ def test_online_dataset_eda_runner_reports_first_layer_stats(
     coverage_by_domain = {row["domain"]: row for row in stats["cross_domain_coverage"]}
     assert coverage_by_domain["seq_a"] == {"domain": "seq_a", "sampled_users": 3, "covered_users": 2, "coverage": 0.666667}
     assert coverage_by_domain["seq_d"] == {"domain": "seq_d", "sampled_users": 3, "covered_users": 2, "coverage": 0.666667}
-    assert "== Label Distribution ==" in captured.out
-    assert "label_type: positive=2 negative=1 observed=3 missing=1 positive_rate=0.666667" in captured.out
-    assert "== Top Sequence Token Cardinalities ==" in captured.out
-    assert "== Sampled Cross-Domain Coverage ==" in captured.out
+    payload = _stdout_payload(captured.out)
+    assert payload["stats"]["label_distribution"] == stats["label_distribution"]
+    assert payload["stats"]["sequence_token_cardinality"] == stats["sequence_token_cardinality"]
+    assert payload["stats"]["cross_domain_coverage"] == stats["cross_domain_coverage"]
 
 
-def test_online_dataset_eda_runner_reports_second_layer_stats(
+def test_online_dataset_eda_runner_can_enable_label_lift(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     log_capture,
@@ -177,41 +197,19 @@ def test_online_dataset_eda_runner_reports_second_layer_stats(
             schema_path=schema_path,
             max_rows=4,
             config_overrides={
+                "enable_label_lift": True,
                 "label_feature_min_support": 1,
                 "label_feature_top_k": 10,
-                "categorical_pair_max_columns": 3,
-                "categorical_pair_max_cardinality": 20,
-                "categorical_pair_sample_rows": 4,
-                "categorical_pair_top_k": 5,
             },
         )
     captured = capsys.readouterr()
     stats = report["stats"]
-
-    null_by_label = {row["name"]: row for row in stats["null_rate_by_label"]}
-    assert null_by_label["user_int_feats_2"] == {
-        "name": "user_int_feats_2",
-        "positive_null_rate": 0.0,
-        "negative_null_rate": 1.0,
-        "delta": -1.0,
-        "positive_rows": 2,
-        "negative_rows": 1,
-    }
-    assert null_by_label["domain_b_seq_20"] == {
-        "name": "domain_b_seq_20",
-        "positive_null_rate": 0.0,
-        "negative_null_rate": 1.0,
-        "delta": -1.0,
-        "positive_rows": 2,
-        "negative_rows": 1,
-    }
 
     user_lift_by_token = {
         (row["feature"], row["token"]): row
         for row in stats["user_feature_label_lift"]
     }
     assert user_lift_by_token[("user_int_feats_1", 2)] == {
-        "group": "user_int",
         "feature": "user_int_feats_1",
         "token": 2,
         "support": 1,
@@ -227,7 +225,6 @@ def test_online_dataset_eda_runner_reports_second_layer_stats(
         for row in stats["item_feature_label_lift"]
     }
     assert item_lift_by_token[("item_int_feats_3", 100)] == {
-        "group": "item_int",
         "feature": "item_int_feats_3",
         "token": 100,
         "support": 2,
@@ -239,12 +236,10 @@ def test_online_dataset_eda_runner_reports_second_layer_stats(
         "log_odds": 1.609438,
     }
 
-    assert stats["categorical_pair_associations"]
-    assert all(row["sample_rows"] > 0 for row in stats["categorical_pair_associations"])
-    assert "== Null Rate By Label ==" in captured.out
-    assert "== Top User Feature Label Lift ==" in captured.out
-    assert "== Top Item Feature Label Lift ==" in captured.out
-    assert "== Top Categorical Pair Associations ==" in captured.out
+    payload = _stdout_payload(captured.out)
+    assert payload["stats"]["user_feature_label_lift"] == stats["user_feature_label_lift"]
+    assert payload["stats"]["item_feature_label_lift"] == stats["item_feature_label_lift"]
+    assert stats["categorical_pair_associations"] == []
 
 
 def test_online_dataset_eda_runner_streams_full_dataset_by_default(
@@ -265,8 +260,8 @@ def test_online_dataset_eda_runner_streams_full_dataset_by_default(
     captured = capsys.readouterr()
 
     assert report["row_count"] == 4
-    assert "scan=streaming full" in log_capture.text
-    assert "summary: online dataset, 4 rows" in captured.out
+    assert "scan=arrow-profile full" in log_capture.text
+    assert _stdout_payload(captured.out)["row_count"] == 4
 
 
 def test_online_dataset_eda_runner_honors_explicit_max_rows(
@@ -288,10 +283,11 @@ def test_online_dataset_eda_runner_honors_explicit_max_rows(
     captured = capsys.readouterr()
 
     assert report["row_count"] == 2
-    assert "scan=streaming max_rows=2" in log_capture.text
-    assert "summary: online dataset, scanned 2/4 rows" in captured.out
-    assert "progress first-pass:" in log_capture.text
-    assert "progress second-pass:" in log_capture.text
+    assert "scan=arrow-profile max_rows=2" in log_capture.text
+    payload = _stdout_payload(captured.out)
+    assert payload["row_count"] == 2
+    assert payload["total_rows"] == 4
+    assert "progress profile-scan:" in log_capture.text
 
 
 def test_online_dataset_eda_runner_honors_sample_percent(
@@ -313,8 +309,83 @@ def test_online_dataset_eda_runner_honors_sample_percent(
     captured = capsys.readouterr()
 
     assert report["row_count"] == 2
-    assert "scan=streaming sample_percent=50.0 max_rows=2" in log_capture.text
-    assert "summary: online dataset, scanned 2/4 rows" in captured.out
+    assert "scan=arrow-profile sample_percent=50.0 max_rows=2" in log_capture.text
+    assert _stdout_payload(captured.out)["row_count"] == 2
+
+
+def test_online_dataset_eda_runner_prints_profile_and_compares_reference(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    log_capture,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    dataset_path = tmp_path / "demo.parquet"
+    train_dir = tmp_path / "train_profile"
+    infer_dir = tmp_path / "infer_profile"
+    _write_schema(schema_path)
+    _write_dataset(dataset_path)
+
+    with log_capture.at_level(logging.INFO):
+        train_report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            output_dir=train_dir,
+            dataset_role="train",
+            max_rows=4,
+        )
+    capsys.readouterr()
+
+    profile_path = tmp_path / "train-profile.json"
+    profile_path.write_text(dumps(train_report, trailing_newline=True), encoding="utf-8")
+
+    with log_capture.at_level(logging.INFO):
+        infer_report = _run_online_eda_runner(
+            dataset_path=dataset_path,
+            schema_path=schema_path,
+            output_dir=infer_dir,
+            reference_profile_path=profile_path,
+            dataset_role="infer",
+            max_rows=4,
+        )
+    captured = capsys.readouterr()
+
+    assert infer_report["dataset_role"] == "infer"
+    assert infer_report["comparison"]["schema_signature_match"] is True
+    assert infer_report["comparison"]["risk_flags"] == []
+    assert infer_report["comparison"]["token_overlap_drift"]
+    payload = _stdout_payload(captured.out)
+    assert payload["comparison"]["schema_signature_match"] is True
+
+
+def test_online_dataset_eda_runner_compares_reference_from_stdout_json(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    dataset_path = tmp_path / "dataset.parquet"
+    _write_schema(schema_path)
+    _write_dataset(dataset_path)
+
+    _run_online_eda_runner(
+        dataset_path=dataset_path,
+        schema_path=schema_path,
+        output_dir=tmp_path / "train",
+        dataset_role="train",
+    )
+    train_payload = _stdout_payload(capsys.readouterr().out)
+
+    infer_report = _run_online_eda_runner(
+        dataset_path=dataset_path,
+        schema_path=schema_path,
+        output_dir=tmp_path / "infer",
+        dataset_role="infer",
+        config_overrides={"reference_profile_json": RESULT_PREFIX + dumps(train_payload)},
+    )
+
+    captured = capsys.readouterr()
+    assert infer_report["reference_profile_source"] == "ONLINE_EDA_REFERENCE_PROFILE_JSON"
+    assert infer_report["comparison"]["schema_signature_match"] is True
+    assert _stdout_payload(captured.out)["reference_profile_source"] == "ONLINE_EDA_REFERENCE_PROFILE_JSON"
 
 
 def test_resolve_schema_path_honors_taac_schema_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

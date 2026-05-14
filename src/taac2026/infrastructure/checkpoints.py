@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import shutil
 from pathlib import Path
@@ -88,6 +89,17 @@ def checkpoint_step(path: Path) -> int:
     return int(match.group("step"))
 
 
+def _format_checkpoint_auc(value: Any) -> str | None:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric_value):
+        return None
+    formatted = f"{numeric_value:.6f}".rstrip("0").rstrip(".")
+    return formatted or "0"
+
+
 def resolve_checkpoint_path(run_dir: Path, checkpoint_path: Path | None = None) -> Path:
     if checkpoint_path is not None:
         candidate = checkpoint_path.expanduser().resolve()
@@ -125,9 +137,9 @@ def build_checkpoint_dir_name(
         raise ValueError("global_step must be non-negative")
     params = checkpoint_params or {}
     parts = [f"global_step{global_step}"]
-    for key in ("layer", "head", "hidden"):
-        if key in params:
-            parts.append(f"{key}={params[key]}")
+    formatted_auc = _format_checkpoint_auc(params.get("auc", params.get("AUC")))
+    if formatted_auc is not None:
+        parts.append(f"AUC={formatted_auc}")
     name = ".".join(parts)
     validate_checkpoint_dir_name(name)
     return name

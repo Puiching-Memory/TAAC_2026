@@ -18,7 +18,7 @@ icon: lucide/folder-open
 | 想做统一 Transformer 结构 | [OneTrans](onetrans.md)                     | RankMixer tokenizer，把用户、物品和序列放进更统一的编码路径           |
 | 想试原生统一 token 流     | [UniTok](unitok.md)                         | Field-level token、dense packet 和行为事件进入同一个 backbone          |
 | 想试 UniRec 融合结构      | [UniRec](unirec.md)                         | Hybrid SiLU attention、MoT、target-aware interest 和 BlockAttnRes      |
-| 想试复杂融合方案          | [Symbiosis](symbiosis.md)                   | 带额外 CLI 参数和自定义 hooks，适合做消融                             |
+| 想试统一 token-stream 重构 | [Symbiosis](symbiosis.md)                   | V1 旧融合设计与 V2 统一序列/特征交互重构记录，适合做架构消融          |
 | 想知道线上机器是什么样    | [Host Device Info](host-device-info.md)     | 不需要数据集，采集平台环境快照                                        |
 | 想在线上跑数据概览        | [Online Dataset EDA](online-dataset-eda.md) | 需要数据集，流式扫描 parquet 并打印文本报告                           |
 
@@ -45,7 +45,7 @@ uv run taac-package-train --experiment experiments/baseline --output-dir outputs
 uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
 ```
 
-维护类实验只支持训练 bundle；它们没有推理模型接口。
+多数维护类实验只支持训练 bundle；`online_dataset_eda` 同时支持训练和推理 bundle，用来分别扫描 train / infer 数据，并在日志里输出单行可比较 profile。
 
 ## 包长什么样
 

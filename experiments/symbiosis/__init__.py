@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -47,77 +46,22 @@ from taac2026.application.training.args import (
     resolve_flat_config_values,
 )
 from taac2026.api import RuntimeExecutionConfig
+from .config import (
+    SYMBIOSIS_MODEL_CONFIG_KEYS,
+    SYMBIOSIS_MODEL_DEFAULTS,
+    SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS,
+    SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS,
+    SymbiosisModelDefaults,
+)
 
-
-@dataclass(frozen=True, slots=True)
-class SymbiosisModelDefaults:
-    use_dense_packets: bool = True
-    use_sequence_memory: bool = True
-    use_compressed_memory: bool = True
-    use_candidate_token: bool = True
-    use_item_prior: bool = True
-    use_domain_type: bool = True
-    use_cross_token: bool = True
-    use_global_token: bool = True
-    sparse_seed: int = 20260511
-    memory_block_size: int = 32
-    memory_top_k: int = 8
-    recent_tokens: int = 32
-    sequence_recent_output_tokens: int = 12
-    sequence_memory_output_tokens: int = 8
-    use_sequence_temporal_encoder: bool = True
-    ns_tokenizer_mode: str = "group"
-    use_structured_fusion: bool = True
-    cross_token_count: int = 6
-    compile_fusion_core: bool = True
-    shortcut_dropout_rate: float = 0.08
-    compress_large_ids: bool = True
-    use_missing_signals: bool = True
-    use_sequence_stats: bool = True
-
-    def to_flat_dict(self) -> dict[str, Any]:
-        return {
-            "symbiosis_use_dense_packets": self.use_dense_packets,
-            "symbiosis_use_sequence_memory": self.use_sequence_memory,
-            "symbiosis_use_compressed_memory": self.use_compressed_memory,
-            "symbiosis_use_candidate_token": self.use_candidate_token,
-            "symbiosis_use_item_prior": self.use_item_prior,
-            "symbiosis_use_domain_type": self.use_domain_type,
-            "symbiosis_use_cross_token": self.use_cross_token,
-            "symbiosis_use_global_token": self.use_global_token,
-            "symbiosis_sparse_seed": self.sparse_seed,
-            "symbiosis_memory_block_size": self.memory_block_size,
-            "symbiosis_memory_top_k": self.memory_top_k,
-            "symbiosis_recent_tokens": self.recent_tokens,
-            "symbiosis_sequence_recent_output_tokens": self.sequence_recent_output_tokens,
-            "symbiosis_sequence_memory_output_tokens": self.sequence_memory_output_tokens,
-            "symbiosis_use_sequence_temporal_encoder": self.use_sequence_temporal_encoder,
-            "symbiosis_ns_tokenizer_mode": self.ns_tokenizer_mode,
-            "symbiosis_use_structured_fusion": self.use_structured_fusion,
-            "symbiosis_cross_token_count": self.cross_token_count,
-            "symbiosis_compile_fusion_core": self.compile_fusion_core,
-            "symbiosis_shortcut_dropout_rate": self.shortcut_dropout_rate,
-            "symbiosis_compress_large_ids": self.compress_large_ids,
-            "symbiosis_use_missing_signals": self.use_missing_signals,
-            "symbiosis_use_sequence_stats": self.use_sequence_stats,
-        }
-
-
-SYMBIOSIS_MODEL_DEFAULTS = SymbiosisModelDefaults()
-SYMBIOSIS_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
-SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS = {
-    "symbiosis_shortcut_dropout_rate": SYMBIOSIS_MODEL_DEFAULTS.shortcut_dropout_rate,
-    "symbiosis_compress_large_ids": False,
-    "symbiosis_use_missing_signals": False,
-    "symbiosis_use_sequence_stats": False,
-    "symbiosis_sequence_recent_output_tokens": 1,
-    "symbiosis_sequence_memory_output_tokens": 1,
-    "symbiosis_use_sequence_temporal_encoder": False,
-    "symbiosis_ns_tokenizer_mode": "random_chunk",
-    "symbiosis_use_structured_fusion": False,
-    "symbiosis_cross_token_count": 1,
-}
-SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
+__all__ = [
+    "EXPERIMENT",
+    "SYMBIOSIS_MODEL_CONFIG_KEYS",
+    "SYMBIOSIS_MODEL_DEFAULTS",
+    "SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS",
+    "SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS",
+    "SymbiosisModelDefaults",
+]
 
 
 def _add_symbiosis_train_args(parser: Any) -> None:
@@ -245,7 +189,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         valid_timestamp_start=0,
         valid_timestamp_end=0,
         eval_every_n_steps=500,
-        seq_max_lens="seq_a:256,seq_b:256,seq_c:512,seq_d:512",
+        seq_max_lens="seq_a:256,seq_b:256,seq_c:1024,seq_d:2048",
     ),
     data_pipeline=PCVRDataPipelineConfig(
         cache=PCVRDataCacheConfig(mode="none", max_batches=0),

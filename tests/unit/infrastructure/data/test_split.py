@@ -29,12 +29,14 @@ class _FakeDataset(IterableDataset):
         *_args,
         row_group_range: tuple[int, int] | None = None,
         timestamp_range: tuple[int | None, int | None] | None = None,
+        hash_split_filter=None,
         data_pipeline_config: PCVRDataPipelineConfig | None = None,
         dataset_role: str = "dataset",
         **_kwargs,
     ) -> None:
         self.row_group_range = row_group_range
         self.timestamp_range = timestamp_range
+        self.hash_split_filter = hash_split_filter
         self.data_pipeline_config = data_pipeline_config
         self.dataset_role = dataset_role
         self.num_rows = 0
@@ -267,6 +269,47 @@ def test_get_pcvr_data_supports_timestamp_range_split(
     assert train_loader.dataset.timestamp_range == (None, 200)
     assert valid_loader.dataset.row_group_range == (0, 3)
     assert valid_loader.dataset.timestamp_range == (200, 400)
+
+
+def test_get_pcvr_data_supports_user_hash_split(monkeypatch, tmp_path: Path) -> None:
+    _patch_parquet_runtime(monkeypatch, [400, 300, 300])
+    parquet_path = tmp_path / "demo.parquet"
+    parquet_path.write_text("placeholder", encoding="utf-8")
+
+    train_loader, valid_loader, train_dataset = pcvr_data.get_pcvr_data(
+        data_dir=str(parquet_path),
+        schema_path=str(tmp_path / "schema.json"),
+        batch_size=8,
+        valid_ratio=0.2,
+        split_strategy="user_hash",
+        num_workers=0,
+        buffer_batches=1,
+    )
+
+    assert train_dataset.row_group_range == (0, 3)
+    assert train_loader.dataset.hash_split_filter.strategy == "user_hash"
+    assert train_loader.dataset.hash_split_filter.role == "train"
+    assert valid_loader.dataset.hash_split_filter.strategy == "user_hash"
+    assert valid_loader.dataset.hash_split_filter.role == "valid"
+
+
+def test_get_pcvr_data_supports_sample_hash_split(monkeypatch, tmp_path: Path) -> None:
+    _patch_parquet_runtime(monkeypatch, [400, 300, 300])
+    parquet_path = tmp_path / "demo.parquet"
+    parquet_path.write_text("placeholder", encoding="utf-8")
+
+    train_loader, valid_loader, _train_dataset = pcvr_data.get_pcvr_data(
+        data_dir=str(parquet_path),
+        schema_path=str(tmp_path / "schema.json"),
+        batch_size=8,
+        valid_ratio=0.2,
+        split_strategy="sample_hash",
+        num_workers=0,
+        buffer_batches=1,
+    )
+
+    assert train_loader.dataset.hash_split_filter.strategy == "sample_hash"
+    assert valid_loader.dataset.hash_split_filter.strategy == "sample_hash"
 
 
 def test_get_pcvr_data_applies_augmentation_only_to_train_dataset(

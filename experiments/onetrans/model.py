@@ -142,12 +142,14 @@ class PCVROneTrans(EmbeddingParameterMixin, nn.Module):
         item_ns_tokens: int = 2,
     ) -> None:
         super().__init__()
-        del num_queries, seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, use_rope, rope_base, seq_id_threshold
+        del num_queries, seq_encoder_type, seq_causal, rank_mixer_mode, use_rope, rope_base, seq_id_threshold
         num_heads = choose_num_heads(d_model, num_heads)
         self.d_model = d_model
         self.action_num = action_num
         self.gradient_checkpointing = bool(gradient_checkpointing)
         self.seq_domains = sorted(seq_vocab_sizes)
+        self.seq_keep_per_domain = max(1, int(seq_top_k))
+        self.sequence_stats_dim = 6
         force_auto_split = ns_tokenizer_type == "rankmixer"
         self.user_tokenizer = NonSequentialTokenizer(
             user_int_feature_specs,
@@ -165,18 +167,33 @@ class PCVROneTrans(EmbeddingParameterMixin, nn.Module):
             d_model,
             item_ns_tokens,
             emb_skip_threshold,
+            compress_high_cardinality=True,
             force_auto_split=force_auto_split,
         )
         self.user_dense = DenseTokenProjector(user_dense_dim, d_model)
         self.item_dense = DenseTokenProjector(item_dense_dim, d_model)
         self.sequence_tokenizers = nn.ModuleDict(
             {
-                domain: SequenceTokenizer(vocab_sizes, emb_dim, d_model, num_time_buckets, emb_skip_threshold)
+                domain: SequenceTokenizer(
+                    vocab_sizes,
+                    emb_dim,
+                    d_model,
+                    num_time_buckets,
+                    emb_skip_threshold,
+                    compress_high_cardinality=True,
+                )
                 for domain, vocab_sizes in seq_vocab_sizes.items()
             }
         )
         self.num_ns = self.user_tokenizer.num_tokens + self.item_tokenizer.num_tokens
         self.num_ns += int(user_dense_dim > 0) + int(item_dense_dim > 0)
+        self.use_sequence_stats_token = bool(self.seq_domains)
+        self.num_ns += int(self.use_sequence_stats_token)
+        self.sequence_stats_projector = nn.Sequential(
+            nn.Linear(self.sequence_stats_dim, d_model),
+            nn.SiLU(),
+            nn.LayerNorm(d_model),
+        )
         self.separator_tokens = nn.Parameter(torch.randn(max(1, len(self.seq_domains) - 1), d_model) * 0.02)
         self.blocks = nn.ModuleList(
             [OneTransBlock(d_model, num_heads, hidden_mult, self.num_ns, dropout_rate) for _ in range(max(1, num_blocks))]
@@ -190,15 +207,48 @@ class PCVROneTrans(EmbeddingParameterMixin, nn.Module):
         )
 
     def _encode_non_sequence(self, inputs: ModelInput) -> torch.Tensor:
-        parts = [self.user_tokenizer(inputs.user_int_feats)]
-        user_dense = self.user_dense(inputs.user_dense_feats)
+        parts = [self.user_tokenizer(inputs.user_int_feats, inputs.user_int_missing_mask)]
+        user_dense = self.user_dense(inputs.user_dense_feats, inputs.user_dense_missing_mask)
         if user_dense is not None:
             parts.append(user_dense)
-        parts.append(self.item_tokenizer(inputs.item_int_feats))
-        item_dense = self.item_dense(inputs.item_dense_feats)
+        parts.append(self.item_tokenizer(inputs.item_int_feats, inputs.item_int_missing_mask))
+        item_dense = self.item_dense(inputs.item_dense_feats, inputs.item_dense_missing_mask)
         if item_dense is not None:
             parts.append(item_dense)
+        stats_token = self._sequence_stats_token(inputs)
+        if stats_token is not None:
+            parts.append(stats_token)
         return torch.cat(parts, dim=1)
+
+    def _sequence_stats_token(self, inputs: ModelInput) -> torch.Tensor | None:
+        if not self.use_sequence_stats_token:
+            return None
+        batch_size = inputs.user_int_feats.shape[0]
+        device = inputs.user_int_feats.device
+        dtype = torch.float32
+        vectors: list[torch.Tensor] = []
+        seq_stats = inputs.seq_stats or {}
+        for domain in self.seq_domains:
+            stats = seq_stats.get(domain)
+            if stats is None:
+                continue
+            stats = stats.to(dtype=dtype, device=device)
+            if stats.shape[-1] < self.sequence_stats_dim:
+                pad = stats.new_zeros(stats.shape[0], self.sequence_stats_dim - stats.shape[-1])
+                stats = torch.cat([stats, pad], dim=-1)
+            vectors.append(self.sequence_stats_projector(stats[:, : self.sequence_stats_dim]))
+        if not vectors:
+            return inputs.user_int_feats.new_zeros(batch_size, 1, self.d_model, dtype=torch.float32)
+        return torch.stack(vectors, dim=1).mean(dim=1, keepdim=True)
+
+    def _tail_crop(self, tokens: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+        if tokens.shape[1] <= self.seq_keep_per_domain:
+            return tokens
+        keep_count = self.seq_keep_per_domain
+        start = (lengths - keep_count).clamp_min(0)
+        offsets = torch.arange(keep_count, device=tokens.device).unsqueeze(0)
+        positions = (start.unsqueeze(1) + offsets).clamp_max(tokens.shape[1] - 1)
+        return tokens.gather(dim=1, index=positions.unsqueeze(-1).expand(-1, -1, tokens.shape[-1]))
 
     def _encode_sequence_stream(self, inputs: ModelInput) -> tuple[torch.Tensor, torch.Tensor]:
         pieces: list[torch.Tensor] = []
@@ -206,10 +256,12 @@ class PCVROneTrans(EmbeddingParameterMixin, nn.Module):
         sep_index = 0
         for domain_index, domain in enumerate(self.seq_domains):
             raw_sequence = inputs.seq_data[domain]
-            seq_len = inputs.seq_lens[domain].to(raw_sequence.device)
+            seq_len = inputs.seq_lens[domain].to(raw_sequence.device).clamp_min(0).clamp_max(raw_sequence.shape[2])
             tokens = self.sequence_tokenizers[domain](raw_sequence, inputs.seq_time_buckets.get(domain))
+            tokens = self._tail_crop(tokens, seq_len)
+            seq_len = seq_len.clamp_max(tokens.shape[1])
             tokens = tokens + sinusoidal_positions(tokens.shape[1], self.d_model, tokens.device).unsqueeze(0)
-            mask = make_padding_mask(seq_len, raw_sequence.shape[2])
+            mask = make_padding_mask(seq_len, tokens.shape[1])
             pieces.append(tokens)
             masks.append(mask)
             if domain_index < len(self.seq_domains) - 1:
