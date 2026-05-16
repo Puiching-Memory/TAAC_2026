@@ -88,10 +88,6 @@ class PCVRTrainCLIArgs:
     valid_ratio: Annotated[float, _arg("--valid-ratio")] = 0.1
     split_strategy: Annotated[PCVRDataSplitStrategy, _arg("--split-strategy")] = "row_group_tail"
     sampling_strategy: Annotated[PCVRDataSamplingStrategy, _arg("--sampling-strategy")] = "step_random"
-    train_timestamp_start: Annotated[int, _arg("--train-timestamp-start")] = 0
-    train_timestamp_end: Annotated[int, _arg("--train-timestamp-end")] = 0
-    valid_timestamp_start: Annotated[int, _arg("--valid-timestamp-start")] = 0
-    valid_timestamp_end: Annotated[int, _arg("--valid-timestamp-end")] = 0
     eval_every_n_steps: Annotated[int, _arg("--eval-every-n-steps")] = 5_000
     seq_max_lens: Annotated[str, _arg("--seq-max-lens")] = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
     validation_probe_mode: Annotated[PCVRValidationProbeMode, _arg("--validation-probe-mode")] = "none"

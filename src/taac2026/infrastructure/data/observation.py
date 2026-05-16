@@ -93,23 +93,6 @@ def _list_positive_values(array: pa.Array) -> NDArray[np.int64]:
     return array.values.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
 
 
-def normalize_pcvr_timestamp_range(
-    start: int | None,
-    end: int | None,
-    *,
-    label: str = "timestamp_range",
-) -> PCVRTimestampRange | None:
-    start_value = int(start or 0)
-    end_value = int(end or 0)
-    if start_value < 0 or end_value < 0:
-        raise ValueError(f"{label} bounds must be non-negative")
-    if start_value == 0 and end_value == 0:
-        return None
-    if end_value and start_value >= end_value:
-        raise ValueError(f"{label} start must be < end")
-    return (start_value or None, end_value or None)
-
-
 def pcvr_timestamp_range_to_dict(
     timestamp_range: PCVRTimestampRange | None,
 ) -> dict[str, int | None] | None:
@@ -180,6 +163,93 @@ def count_pcvr_rows_in_timestamp_range(
             timestamps = batch.column(0).to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
             row_count += int(_timestamp_mask(timestamps, timestamp_range).sum())
     return row_count
+
+
+def _collect_pcvr_timestamps(
+    row_groups: list[tuple[str, int, int]],
+    *,
+    batch_size: int = DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE,
+) -> NDArray[np.int64]:
+    chunks: list[NDArray[np.int64]] = []
+    current_file_path: str | None = None
+    current_parquet_file: pq.ParquetFile | None = None
+    for file_path, row_group_index, _num_rows in row_groups:
+        if file_path != current_file_path:
+            current_file_path = file_path
+            current_parquet_file = pq.ParquetFile(file_path)
+        if current_parquet_file is None:
+            continue
+        for batch in current_parquet_file.iter_batches(
+            batch_size=batch_size,
+            row_groups=[row_group_index],
+            columns=["timestamp"],
+        ):
+            chunks.append(
+                batch.column(0)
+                .to_numpy(zero_copy_only=False)
+                .astype(np.int64, copy=False)
+            )
+    if not chunks:
+        return np.array([], dtype=np.int64)
+    return np.concatenate(chunks)
+
+
+def plan_pcvr_timestamp_tail_split(
+    row_groups: list[tuple[str, int, int]],
+    *,
+    valid_ratio: float = 0.1,
+    train_ratio: float = 1.0,
+    batch_size: int = DEFAULT_PCVR_OBSERVED_SCHEMA_BATCH_SIZE,
+) -> tuple[PCVRRowGroupSplitPlan, PCVRTimestampRange, PCVRTimestampRange]:
+    if not 0.0 < valid_ratio < 1.0:
+        raise ValueError("timestamp_auto split requires 0 < valid_ratio < 1")
+    if train_ratio <= 0.0:
+        raise ValueError("timestamp_auto split requires train_ratio > 0")
+
+    timestamps = _collect_pcvr_timestamps(row_groups, batch_size=batch_size)
+    total_rows = int(timestamps.size)
+    if total_rows < 2:
+        raise ValueError("timestamp_auto split requires at least two rows")
+
+    valid_target_rows = max(1, min(total_rows - 1, round(total_rows * valid_ratio)))
+    train_pool_rows = total_rows - valid_target_rows
+    train_target_rows = max(1, min(train_pool_rows, round(train_pool_rows * train_ratio)))
+
+    ordered = np.sort(timestamps)
+    valid_start_index = total_rows - valid_target_rows
+    valid_start = int(ordered[valid_start_index])
+    train_start: int | None = None
+    if train_target_rows < train_pool_rows:
+        train_start = int(ordered[max(0, valid_start_index - train_target_rows)])
+
+    train_timestamp_range: PCVRTimestampRange = (train_start, valid_start)
+    valid_timestamp_range: PCVRTimestampRange = (valid_start, None)
+    train_rows = int(_timestamp_mask(timestamps, train_timestamp_range).sum())
+    valid_rows = int(_timestamp_mask(timestamps, valid_timestamp_range).sum())
+    if train_rows <= 0 or valid_rows <= 0:
+        raise ValueError(
+            "timestamp_auto split produced an empty train or valid dataset: "
+            f"train_rows={train_rows}, valid_rows={valid_rows}"
+        )
+
+    split_plan = PCVRRowGroupSplitPlan(
+        total_row_groups=len(row_groups),
+        train_row_groups=len(row_groups),
+        valid_row_groups=len(row_groups),
+        train_row_group_range=(0, len(row_groups)),
+        valid_row_group_range=(0, len(row_groups)),
+        train_rows=train_rows,
+        valid_rows=valid_rows,
+        reuse_train_for_valid=False,
+    )
+    logger.info(
+        "Timestamp auto split: train={}, valid={}, target_valid_ratio={}, train_ratio={}",
+        pcvr_timestamp_range_to_dict(train_timestamp_range),
+        pcvr_timestamp_range_to_dict(valid_timestamp_range),
+        valid_ratio,
+        train_ratio,
+    )
+    return split_plan, train_timestamp_range, valid_timestamp_range
 
 
 def build_pcvr_observed_schema_report(
@@ -457,7 +527,7 @@ __all__ = [
     "collect_pcvr_row_groups",
     "count_pcvr_rows_in_timestamp_range",
     "filter_pcvr_record_batch_by_timestamp_range",
-    "normalize_pcvr_timestamp_range",
     "pcvr_timestamp_range_to_dict",
     "plan_pcvr_row_group_split",
+    "plan_pcvr_timestamp_tail_split",
 ]

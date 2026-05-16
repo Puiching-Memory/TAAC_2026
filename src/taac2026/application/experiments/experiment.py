@@ -118,10 +118,6 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
             valid_ratio=float(summary["valid_ratio"]),
             train_ratio=float(summary["train_ratio"]),
             split_strategy=str(summary.get("split_strategy", "row_group_tail")),
-            train_timestamp_start=int(summary.get("train_timestamp_start", 0) or 0),
-            train_timestamp_end=int(summary.get("train_timestamp_end", 0) or 0),
-            valid_timestamp_start=int(summary.get("valid_timestamp_start", 0) or 0),
-            valid_timestamp_end=int(summary.get("valid_timestamp_end", 0) or 0),
         )
 
         payload = dict(summary)

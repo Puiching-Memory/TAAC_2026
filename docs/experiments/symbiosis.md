@@ -222,6 +222,7 @@ Symbiosis V2 默认仍使用自定义 hooks，但模型内部不再依赖 V1 私
 - 默认层数：`num_blocks=4`
 - 默认维度：`d_model=256`，`emb_dim=256`，`num_heads=8`
 - 默认 sequence raw 上限：`seq_a:256,seq_b:256,seq_c:1024,seq_d:2048`
+- 默认验证切分：`timestamp_auto`，按 `valid_ratio=0.1` 自动使用最新 timestamp 样本做 valid
 - 默认 V3 token 预算：`seq_a=8+4`，`seq_b=8+4`，`seq_c=20+10`，`seq_d=24+12`
 - 默认 dense packet：user dense `3`，item dense `1`
 - 默认 optimizer：`muon`

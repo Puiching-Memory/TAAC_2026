@@ -164,7 +164,7 @@ class PCVRStepDataset(Dataset[PCVRBatch]):
         if batch is None:
             raise RuntimeError(
                 "step-indexed sampling produced an empty timestamp-filtered batch; "
-                "use scan sampling for timestamp_range splits"
+                "use scan sampling for row-level timestamp splits"
             )
         return self._fit_step_batch(batch, global_step=global_step, generator=generator)
 

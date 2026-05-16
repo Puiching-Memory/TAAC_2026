@@ -14,8 +14,8 @@ from taac2026.domain.validation import TAACBoundaryModel
 
 
 PCVR_TRAIN_CONFIG_FORMAT = "taac2026-pcvr-train-config"
-PCVR_TRAIN_CONFIG_VERSION = 2
-PCVR_TRAIN_CONFIG_SUPPORTED_VERSIONS = frozenset({1, PCVR_TRAIN_CONFIG_VERSION})
+PCVR_TRAIN_CONFIG_VERSION = 3
+PCVR_TRAIN_CONFIG_SUPPORTED_VERSIONS = frozenset({1, 2, PCVR_TRAIN_CONFIG_VERSION})
 
 PCVR_TRAIN_CONFIG_METADATA_KEYS = frozenset(
     {
@@ -101,9 +101,14 @@ def _migrate_pcvr_train_config_v2(payload: dict[str, Any]) -> dict[str, Any]:
     return _with_ema_train_config_defaults(payload)
 
 
+def _migrate_pcvr_train_config_v3(payload: dict[str, Any]) -> dict[str, Any]:
+    return _with_ema_train_config_defaults(payload)
+
+
 _PCVR_TRAIN_CONFIG_MIGRATIONS = {
     1: _migrate_pcvr_train_config_v1,
     2: _migrate_pcvr_train_config_v2,
+    3: _migrate_pcvr_train_config_v3,
 }
 
 

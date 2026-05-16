@@ -254,7 +254,7 @@ def test_train_writes_split_observed_schema_reports(
     assert valid_report["schema"]["user_int"] == [[1, 1, 1], [2, 3, 3]]
 
 
-def test_train_writes_timestamp_split_observed_schema_reports(
+def test_train_writes_timestamp_auto_split_observed_schema_reports(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,11 +273,7 @@ def test_train_writes_timestamp_split_observed_schema_reports(
             "schema_path": str(schema_path.resolve()),
             "train_ratio": 1.0,
             "valid_ratio": 0.1,
-            "split_strategy": "timestamp_range",
-            "train_timestamp_start": 0,
-            "train_timestamp_end": 150,
-            "valid_timestamp_start": 150,
-            "valid_timestamp_end": 250,
+            "split_strategy": "timestamp_auto",
         },
     )
 
@@ -294,16 +290,16 @@ def test_train_writes_timestamp_split_observed_schema_reports(
     train_report = loads(Path(observed_paths["train_split"]).read_bytes())
     valid_report = loads(Path(observed_paths["valid_split"]).read_bytes())
     assert payload["data_split"] == {
-        "split_strategy": "timestamp_range",
-        "train_timestamp_range": {"start": None, "end": 150},
-        "valid_timestamp_range": {"start": 150, "end": 250},
+        "split_strategy": "timestamp_auto",
+        "train_timestamp_range": {"start": None, "end": 200},
+        "valid_timestamp_range": {"start": 200, "end": None},
     }
     assert payload["row_group_split"]["train_row_group_range"] == [0, 2]
     assert payload["row_group_split"]["valid_row_group_range"] == [0, 2]
     assert payload["row_group_split"]["train_rows"] == 1
     assert payload["row_group_split"]["valid_rows"] == 1
-    assert train_report["timestamp_range"] == {"start": None, "end": 150}
-    assert valid_report["timestamp_range"] == {"start": 150, "end": 250}
+    assert train_report["timestamp_range"] == {"start": None, "end": 200}
+    assert valid_report["timestamp_range"] == {"start": 200, "end": None}
     assert train_report["schema"]["user_int"] == [[1, 1, 1], [2, 2, 2]]
     assert valid_report["schema"]["user_int"] == [[1, 1, 1], [2, 3, 3]]
 
@@ -434,14 +430,7 @@ def test_load_train_config_raises_on_missing_data_split_keys(tmp_path: Path) -> 
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     config = PCVRTrainConfig().to_flat_dict()
-    for key in (
-        "split_strategy",
-        "train_timestamp_start",
-        "train_timestamp_end",
-        "valid_timestamp_start",
-        "valid_timestamp_end",
-        "deterministic",
-    ):
+    for key in ("split_strategy", "deterministic"):
         config.pop(key)
     (checkpoint_dir / "train_config.json").write_text(
         dumps(build_pcvr_train_config_sidecar(config)),

@@ -72,10 +72,6 @@ def default_build_train_data(context: PCVRTrainContext) -> PCVRTrainDataBundle:
             "train_steps_per_sweep",
             context.defaults.data.train_steps_per_sweep,
         ),
-        train_timestamp_start=getattr(context.args, "train_timestamp_start", context.defaults.data.train_timestamp_start),
-        train_timestamp_end=getattr(context.args, "train_timestamp_end", context.defaults.data.train_timestamp_end),
-        valid_timestamp_start=getattr(context.args, "valid_timestamp_start", context.defaults.data.valid_timestamp_start),
-        valid_timestamp_end=getattr(context.args, "valid_timestamp_end", context.defaults.data.valid_timestamp_end),
         num_workers=context.args.num_workers,
         buffer_batches=context.args.buffer_batches,
         seed=context.args.seed,
@@ -203,10 +199,6 @@ def default_build_train_summary(
                 context.defaults.data.train_steps_per_sweep,
             )
         ),
-        "train_timestamp_start": int(getattr(context.args, "train_timestamp_start", context.defaults.data.train_timestamp_start)),
-        "train_timestamp_end": int(getattr(context.args, "train_timestamp_end", context.defaults.data.train_timestamp_end)),
-        "valid_timestamp_start": int(getattr(context.args, "valid_timestamp_start", context.defaults.data.valid_timestamp_start)),
-        "valid_timestamp_end": int(getattr(context.args, "valid_timestamp_end", context.defaults.data.valid_timestamp_end)),
     }
     train_loader = getattr(trainer, "train_loader", None)
     train_dataset = getattr(train_loader, "dataset", None)

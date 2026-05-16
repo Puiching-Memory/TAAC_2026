@@ -20,9 +20,9 @@ from taac2026.infrastructure.data.observation import (
     build_pcvr_observed_schema_report,
     collect_pcvr_row_groups,
     count_pcvr_rows_in_timestamp_range,
-    normalize_pcvr_timestamp_range,
     pcvr_timestamp_range_to_dict,
     plan_pcvr_row_group_split,
+    plan_pcvr_timestamp_tail_split,
 )
 from taac2026.infrastructure.data.parquet_dataset import PCVRHashSplitFilter, PCVRParquetDataset
 from taac2026.infrastructure.logging import logger
@@ -48,10 +48,6 @@ def get_pcvr_data(
     train_ratio: float = 1.0,
     split_strategy: str = "row_group_tail",
     train_steps_per_sweep: int = 0,
-    train_timestamp_start: int = 0,
-    train_timestamp_end: int = 0,
-    valid_timestamp_start: int = 0,
-    valid_timestamp_end: int = 0,
     sampling_strategy: str = "step_random",
     num_workers: int = 16,
     buffer_batches: int = 1,
@@ -73,10 +69,6 @@ def get_pcvr_data(
         valid_ratio=valid_ratio,
         train_ratio=train_ratio,
         seed=seed,
-        train_timestamp_start=train_timestamp_start,
-        train_timestamp_end=train_timestamp_end,
-        valid_timestamp_start=valid_timestamp_start,
-        valid_timestamp_end=valid_timestamp_end,
     )
     effective_sampling_strategy = _effective_sampling_strategy(
         sampling_strategy,
@@ -166,10 +158,6 @@ def _resolve_split_plan(
     valid_ratio: float,
     train_ratio: float,
     seed: int,
-    train_timestamp_start: int,
-    train_timestamp_end: int,
-    valid_timestamp_start: int,
-    valid_timestamp_end: int,
 ) -> tuple[
     PCVRRowGroupSplitPlan,
     PCVRTimestampRange | None,
@@ -189,13 +177,11 @@ def _resolve_split_plan(
             None,
             None,
         )
-    if split_strategy == "timestamp_range":
-        split_plan, train_range, valid_range = _timestamp_split_plan(
+    if split_strategy == "timestamp_auto":
+        split_plan, train_range, valid_range = plan_pcvr_timestamp_tail_split(
             row_groups,
-            train_timestamp_start=train_timestamp_start,
-            train_timestamp_end=train_timestamp_end,
-            valid_timestamp_start=valid_timestamp_start,
-            valid_timestamp_end=valid_timestamp_end,
+            valid_ratio=valid_ratio,
+            train_ratio=train_ratio,
         )
         return split_plan, train_range, valid_range, None, None
     split_plan, train_filter, valid_filter = _hash_split_plan(
@@ -243,51 +229,6 @@ def _hash_split_plan(
         PCVRHashSplitFilter(strategy=split_strategy, role="train", valid_ratio=valid_ratio, seed=seed),
         PCVRHashSplitFilter(strategy=split_strategy, role="valid", valid_ratio=valid_ratio, seed=seed),
     )
-
-
-def _timestamp_split_plan(
-    row_groups: list[tuple[str, int, int]],
-    *,
-    train_timestamp_start: int,
-    train_timestamp_end: int,
-    valid_timestamp_start: int,
-    valid_timestamp_end: int,
-) -> tuple[PCVRRowGroupSplitPlan, PCVRTimestampRange, PCVRTimestampRange]:
-    train_range = normalize_pcvr_timestamp_range(
-        train_timestamp_start,
-        train_timestamp_end,
-        label="train_timestamp_range",
-    )
-    valid_range = normalize_pcvr_timestamp_range(
-        valid_timestamp_start,
-        valid_timestamp_end,
-        label="valid_timestamp_range",
-    )
-    if train_range is None or valid_range is None:
-        raise ValueError(
-            "timestamp_range split requires non-empty train and valid timestamp ranges"
-        )
-    split_plan = PCVRRowGroupSplitPlan(
-        total_row_groups=len(row_groups),
-        train_row_groups=len(row_groups),
-        valid_row_groups=len(row_groups),
-        train_row_group_range=(0, len(row_groups)),
-        valid_row_group_range=(0, len(row_groups)),
-        train_rows=count_pcvr_rows_in_timestamp_range(row_groups, train_range),
-        valid_rows=count_pcvr_rows_in_timestamp_range(row_groups, valid_range),
-        reuse_train_for_valid=False,
-    )
-    if split_plan.train_rows <= 0 or split_plan.valid_rows <= 0:
-        raise ValueError(
-            "timestamp_range split produced an empty train or valid dataset: "
-            f"train_rows={split_plan.train_rows}, valid_rows={split_plan.valid_rows}"
-        )
-    logger.info(
-        "Timestamp split: train={}, valid={}",
-        pcvr_timestamp_range_to_dict(train_range),
-        pcvr_timestamp_range_to_dict(valid_range),
-    )
-    return split_plan, train_range, valid_range
 
 
 def _effective_sampling_strategy(
@@ -402,7 +343,7 @@ __all__ = [
     "count_pcvr_rows_in_timestamp_range",
     "ensure_torch_file_system_sharing_strategy",
     "get_pcvr_data",
-    "normalize_pcvr_timestamp_range",
     "pcvr_timestamp_range_to_dict",
     "plan_pcvr_row_group_split",
+    "plan_pcvr_timestamp_tail_split",
 ]

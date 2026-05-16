@@ -237,17 +237,27 @@ def test_get_pcvr_data_keeps_disjoint_ranges_when_multiple_row_groups(
     assert split_plan.valid_rows == 300
 
 
-def test_get_pcvr_data_supports_timestamp_range_split(
+def test_get_pcvr_data_supports_timestamp_auto_split(
     monkeypatch, tmp_path: Path
 ) -> None:
     _patch_parquet_runtime(monkeypatch, [400, 300, 300])
     monkeypatch.setattr(
         pcvr_data,
-        "count_pcvr_rows_in_timestamp_range",
-        lambda _row_groups, timestamp_range: {
-            (None, 200): 700,
-            (200, 400): 300,
-        }[timestamp_range],
+        "plan_pcvr_timestamp_tail_split",
+        lambda _row_groups, valid_ratio, train_ratio: (
+            pcvr_data.PCVRRowGroupSplitPlan(
+                total_row_groups=3,
+                train_row_groups=3,
+                valid_row_groups=3,
+                train_row_group_range=(0, 3),
+                valid_row_group_range=(0, 3),
+                train_rows=700,
+                valid_rows=300,
+                reuse_train_for_valid=False,
+            ),
+            (None, 200),
+            (200, None),
+        ),
     )
     parquet_path = tmp_path / "demo.parquet"
     parquet_path.write_text("placeholder", encoding="utf-8")
@@ -256,10 +266,7 @@ def test_get_pcvr_data_supports_timestamp_range_split(
         data_dir=str(parquet_path),
         schema_path=str(tmp_path / "schema.json"),
         batch_size=8,
-        split_strategy="timestamp_range",
-        train_timestamp_end=200,
-        valid_timestamp_start=200,
-        valid_timestamp_end=400,
+        split_strategy="timestamp_auto",
         num_workers=0,
         buffer_batches=1,
     )
@@ -268,7 +275,30 @@ def test_get_pcvr_data_supports_timestamp_range_split(
     assert train_dataset.timestamp_range == (None, 200)
     assert train_loader.dataset.timestamp_range == (None, 200)
     assert valid_loader.dataset.row_group_range == (0, 3)
-    assert valid_loader.dataset.timestamp_range == (200, 400)
+    assert valid_loader.dataset.timestamp_range == (200, None)
+
+
+def test_plan_pcvr_timestamp_tail_split_uses_latest_rows_for_validation(
+    tmp_path: Path,
+) -> None:
+    schema_path = tmp_path / "schema.json"
+    parquet_path = tmp_path / "demo.parquet"
+    _write_multi_row_group_partial_batch_fixture(schema_path, parquet_path)
+    row_groups = pcvr_data.collect_pcvr_row_groups(parquet_path)
+
+    split_plan, train_range, valid_range = pcvr_data.plan_pcvr_timestamp_tail_split(
+        row_groups,
+        valid_ratio=0.4,
+        train_ratio=1.0,
+        batch_size=2,
+    )
+
+    assert train_range == (None, 103)
+    assert valid_range == (103, None)
+    assert split_plan.train_rows == 3
+    assert split_plan.valid_rows == 2
+    assert split_plan.train_row_group_range == (0, 3)
+    assert split_plan.valid_row_group_range == (0, 3)
 
 
 def test_get_pcvr_data_supports_user_hash_split(monkeypatch, tmp_path: Path) -> None:

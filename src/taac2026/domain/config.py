@@ -20,7 +20,7 @@ NSTokenizerType = Literal["group", "rankmixer"]
 NSGroupingStrategy = Literal["explicit", "singleton"]
 PCVRSeqWindowMode = Literal["tail", "random_tail", "rolling"]
 PCVRDataCacheMode = Literal["none", "lru", "fifo", "lfu", "rr", "opt"]
-PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_range", "user_hash", "sample_hash"]
+PCVRDataSplitStrategy = Literal["row_group_tail", "timestamp_auto", "user_hash", "sample_hash"]
 PCVRDataSamplingStrategy = Literal["step_random", "row_group_sweep"]
 DenseOptimizerType = Literal["adamw", "fused_adamw", "orthogonal_adamw", "muon"]
 DenseLRSchedulerType = Literal["none", "linear", "cosine"]
@@ -34,7 +34,7 @@ FLASH_ATTENTION_BACKEND_CHOICES = ("torch", "tilelang")
 
 DENSE_LR_SCHEDULER_TYPE_CHOICES = ("none", "linear", "cosine")
 PCVR_DATA_CACHE_MODE_CHOICES = ("none", "lru", "fifo", "lfu", "rr", "opt")
-PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_range", "user_hash", "sample_hash")
+PCVR_DATA_SPLIT_STRATEGY_CHOICES = ("row_group_tail", "timestamp_auto", "user_hash", "sample_hash")
 PCVR_DATA_SAMPLING_STRATEGY_CHOICES = ("step_random", "row_group_sweep")
 PCVR_VALIDATION_PROBE_MODE_CHOICES = ("none", "drop_nonseq_sparse", "drop_all_sparse")
 PCVR_EARLY_STOPPING_METRIC_CHOICES = ("auc", "logloss", "probe_auc", "probe_logloss", "probe_auc_retention")
@@ -61,10 +61,6 @@ class PCVRDataConfig:
     valid_ratio: float = 0.1
     split_strategy: PCVRDataSplitStrategy = "row_group_tail"
     sampling_strategy: PCVRDataSamplingStrategy = "step_random"
-    train_timestamp_start: int = 0
-    train_timestamp_end: int = 0
-    valid_timestamp_start: int = 0
-    valid_timestamp_end: int = 0
     eval_every_n_steps: int = 5_000
     seq_max_lens: str = "seq_a:256,seq_b:256,seq_c:512,seq_d:512"
 
@@ -77,19 +73,6 @@ class PCVRDataConfig:
             raise ValueError("train_steps_per_sweep must be non-negative")
         if self.eval_every_n_steps < 0:
             raise ValueError("eval_every_n_steps must be non-negative")
-        for field_name in (
-            "train_timestamp_start",
-            "train_timestamp_end",
-            "valid_timestamp_start",
-            "valid_timestamp_end",
-        ):
-            value = int(getattr(self, field_name))
-            if value < 0:
-                raise ValueError(f"{field_name} must be non-negative")
-        if self.train_timestamp_end and self.train_timestamp_start >= self.train_timestamp_end:
-            raise ValueError("train_timestamp_start must be < train_timestamp_end")
-        if self.valid_timestamp_end and self.valid_timestamp_start >= self.valid_timestamp_end:
-            raise ValueError("valid_timestamp_start must be < valid_timestamp_end")
 
 
 @dataclass(frozen=True, slots=True)

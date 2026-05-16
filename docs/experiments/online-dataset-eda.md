@@ -235,7 +235,7 @@ EDA 会输出 `stats.token_overlap_sketch`，每个 sparse/sequence token 列保
 
 这次对比之后，默认建模方向应从“随机 valid 高分”转向“隐藏 infer 泛化”：
 
-1. 验证切分优先使用 `timestamp_range`；没有可靠时间窗口时使用 `user_hash` 或 `sample_hash`，避免纯随机 batch valid 掩盖分布漂移。
+1. 验证切分优先使用 `timestamp_auto`；没有可靠时间列时使用 `user_hash` 或 `sample_hash`，避免纯随机 batch valid 掩盖分布漂移。
 2. sparse 缺失用显式 missing embedding，dense 缺失用 missing indicator，不把缺失和合法 `0` 混在一起。
 3. 序列编码必须长度鲁棒：限制 `seq_top_k`、使用 sequence stats、recent + mean + matching 多路特征。
 4. 降低 item memorization：高基数字段 hash compression，item tower 不单独主导输出，增加 candidate item 与 user sequence 的匹配约束。
