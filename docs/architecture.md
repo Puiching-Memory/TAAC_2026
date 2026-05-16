@@ -340,7 +340,7 @@ global_step*/
 
 ## 本地数据和线上数据
 
-本地 PCVR smoke 不让用户传 `--dataset-path`，样例 parquet 来自 Hugging Face `TAAC2026/data_sample_1000`。仓库不提交 parquet 数据；样例 schema 参考快照归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`，本地命令应显式传 `--schema-path`。这样本地数据来源和线上平台注入路径能保持清晰边界。
+本地 PCVR smoke 默认使用 Hugging Face `TAAC2026/data_sample_1000` 的样例 parquet；调试时可以显式传 `--dataset-path` 指向本地 parquet 文件或目录。仓库不提交 parquet 数据；样例 schema 参考快照归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`，本地命令调试自定义数据时应显式传 `--schema-path` 或让数据目录提供 `schema.json`。这样既保留默认数据来源清晰度，也方便复现本地样本问题。
 
 线上 bundle 相反：真实数据路径来自平台变量，例如 `TRAIN_DATA_PATH`、`EVAL_DATA_PATH` 和 `TAAC_SCHEMA_PATH`。bundle 模式使用平台 Python，不依赖线上 `uv`。
 

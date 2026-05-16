@@ -158,7 +158,10 @@ def test_training_main_allows_missing_dataset_for_pcvr_kind_experiment(
     assert payload["dataset_path"] is None
 
 
-def test_training_main_rejects_explicit_dataset_for_local_pcvr_kind_experiment(tmp_path: Path) -> None:
+def test_training_main_allows_explicit_dataset_for_local_pcvr_kind_experiment(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     experiment_dir = tmp_path / "experiments" / "pcvr" / "pcvr_exp"
     experiment_dir.mkdir(parents=True)
     (experiment_dir / "__init__.py").write_text(
@@ -168,7 +171,7 @@ def test_training_main_rejects_explicit_dataset_for_local_pcvr_kind_experiment(t
         "\n"
         "\n"
         "def _train(request):\n"
-        "    return {}\n"
+        "    return {\"dataset_path\": None if request.dataset_path is None else str(request.dataset_path)}\n"
         "\n"
         "\n"
         "EXPERIMENT = ExperimentSpec(\n"
@@ -180,13 +183,18 @@ def test_training_main_rejects_explicit_dataset_for_local_pcvr_kind_experiment(t
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="local PCVR runs no longer accept --dataset-path"):
-        main([
-            "--experiment",
-            str(experiment_dir),
-            "--dataset-path",
-            "/tmp/custom.parquet",
-        ])
+    exit_code = main([
+        "--experiment",
+        str(experiment_dir),
+        "--dataset-path",
+        "/tmp/custom.parquet",
+        "--json",
+    ])
+
+    captured = capsys.readouterr()
+    payload = loads(captured.out)
+    assert exit_code == 0
+    assert payload["dataset_path"] == "/tmp/custom.parquet"
 
 
 def test_training_main_allows_explicit_dataset_for_bundle_pcvr_kind_experiment(
@@ -487,6 +495,12 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
             "16",
             "--symbiosis-v2-memory-event-tokens",
             "4",
+            "--symbiosis-v3-memory-selection-mode",
+            "stratified",
+            "--symbiosis-v3-recent-event-tokens-by-domain",
+            "seq_a:6,seq_b:8",
+            "--symbiosis-v3-memory-event-tokens-by-domain",
+            "seq_a:3,seq_b:4",
         ],
         package_dir=symbiosis_module.EXPERIMENT.package_dir,
         defaults=symbiosis_module.TRAIN_DEFAULTS,
@@ -501,6 +515,10 @@ def test_symbiosis_package_parser_accepts_symbiosis_ablation_flags() -> None:
     assert args.symbiosis_v2_sparse_seed == 123
     assert args.symbiosis_v2_recent_event_tokens == 16
     assert args.symbiosis_v2_memory_event_tokens == 4
+    assert args.symbiosis_v3_enabled is True
+    assert args.symbiosis_v3_memory_selection_mode == "stratified"
+    assert args.symbiosis_v3_recent_event_tokens_by_domain == "seq_a:6,seq_b:8"
+    assert args.symbiosis_v3_memory_event_tokens_by_domain == "seq_a:3,seq_b:4"
 
 
 @pytest.mark.parametrize("dense_optimizer_type", ["orthogonal_adamw", "fused_adamw", "muon"])

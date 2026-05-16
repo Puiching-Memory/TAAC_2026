@@ -178,6 +178,15 @@ def default_run_prediction_loop(
         runtime_execution_summary(context.runtime_execution, context.runtime_device),
     )
 
+    if context.dataset_role == "inference":
+        return _run_inference_prediction_loop(
+            context,
+            data_bundle,
+            runner,
+            total_rows=total_rows,
+            total_batches=total_batches,
+        )
+
     labels: list[float] = []
     probabilities: list[float] = []
     records: list[dict[str, Any]] = []
@@ -236,6 +245,56 @@ def default_run_prediction_loop(
         "labels": labels,
         "probabilities": probabilities,
         "records": records,
+        "processed_rows": processed_rows,
+        "batch_count": batch_count,
+        "loop_elapsed_sec": time.perf_counter() - started_at,
+    }
+
+
+def _run_inference_prediction_loop(
+    context: PCVRPredictionContext,
+    data_bundle: PCVRPredictionDataBundle,
+    runner: PCVRPredictionRunner,
+    *,
+    total_rows: int,
+    total_batches: int,
+) -> dict[str, Any]:
+    predictions: dict[str, float] = {}
+    processed_rows = 0
+    batch_count = 0
+    progress_log_every_rows = max(_PREDICTION_PROGRESS_LOG_EVERY_ROWS, context.batch_size)
+    next_progress_log_rows = progress_log_every_rows
+    started_at = time.perf_counter()
+    with torch.inference_mode():
+        for batch_count, batch in enumerate(data_bundle.loader, start=1):
+            model_input = batch_to_model_input(batch, context.model_module.ModelInput, context.runtime_device)
+            with runtime_autocast_context(context.runtime_execution, context.runtime_device):
+                logits, _embeddings = runner.predict_fn(model_input)
+            batch_probabilities = sigmoid_probabilities_numpy(logits.squeeze(-1))
+            batch_user_ids = batch.get("user_id", list(range(len(batch_probabilities))))
+            for user_id, probability in zip(batch_user_ids, batch_probabilities.tolist(), strict=False):
+                predictions[str(user_id)] = float(probability)
+            processed_rows += len(batch_probabilities)
+            if total_rows > 0 and processed_rows >= next_progress_log_rows:
+                _log_prediction_progress(
+                    mode=context.mode,
+                    processed_rows=processed_rows,
+                    total_rows=total_rows,
+                    batch_index=batch_count,
+                    total_batches=total_batches,
+                    elapsed_seconds=time.perf_counter() - started_at,
+                )
+                while next_progress_log_rows <= processed_rows:
+                    next_progress_log_rows += progress_log_every_rows
+    logger.info(
+        "PCVR {} loop completed: rows={}, batches={}, elapsed={:.1f}s",
+        context.mode,
+        processed_rows,
+        batch_count,
+        time.perf_counter() - started_at,
+    )
+    return {
+        "predictions": predictions,
         "processed_rows": processed_rows,
         "batch_count": batch_count,
         "loop_elapsed_sec": time.perf_counter() - started_at,

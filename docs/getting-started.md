@@ -42,7 +42,7 @@ uv sync --locked --extra dev --extra cuda126
 
 本地 PCVR smoke 使用 Hugging Face 上的 `TAAC2026/data_sample_1000` demo parquet。仓库不提交 parquet 数据；公开样例数据的唯一来源是 Hugging Face。
 
-普通 PCVR 本地命令不接受显式 `--dataset-path`，运行时会通过 Hugging Face 缓存 `demo_1000.parquet`。如果你想把样例文件留在本地，或要做 bundle 模拟和 benchmark，可以这样下载：
+普通 PCVR 本地命令不传 `--dataset-path` 时，运行时会通过 Hugging Face 缓存 `demo_1000.parquet`。如果你想把样例文件留在本地，或要做调试、bundle 模拟和 benchmark，可以这样下载：
 
 ```bash
 mkdir -p data/sample_1000_raw
@@ -54,7 +54,7 @@ uv run huggingface-cli download TAAC2026/data_sample_1000 \
 
 样例 schema 归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`。这是基于线上格式和线下 parquet 读取反推得到的参考快照；本地 smoke 命令建议显式传 `--schema-path` 使用它。
 
-本地 PCVR 训练、评估和推理不接受显式 `--dataset-path`；真实比赛数据只在 bundle 模式下由平台环境变量注入。维护类实验例外，例如 Online Dataset EDA 本身就需要指定数据路径。
+本地 PCVR 训练、评估和推理可以显式传 `--dataset-path` 读取本地 parquet 文件或目录；调试自定义数据时也建议显式传 `--schema-path`，或把 `schema.json` 放在数据文件同目录。真实线上数据仍由 bundle 模式下的平台环境变量注入。
 
 ## 训练 Baseline
 
@@ -198,7 +198,6 @@ uv run taac-package-infer \
 | 现象 | 处理 |
 | ---- | ---- |
 | `uv is required but not found` | 本地安装 `uv`，或显式设置 `TAAC_RUNNER=python` 并确认依赖已安装 |
-| `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地 smoke 不传数据路径；维护实验例外 |
 | 找不到默认 `schema.json` | 传 `--schema-path docs/archive/files/schema/sample_1000_raw.schema.json` |
 | 找不到 checkpoint | 确认 `--run-dir` 或 `--checkpoint` 指向包含 `global_step*/` 的目录 |
 | 推理缺 `train_config.json` 或 `schema.json` | checkpoint 目录不完整，需要使用训练产物目录而不是只拷贝权重 |

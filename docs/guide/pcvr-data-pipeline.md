@@ -16,7 +16,7 @@ PCVR 数据管道负责把 parquet 数据变成训练 batch，并在需要时叠
 
 ## 本地和线上数据路径
 
-本地 PCVR 训练、评估和推理默认使用仓库管理的 demo 数据，不接受显式 `--dataset-path`。这可以避免本地 smoke 命令被临时数据路径污染。
+本地 PCVR 训练、评估和推理默认使用 Hugging Face demo 数据；调试、benchmark 或复现线上样本时，也可以显式传 `--dataset-path` 指向本地 parquet 文件或目录。显式数据路径不会被写入实验包，提交前仍应避免把临时本地路径固化到默认配置或文档主流程里。
 
 线上 bundle 由平台环境变量注入真实数据：
 

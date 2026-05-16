@@ -1,4 +1,4 @@
-"""Symbiosis V2: unified token-stream PCVR model."""
+"""Symbiosis V2/V3: unified token-stream PCVR model."""
 
 from __future__ import annotations
 
@@ -92,13 +92,21 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
         symbiosis_v2_sparse_seed: int = 20260512,
         symbiosis_v2_recent_event_tokens: int = 16,
         symbiosis_v2_memory_event_tokens: int = 8,
-        symbiosis_v2_user_dense_tokens: int = 2,
+        symbiosis_v2_user_dense_tokens: int = 3,
         symbiosis_v2_item_dense_tokens: int = 1,
         symbiosis_v2_user_missing_tokens: int = 2,
         symbiosis_v2_item_missing_tokens: int = 1,
         symbiosis_v2_high_risk_token_dropout_rate: float = 0.08,
         symbiosis_v2_compress_large_ids: bool = True,
         symbiosis_v2_compile_backbone: bool = True,
+        symbiosis_v3_enabled: bool = False,
+        symbiosis_v3_memory_selection_mode: str = "quality_stratified",
+        symbiosis_v3_recent_event_tokens_by_domain: str = "seq_a:8,seq_b:8,seq_c:20,seq_d:24",
+        symbiosis_v3_memory_event_tokens_by_domain: str = "seq_a:4,seq_b:4,seq_c:10,seq_d:12",
+        symbiosis_v3_memory_density_weight: float = 1.0,
+        symbiosis_v3_memory_time_weight: float = 0.30,
+        symbiosis_v3_memory_recency_weight: float = 0.20,
+        symbiosis_v3_memory_duplicate_penalty: float = 0.50,
     ) -> None:
         super().__init__()
         del num_queries, seq_encoder_type, seq_top_k, seq_causal, rank_mixer_mode, use_rope, rope_base, ns_tokenizer_type, symbiosis_v2_sparse_seed
@@ -134,6 +142,14 @@ class PCVRSymbiosis(EmbeddingParameterMixin, nn.Module):
             use_dense_tokens=symbiosis_v2_use_dense_tokens,
             use_missing_tokens=symbiosis_v2_use_missing_tokens,
             use_sequence_stats_tokens=symbiosis_v2_use_sequence_stats_tokens,
+            v3_enabled=symbiosis_v3_enabled,
+            v3_memory_selection_mode=symbiosis_v3_memory_selection_mode,
+            v3_recent_event_tokens_by_domain=symbiosis_v3_recent_event_tokens_by_domain,
+            v3_memory_event_tokens_by_domain=symbiosis_v3_memory_event_tokens_by_domain,
+            v3_memory_density_weight=symbiosis_v3_memory_density_weight,
+            v3_memory_time_weight=symbiosis_v3_memory_time_weight,
+            v3_memory_recency_weight=symbiosis_v3_memory_recency_weight,
+            v3_memory_duplicate_penalty=symbiosis_v3_memory_duplicate_penalty,
         )
         self.num_ns = self.tokenizer.num_non_sequence_tokens
         self.num_sequence_tokens = self.tokenizer.num_sequence_tokens

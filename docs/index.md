@@ -28,7 +28,7 @@ icon: lucide/house
 - 可复用 PCVR 数据管道、模型组件、optimizer 和 accelerator backend
 - 面向 GitHub Pages 的 Zensical 文档站
 
-本地 PCVR smoke 会使用默认 demo parquet；不要给本地 PCVR 训练显式传 `--dataset-path`。线上 bundle 由平台变量提供真实数据路径。
+本地 PCVR smoke 默认使用 Hugging Face demo parquet；调试时也可以显式传 `--dataset-path` 读取本地 parquet。线上 bundle 由平台变量提供真实数据路径。
 
 ## 文档分工
 

@@ -1,4 +1,4 @@
-"""Symbiosis V2 configuration surface."""
+"""Symbiosis V2/V3 configuration surface."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class SymbiosisModelDefaults:
     v2_sparse_seed: int = 20260512
     v2_recent_event_tokens: int = 16
     v2_memory_event_tokens: int = 8
-    v2_user_dense_tokens: int = 2
+    v2_user_dense_tokens: int = 3
     v2_item_dense_tokens: int = 1
     v2_user_missing_tokens: int = 2
     v2_item_missing_tokens: int = 1
@@ -48,13 +48,26 @@ class SymbiosisModelDefaults:
 
 SYMBIOSIS_MODEL_DEFAULTS = SymbiosisModelDefaults()
 SYMBIOSIS_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
-SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS: dict[str, Any] = {}
+SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS: dict[str, Any] = {
+    "symbiosis_v3_enabled": False,
+    "symbiosis_v3_memory_selection_mode": "quality_stratified",
+    "symbiosis_v3_recent_event_tokens_by_domain": "seq_a:8,seq_b:8,seq_c:20,seq_d:24",
+    "symbiosis_v3_memory_event_tokens_by_domain": "seq_a:4,seq_b:4,seq_c:10,seq_d:12",
+    "symbiosis_v3_memory_density_weight": 1.0,
+    "symbiosis_v3_memory_time_weight": 0.30,
+    "symbiosis_v3_memory_recency_weight": 0.20,
+    "symbiosis_v3_memory_duplicate_penalty": 0.50,
+}
+SYMBIOSIS_OPTIONAL_MODEL_CLI_DEFAULT_OVERRIDES: dict[str, Any] = {
+    "symbiosis_v3_enabled": True,
+}
 SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS = tuple(SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
 
 
 __all__ = [
     "SYMBIOSIS_MODEL_CONFIG_KEYS",
     "SYMBIOSIS_MODEL_DEFAULTS",
+    "SYMBIOSIS_OPTIONAL_MODEL_CLI_DEFAULT_OVERRIDES",
     "SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS",
     "SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS",
     "SymbiosisModelDefaults",

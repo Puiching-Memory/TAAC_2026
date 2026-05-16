@@ -174,6 +174,43 @@ def test_infer_uses_train_config_runtime_settings(tmp_path: Path, monkeypatch: p
     }
 
 
+def test_infer_consumes_lightweight_prediction_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    experiment = _make_experiment(tmp_path)
+    checkpoint_dir = tmp_path / "checkpoint"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "model.safetensors").write_bytes(b"checkpoint")
+    schema_payload = {"features": [{"name": "user_id"}]}
+    (checkpoint_dir / "schema.json").write_text(dumps(schema_payload), encoding="utf-8")
+    _write_train_config(checkpoint_dir, {"batch_size": 2, "num_workers": 0})
+
+    def fake_bound_run_prediction_loop(self, **kwargs):
+        del self, kwargs
+        return {
+            "predictions": {"u1": 0.25, "u2": 0.75},
+            "processed_rows": 2,
+            "batch_count": 1,
+        }
+
+    monkeypatch.setenv("MODEL_OUTPUT_PATH", str(checkpoint_dir))
+    monkeypatch.setattr(PCVRExperiment, "_run_prediction_loop", fake_bound_run_prediction_loop)
+
+    payload = experiment.infer(
+        InferRequest(
+            experiment="experiments/symbiosis",
+            dataset_path=tmp_path / "eval.parquet",
+            schema_path=None,
+            checkpoint_path=None,
+            result_dir=tmp_path / "results",
+        )
+    )
+
+    assert payload["prediction_count"] == 2
+    assert payload["telemetry"]["rows"] == 2
+    assert loads((tmp_path / "results" / "predictions.json").read_bytes()) == {
+        "predictions": {"u1": 0.25, "u2": 0.75},
+    }
+
+
 def test_train_writes_split_observed_schema_reports(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

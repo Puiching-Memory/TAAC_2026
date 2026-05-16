@@ -299,10 +299,17 @@ class PCVRExperiment(PCVRExperimentRuntimeMixin):
                 runtime_execution=runtime_execution,
             )
 
-        prediction_map = {
-            str(record["user_id"]): float(record["score"])
-            for record in evaluation["records"]
-        }
+        raw_predictions = evaluation.get("predictions")
+        if raw_predictions is None:
+            prediction_map = {
+                str(record["user_id"]): float(record["score"])
+                for record in evaluation["records"]
+            }
+        else:
+            prediction_map = {
+                str(user_id): float(score)
+                for user_id, score in raw_predictions.items()
+            }
         request.result_dir.mkdir(parents=True, exist_ok=True)
         output_path = request.result_dir / "predictions.json"
         write_json(output_path, {"predictions": prediction_map})

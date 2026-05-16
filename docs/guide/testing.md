@@ -147,7 +147,7 @@ bash run.sh train \
 | 现象                                              | 优先检查                                              |
 | ------------------------------------------------- | ----------------------------------------------------- |
 | `unrecognized arguments`                          | 训练参数多为下划线，评估 / 推理参数多为连字符         |
-| `local PCVR runs no longer accept --dataset-path` | 普通 PCVR 本地测试不要传数据路径                      |
+| 找不到本地 parquet 或 `schema.json`               | 检查 `--dataset-path` / `--schema-path`，或使用默认 demo smoke |
 | accelerator 测试 skip                             | 当前机器没有 CUDA 或缺 TileLang / Triton runtime      |
 | bundle 测试失败但本地 import 正常                 | 检查 zip 内容和 manifest，而不是只看仓库根目录 import |
 | 文档构建失败                                      | 先看相对链接、`zensical.toml` nav 和图片路径          |

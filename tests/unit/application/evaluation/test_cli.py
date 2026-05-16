@@ -101,28 +101,40 @@ def test_evaluation_main_allows_missing_dataset_for_pcvr_kind_experiment(monkeyp
     assert loads(captured.out) == payload
 
 
-def test_evaluation_main_rejects_explicit_dataset_for_local_pcvr_kind_experiment(monkeypatch) -> None:
+def test_evaluation_main_allows_explicit_dataset_for_local_pcvr_kind_experiment(monkeypatch, capsys) -> None:
+    payload = {
+        "checkpoint_path": "/tmp/model.safetensors",
+        "schema_path": "/tmp/schema.json",
+        "schema": {},
+    }
+    captured_request = {}
+
     class FakeExperiment:
         metadata: ClassVar[dict[str, object]] = {"requires_dataset": True, "kind": "pcvr"}
 
         def infer(self, request):
-            del request
-            return {}
+            captured_request["dataset_path"] = request.dataset_path
+            return payload
 
     monkeypatch.setattr(evaluation_cli, "load_experiment_package", lambda _experiment: FakeExperiment())
 
-    with pytest.raises(ValueError, match="local PCVR runs no longer accept --dataset-path"):
-        evaluation_cli.main(
-            [
-                "infer",
-                "--experiment",
-                "experiments/baseline",
-                "--dataset-path",
-                "/tmp/custom.parquet",
-                "--result-dir",
-                "/tmp/results",
-            ]
-        )
+    exit_code = evaluation_cli.main(
+        [
+            "infer",
+            "--experiment",
+            "experiments/baseline",
+            "--dataset-path",
+            "/tmp/custom.parquet",
+            "--result-dir",
+            "/tmp/results",
+            "--json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert str(captured_request["dataset_path"]) == "/tmp/custom.parquet"
+    assert loads(captured.out) == payload
 
 
 def test_evaluation_main_allows_explicit_dataset_for_bundle_pcvr_kind_experiment(monkeypatch, capsys) -> None:

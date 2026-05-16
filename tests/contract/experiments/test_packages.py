@@ -198,14 +198,19 @@ def test_symbiosis_parser_adds_package_specific_config_to_args() -> None:
         defaults=symbiosis_module.TRAIN_DEFAULTS,
     )
     base_train_defaults = symbiosis_module.TRAIN_DEFAULTS.to_flat_dict()
-    extra_config_keys = tuple(symbiosis_module.SYMBIOSIS_MODEL_CONFIG_KEYS)
+    extra_config_keys = (
+        tuple(symbiosis_module.SYMBIOSIS_MODEL_CONFIG_KEYS)
+        + tuple(symbiosis_module.SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS)
+    )
 
     assert extra_config_keys
     assert not set(extra_config_keys).intersection(base_train_defaults)
     assert all(hasattr(symbiosis_args, key) for key in extra_config_keys)
     resolved = symbiosis_module._resolve_symbiosis_model_kwargs(vars(symbiosis_args))
     assert set(resolved) == set(extra_config_keys)
-    for key, default in symbiosis_module.SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict().items():
+    expected_defaults = symbiosis_module.SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict()
+    expected_defaults.update(symbiosis_module.SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
+    for key, default in expected_defaults.items():
         assert isinstance(resolved[key], type(default))
 
 
@@ -344,6 +349,52 @@ def test_symbiosis_v2_tokenizer_uses_fixed_event_budget(
     model.tokenizer(model_input)
 
     assert observed_lengths == [6, 6]
+
+
+def test_symbiosis_v3_tokenizer_uses_source_aware_event_budgets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment_case = get_experiment_case("experiments/symbiosis")
+    model_module = load_model_module(experiment_case)
+    model = _make_model(
+        experiment_case,
+        model_module,
+        overrides={
+            "symbiosis_v3_enabled": True,
+            "symbiosis_v3_recent_event_tokens_by_domain": "seq_a:3,seq_b:5",
+            "symbiosis_v3_memory_event_tokens_by_domain": "seq_a:2,seq_b:4",
+        },
+    )
+    model_input = _sample_model_input(model_module)._replace(
+        seq_data={
+            "seq_a": torch.ones(2, 2, 64, dtype=torch.long),
+            "seq_b": torch.ones(2, 1, 48, dtype=torch.long),
+        },
+        seq_lens={
+            "seq_a": torch.tensor([64, 32], dtype=torch.long),
+            "seq_b": torch.tensor([48, 24], dtype=torch.long),
+        },
+        seq_time_buckets={
+            "seq_a": torch.ones(2, 64, dtype=torch.long),
+            "seq_b": torch.ones(2, 48, dtype=torch.long),
+        },
+    )
+    observed_lengths: list[int] = []
+
+    for tokenizer in model.tokenizer.sequence_tokenizers.values():
+        original_forward = tokenizer.forward
+
+        def recording_forward(sequence, time_buckets=None, *, _original_forward=original_forward):
+            observed_lengths.append(int(sequence.shape[2]))
+            return _original_forward(sequence, time_buckets)
+
+        monkeypatch.setattr(tokenizer, "forward", recording_forward)
+
+    batch = model.tokenizer(model_input)
+
+    assert observed_lengths == [5, 9]
+    assert model.num_sequence_tokens == 5 + 9 + model.tokenizer.sequence_stats.num_tokens
+    assert batch.tokens.shape[1] == model.num_ns + model.num_sequence_tokens
 
 
 def test_symbiosis_v2_attention_bias_uses_metadata() -> None:

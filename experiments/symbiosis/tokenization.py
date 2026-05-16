@@ -1,4 +1,4 @@
-"""Unified tokenization for Symbiosis V2."""
+"""Unified tokenization for Symbiosis V2/V3."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ ROLE_MISSING = 5
 ROLE_SEQUENCE = 6
 ROLE_STATS = 7
 ROLE_COUNT = 8
+V3_MEMORY_SELECTION_MODES = {"uniform", "stratified", "quality_stratified"}
 
 
 class UnifiedTokenBatch(NamedTuple):
@@ -35,6 +36,23 @@ class UnifiedTokenBatch(NamedTuple):
 
 def _feature_width(feature_specs: list[tuple[int, int, int]]) -> int:
     return max((offset + length for _vocab_size, offset, length in feature_specs), default=0)
+
+
+def _parse_domain_budget(value: str, *, default: int) -> dict[str, int]:
+    budgets: dict[str, int] = {}
+    for chunk in str(value or "").split(","):
+        token = chunk.strip()
+        if not token:
+            continue
+        if ":" not in token:
+            raise ValueError(f"invalid domain token budget entry: {token!r}")
+        domain, raw_count = token.split(":", 1)
+        clean_domain = domain.strip()
+        if not clean_domain:
+            raise ValueError(f"invalid empty domain in token budget entry: {token!r}")
+        budgets[clean_domain] = max(0, int(raw_count.strip()))
+    budgets.setdefault("*", max(0, int(default)))
+    return budgets
 
 
 class V2GroupedSparseTokenizer(nn.Module):
@@ -221,12 +239,40 @@ class UnifiedSymbiosisTokenizer(nn.Module):
         use_dense_tokens: bool,
         use_missing_tokens: bool,
         use_sequence_stats_tokens: bool,
+        v3_enabled: bool,
+        v3_memory_selection_mode: str,
+        v3_recent_event_tokens_by_domain: str,
+        v3_memory_event_tokens_by_domain: str,
+        v3_memory_density_weight: float,
+        v3_memory_time_weight: float,
+        v3_memory_recency_weight: float,
+        v3_memory_duplicate_penalty: float,
     ) -> None:
         super().__init__()
         self.d_model = int(d_model)
         self.seq_domains = sorted(seq_vocab_sizes)
         self.recent_event_tokens = max(0, int(recent_event_tokens))
         self.memory_event_tokens = max(0, int(memory_event_tokens))
+        self.v3_enabled = bool(v3_enabled)
+        self.v3_memory_selection_mode = str(v3_memory_selection_mode).strip().lower() or "quality_stratified"
+        if self.v3_memory_selection_mode not in V3_MEMORY_SELECTION_MODES:
+            raise ValueError(f"unknown symbiosis_v3_memory_selection_mode: {v3_memory_selection_mode}")
+        self.v3_recent_event_tokens_by_domain = _parse_domain_budget(
+            v3_recent_event_tokens_by_domain,
+            default=self.recent_event_tokens,
+        )
+        self.v3_memory_event_tokens_by_domain = _parse_domain_budget(
+            v3_memory_event_tokens_by_domain,
+            default=self.memory_event_tokens,
+        )
+        self.v3_memory_density_weight = float(v3_memory_density_weight)
+        self.v3_memory_time_weight = float(v3_memory_time_weight)
+        self.v3_memory_recency_weight = float(v3_memory_recency_weight)
+        self.v3_memory_duplicate_penalty = float(v3_memory_duplicate_penalty)
+        self.event_tokens_by_domain = {
+            domain: self._domain_recent_budget(domain) + self._domain_memory_budget(domain)
+            for domain in self.seq_domains
+        }
         self.event_tokens_per_domain = self.recent_event_tokens + self.memory_event_tokens
         self.use_dense_tokens = bool(use_dense_tokens)
         self.use_missing_tokens = bool(use_missing_tokens)
@@ -299,7 +345,7 @@ class UnifiedSymbiosisTokenizer(nn.Module):
         self.domain_embedding = nn.Embedding(max(1, len(self.seq_domains) + 1), d_model)
         self.risk_embedding = nn.Embedding(2, d_model)
 
-        self.num_sequence_tokens = self.event_tokens_per_domain * len(self.seq_domains)
+        self.num_sequence_tokens = sum(self.event_tokens_by_domain.values())
         if self.sequence_stats is not None:
             self.num_sequence_tokens += self.sequence_stats.num_tokens
         self.num_non_sequence_tokens = 2 + self.user_sparse.num_tokens + self.item_sparse.num_tokens
@@ -307,6 +353,16 @@ class UnifiedSymbiosisTokenizer(nn.Module):
             self.num_non_sequence_tokens += self.user_dense.num_tokens + self.item_dense.num_tokens
         if self.user_missing is not None:
             self.num_non_sequence_tokens += self.user_missing.num_tokens + self.item_missing.num_tokens
+
+    def _domain_recent_budget(self, domain: str) -> int:
+        if not self.v3_enabled:
+            return self.recent_event_tokens
+        return int(self.v3_recent_event_tokens_by_domain.get(domain, self.v3_recent_event_tokens_by_domain["*"]))
+
+    def _domain_memory_budget(self, domain: str) -> int:
+        if not self.v3_enabled:
+            return self.memory_event_tokens
+        return int(self.v3_memory_event_tokens_by_domain.get(domain, self.v3_memory_event_tokens_by_domain["*"]))
 
     def forward(self, inputs: ModelInput) -> UnifiedTokenBatch:
         batch_size = inputs.user_int_feats.shape[0]
@@ -413,7 +469,7 @@ class UnifiedSymbiosisTokenizer(nn.Module):
         sequence = inputs.seq_data[domain]
         time_buckets = inputs.seq_time_buckets.get(domain)
         lengths = inputs.seq_lens[domain].to(sequence.device)
-        compact_sequence, compact_time_buckets, compact_mask = self._compact_sequence(sequence, time_buckets, lengths)
+        compact_sequence, compact_time_buckets, compact_mask = self._compact_sequence(domain, sequence, time_buckets, lengths)
         if compact_sequence.shape[2] <= 0:
             tokens = sequence.new_zeros(sequence.shape[0], 0, self.d_model, dtype=torch.float32)
             return tokens, compact_mask
@@ -427,12 +483,15 @@ class UnifiedSymbiosisTokenizer(nn.Module):
 
     def _compact_sequence(
         self,
+        domain: str,
         sequence: torch.Tensor,
         time_buckets: torch.Tensor | None,
         lengths: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor]:
         batch_size, feature_count, max_len = sequence.shape
-        token_budget = self.event_tokens_per_domain
+        recent_count = self._domain_recent_budget(domain)
+        memory_count = self._domain_memory_budget(domain)
+        token_budget = recent_count + memory_count
         if token_budget <= 0:
             empty = sequence.new_zeros(batch_size, feature_count, 0)
             empty_mask = torch.ones(batch_size, 0, dtype=torch.bool, device=sequence.device)
@@ -444,18 +503,22 @@ class UnifiedSymbiosisTokenizer(nn.Module):
         clamped_lengths = lengths.clamp(min=0, max=max_len).to(torch.long)
         positions: list[torch.Tensor] = []
         masks: list[torch.Tensor] = []
-        if self.memory_event_tokens > 0:
-            offsets = torch.arange(self.memory_event_tokens, device=sequence.device)
-            prefix_lengths = (clamped_lengths - self.recent_event_tokens).clamp_min(0)
-            memory_positions = (prefix_lengths.unsqueeze(1) * (offsets + 1) // (self.memory_event_tokens + 1)).clamp_max(max_len - 1)
+        if memory_count > 0:
+            prefix_lengths = (clamped_lengths - recent_count).clamp_min(0)
+            memory_positions, memory_mask = self._memory_positions(
+                sequence,
+                time_buckets,
+                prefix_lengths,
+                memory_count,
+            )
             positions.append(memory_positions)
-            masks.append(offsets.unsqueeze(0) >= prefix_lengths.clamp_max(self.memory_event_tokens).unsqueeze(1))
-        if self.recent_event_tokens > 0:
-            offsets = torch.arange(self.recent_event_tokens, device=sequence.device)
-            start = (clamped_lengths - self.recent_event_tokens).clamp_min(0)
+            masks.append(memory_mask)
+        if recent_count > 0:
+            offsets = torch.arange(recent_count, device=sequence.device)
+            start = (clamped_lengths - recent_count).clamp_min(0)
             recent_positions = (start.unsqueeze(1) + offsets).clamp_max(max_len - 1)
             positions.append(recent_positions)
-            masks.append(offsets.unsqueeze(0) >= clamped_lengths.clamp_max(self.recent_event_tokens).unsqueeze(1))
+            masks.append(offsets.unsqueeze(0) >= clamped_lengths.clamp_max(recent_count).unsqueeze(1))
         gather_positions = torch.cat(positions, dim=1)
         padding_mask = torch.cat(masks, dim=1)
         gather_index = gather_positions.unsqueeze(1).expand(-1, feature_count, -1)
@@ -467,6 +530,100 @@ class UnifiedSymbiosisTokenizer(nn.Module):
             else:
                 compact_time_buckets = time_buckets.gather(1, gather_positions.clamp_max(time_buckets.shape[1] - 1))
         return compact_sequence, compact_time_buckets, padding_mask
+
+    def _memory_positions(
+        self,
+        sequence: torch.Tensor,
+        time_buckets: torch.Tensor | None,
+        prefix_lengths: torch.Tensor,
+        memory_count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.v3_enabled or self.v3_memory_selection_mode == "uniform":
+            return self._uniform_memory_positions(prefix_lengths, memory_count, sequence.shape[2])
+        if self.v3_memory_selection_mode == "stratified":
+            return self._stratified_memory_positions(prefix_lengths, memory_count, sequence.shape[2])
+        return self._quality_stratified_memory_positions(sequence, time_buckets, prefix_lengths, memory_count)
+
+    def _uniform_memory_positions(
+        self,
+        prefix_lengths: torch.Tensor,
+        memory_count: int,
+        max_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        offsets = torch.arange(memory_count, device=prefix_lengths.device)
+        positions = (prefix_lengths.unsqueeze(1) * (offsets + 1) // (memory_count + 1)).clamp_max(max_len - 1)
+        mask = offsets.unsqueeze(0) >= prefix_lengths.clamp_max(memory_count).unsqueeze(1)
+        return positions, mask
+
+    def _stratified_memory_positions(
+        self,
+        prefix_lengths: torch.Tensor,
+        memory_count: int,
+        max_len: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        offsets = torch.arange(memory_count, device=prefix_lengths.device)
+        starts = prefix_lengths.unsqueeze(1) * offsets // memory_count
+        ends = prefix_lengths.unsqueeze(1) * (offsets + 1) // memory_count
+        positions = (ends - 1).clamp_min(0).clamp_max(max_len - 1)
+        mask = (ends <= starts) | (starts >= prefix_lengths.unsqueeze(1))
+        return positions, mask
+
+    def _quality_stratified_memory_positions(
+        self,
+        sequence: torch.Tensor,
+        time_buckets: torch.Tensor | None,
+        prefix_lengths: torch.Tensor,
+        memory_count: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        max_len = int(sequence.shape[2])
+        scores = self._memory_event_scores(sequence, time_buckets, prefix_lengths)
+        positions = torch.arange(max_len, device=sequence.device).unsqueeze(0)
+        selected_positions: list[torch.Tensor] = []
+        selected_masks: list[torch.Tensor] = []
+        for bucket_index in range(memory_count):
+            starts = prefix_lengths * bucket_index // memory_count
+            ends = prefix_lengths * (bucket_index + 1) // memory_count
+            bucket_mask = (positions >= starts.unsqueeze(1)) & (positions < ends.unsqueeze(1))
+            bucket_scores = scores.masked_fill(~bucket_mask, torch.finfo(scores.dtype).min)
+            best_scores, best_positions = bucket_scores.max(dim=1)
+            valid = torch.isfinite(best_scores) & (best_scores > torch.finfo(scores.dtype).min / 2)
+            selected_positions.append(torch.where(valid, best_positions, torch.zeros_like(best_positions)))
+            selected_masks.append(~valid)
+        return torch.stack(selected_positions, dim=1), torch.stack(selected_masks, dim=1)
+
+    def _memory_event_scores(
+        self,
+        sequence: torch.Tensor,
+        time_buckets: torch.Tensor | None,
+        prefix_lengths: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_size, _feature_count, max_len = sequence.shape
+        active_features = sequence > 0
+        active_density = active_features.float().mean(dim=1)
+        active_events = active_features.any(dim=1)
+
+        positions = torch.arange(max_len, device=sequence.device)
+        prefix_mask = positions.unsqueeze(0) < prefix_lengths.unsqueeze(1)
+        recency = positions.float().unsqueeze(0) / prefix_lengths.clamp_min(1).float().unsqueeze(1)
+
+        time_valid = sequence.new_zeros((batch_size, max_len), dtype=torch.float32)
+        if time_buckets is not None and time_buckets.shape[1] > 0:
+            used_width = min(max_len, int(time_buckets.shape[1]))
+            time_valid[:, :used_width] = time_buckets[:, :used_width].to(sequence.device).gt(0).float()
+
+        duplicate = sequence.new_zeros((batch_size, max_len), dtype=torch.float32)
+        if max_len > 1:
+            previous_equal = (sequence[:, :, 1:] == sequence[:, :, :-1]).all(dim=1)
+            duplicate[:, 1:] = (previous_equal & active_events[:, 1:]).float()
+
+        scores = (
+            self.v3_memory_density_weight * active_density
+            + self.v3_memory_time_weight * time_valid
+            + self.v3_memory_recency_weight * recency
+            - self.v3_memory_duplicate_penalty * duplicate
+        )
+        valid = prefix_mask & active_events
+        return scores.masked_fill(~valid, torch.finfo(scores.dtype).min)
 
 
 __all__ = [

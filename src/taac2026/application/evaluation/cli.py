@@ -110,8 +110,6 @@ def _format_eval_summary(payload: dict[str, Any], *, title: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_eval_args(argv)
     experiment = load_experiment_package(args.experiment)
-    if experiment_kind(experiment) == "pcvr" and not is_bundle_mode() and args.dataset_path is not None:
-        raise ValueError("local PCVR runs no longer accept --dataset-path; demo data is managed automatically")
     if args.dataset_path is None and experiment_requires_dataset(experiment) and (experiment_kind(experiment) != "pcvr" or is_bundle_mode()):
         raise ValueError(f"experiment {args.experiment!r} requires --dataset-path")
     if args.command == "single":

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from taac2026.application.evaluation.workflow import (
@@ -15,7 +16,7 @@ from taac2026.domain.runtime_config import RuntimeExecutionConfig
 from taac2026.infrastructure.modeling.model_contract import ModelInput
 
 
-def test_default_prediction_loop_runs_under_inference_mode(tmp_path: Path) -> None:
+def test_default_prediction_loop_uses_lightweight_inference_payload(tmp_path: Path) -> None:
     observed_inference_mode: list[bool] = []
     batch = {
         "label": torch.tensor([0.0, 1.0]),
@@ -56,4 +57,52 @@ def test_default_prediction_loop_runs_under_inference_mode(tmp_path: Path) -> No
     assert observed_inference_mode == [True]
     assert payload["processed_rows"] == 2
     assert payload["batch_count"] == 1
+    assert payload["predictions"] == {
+        "u0": pytest.approx(0.11920292),
+        "u1": pytest.approx(0.88079708),
+    }
+    assert "records" not in payload
+    assert "labels" not in payload
+    assert "probabilities" not in payload
+
+
+def test_default_prediction_loop_keeps_evaluation_records(tmp_path: Path) -> None:
+    batch = {
+        "label": torch.tensor([0.0, 1.0]),
+        "user_id": ["u0", "u1"],
+        "timestamp": torch.tensor([100, 200]),
+        "user_int_feats": torch.ones(2, 1, dtype=torch.long),
+        "item_int_feats": torch.ones(2, 1, dtype=torch.long),
+        "user_dense_feats": torch.zeros(2, 1),
+        "item_dense_feats": torch.zeros(2, 1),
+        "_seq_domains": [],
+    }
+
+    def predict_fn(model_input: ModelInput) -> tuple[torch.Tensor, torch.Tensor]:
+        assert isinstance(model_input, ModelInput)
+        return torch.tensor([[-2.0], [2.0]]), torch.empty(2, 0)
+
+    context = PCVRPredictionContext(
+        model_module=SimpleNamespace(ModelInput=ModelInput),
+        model_class_name="DummyModel",
+        package_dir=tmp_path,
+        dataset_path=tmp_path / "eval.parquet",
+        schema_path=tmp_path / "schema.json",
+        checkpoint_path=tmp_path / "checkpoint" / "model.safetensors",
+        batch_size=2,
+        num_workers=0,
+        device="cpu",
+        is_training_data=True,
+        dataset_role="evaluation",
+        config={},
+        runtime_execution=RuntimeExecutionConfig(compile=False),
+    )
+    data_bundle = PCVRPredictionDataBundle(dataset=SimpleNamespace(num_rows=2), loader=[batch])
+    runner = PCVRPredictionRunner(model=object(), predict_fn=predict_fn)
+
+    payload = default_run_prediction_loop(context, data_bundle, runner)
+
     assert [record["user_id"] for record in payload["records"]] == ["u0", "u1"]
+    assert payload["labels"] == [0.0, 1.0]
+    assert payload["probabilities"] == pytest.approx([0.11920292, 0.88079708])
+    assert "predictions" not in payload

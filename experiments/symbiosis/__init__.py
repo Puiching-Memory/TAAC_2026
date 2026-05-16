@@ -49,6 +49,7 @@ from taac2026.api import RuntimeExecutionConfig
 from .config import (
     SYMBIOSIS_MODEL_CONFIG_KEYS,
     SYMBIOSIS_MODEL_DEFAULTS,
+    SYMBIOSIS_OPTIONAL_MODEL_CLI_DEFAULT_OVERRIDES,
     SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS,
     SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS,
     SymbiosisModelDefaults,
@@ -58,6 +59,7 @@ __all__ = [
     "EXPERIMENT",
     "SYMBIOSIS_MODEL_CONFIG_KEYS",
     "SYMBIOSIS_MODEL_DEFAULTS",
+    "SYMBIOSIS_OPTIONAL_MODEL_CLI_DEFAULT_OVERRIDES",
     "SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS",
     "SYMBIOSIS_OPTIONAL_MODEL_CONFIG_KEYS",
     "SymbiosisModelDefaults",
@@ -65,7 +67,10 @@ __all__ = [
 
 
 def _add_symbiosis_train_args(parser: Any) -> None:
-    add_flat_config_arguments(parser, SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict())
+    defaults = SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict()
+    defaults.update(SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
+    defaults.update(SYMBIOSIS_OPTIONAL_MODEL_CLI_DEFAULT_OVERRIDES)
+    add_flat_config_arguments(parser, defaults)
 
 
 def parse_symbiosis_train_args(
@@ -82,6 +87,7 @@ def parse_symbiosis_train_args(
 
 def _resolve_symbiosis_model_kwargs(config: Mapping[str, Any]) -> dict[str, Any]:
     defaults = SYMBIOSIS_MODEL_DEFAULTS.to_flat_dict()
+    defaults.update(SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS)
     resolved_config = dict(config)
     for key, default_value in SYMBIOSIS_OPTIONAL_MODEL_CONFIG_DEFAULTS.items():
         resolved_config.setdefault(key, default_value)
@@ -299,6 +305,7 @@ __all__ = [
     "PREDICTION_HOOKS",
     "RUNTIME_HOOKS",
     "SYMBIOSIS_MODEL_DEFAULTS",
+    "SYMBIOSIS_OPTIONAL_MODEL_CLI_DEFAULT_OVERRIDES",
     "TRAIN_DEFAULTS",
     "TRAIN_HOOKS",
     "build_symbiosis_prediction_model",
