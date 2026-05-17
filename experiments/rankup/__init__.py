@@ -1,4 +1,4 @@
-"""UniTok PCVR experiment package."""
+"""RankUp PCVR experiment package."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         reinit_cardinality_threshold=0,
     ),
     model=PCVRModelConfig(
-        d_model=64,
+        d_model=128,
         emb_dim=64,
         num_queries=1,
         num_blocks=2,
@@ -81,7 +81,7 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
         seq_encoder_type="transformer",
         hidden_mult=4,
         dropout_rate=0.02,
-        seq_top_k=64,
+        seq_top_k=96,
         seq_causal=False,
         action_num=1,
         use_time_buckets=True,
@@ -113,15 +113,15 @@ TRAIN_DEFAULTS = PCVRTrainConfig(
             "I4": [9, 10],
         },
         tokenizer_type="rankmixer",
-        user_tokens=5,
-        item_tokens=2,
+        user_tokens=8,
+        item_tokens=4,
     ),
 )
 
 EXPERIMENT = create_pcvr_experiment(
-    name="pcvr_unitok",
+    name="pcvr_rankup",
     package_dir=Path(__file__).resolve().parent,
-    model_class_name="PCVRUniTok",
+    model_class_name="PCVRRankUp",
     train_defaults=TRAIN_DEFAULTS,
 )
 TRAIN_HOOKS = EXPERIMENT.train_hooks

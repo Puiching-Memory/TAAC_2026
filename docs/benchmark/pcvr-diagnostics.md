@@ -30,7 +30,7 @@ PY
 export CUDA_VISIBLE_DEVICES=0
 SCHEMA="outputs/perf/pcvr_synthetic_300x/schema.json"
 
-for exp in baseline baseline_plus interformer onetrans symbiosis unitok; do
+for exp in baseline baseline_plus interformer onetrans tokenformer unirec symbiosis rankup; do
   run_dir="outputs/smoke/${exp}_seed42"
   bash run.sh train \
     --experiment "experiments/${exp}" \
@@ -69,8 +69,10 @@ uv run taac-plot-pcvr-diagnostics \
   --run baseline_plus=outputs/smoke/baseline_plus_seed42 \
   --run interformer=outputs/smoke/interformer_seed42 \
   --run onetrans=outputs/smoke/onetrans_seed42 \
+  --run tokenformer=outputs/smoke/tokenformer_seed42 \
+  --run unirec=outputs/smoke/unirec_seed42 \
   --run symbiosis=outputs/smoke/symbiosis_seed42 \
-  --run unitok=outputs/smoke/unitok_seed42 \
+  --run rankup=outputs/smoke/rankup_seed42 \
   --output-dir figures/pcvr_diagnostics
 ```
 
@@ -78,14 +80,14 @@ uv run taac-plot-pcvr-diagnostics \
 
 输出目录会包含：
 
-| 文件 | 含义 |
-| ---- | ---- |
-| `pcvr_runtime_resources.svg` | 训练耗时、评估/推理吞吐、CPU / CUDA 峰值资源占用 |
-| `pcvr_prediction_distribution.svg` | 每个模型的预测概率分布，带正负样本对比 |
-| `pcvr_prediction_correlation.svg` | 模型间逐样本预测相关性热力图 |
-| `pcvr_sample_disagreement.svg` | 样本级模型预测分歧和 top disagreement 样本 |
-| `pcvr_stability.svg` | 按实验或标签分组的 AUC、LogLoss、预测 std、评估耗时稳定性 |
-| `pcvr_diagnostics_summary.json` | 绘图所用 run、metrics、telemetry 和图路径摘要 |
+| 文件                               | 含义                                                      |
+| ---------------------------------- | --------------------------------------------------------- |
+| `pcvr_runtime_resources.svg`       | 训练耗时、评估/推理吞吐、CPU / CUDA 峰值资源占用          |
+| `pcvr_prediction_distribution.svg` | 每个模型的预测概率分布，带正负样本对比                    |
+| `pcvr_prediction_correlation.svg`  | 模型间逐样本预测相关性热力图                              |
+| `pcvr_sample_disagreement.svg`     | 样本级模型预测分歧和 top disagreement 样本                |
+| `pcvr_stability.svg`               | 按实验或标签分组的 AUC、LogLoss、预测 std、评估耗时稳定性 |
+| `pcvr_diagnostics_summary.json`    | 绘图所用 run、metrics、telemetry 和图路径摘要             |
 
 ## 输入约定
 
@@ -117,8 +119,8 @@ uv run taac-plot-pcvr-diagnostics \
 uv run taac-plot-pcvr-diagnostics \
   --run baseline_seed1=outputs/smoke/baseline_seed1 \
   --run baseline_seed2=outputs/smoke/baseline_seed2 \
-  --run unitok_seed1=outputs/smoke/unitok_seed1 \
-  --run unitok_seed2=outputs/smoke/unitok_seed2 \
+  --run tokenformer_seed1=outputs/smoke/tokenformer_seed1 \
+  --run tokenformer_seed2=outputs/smoke/tokenformer_seed2 \
   --group-by label-prefix \
   --output-dir figures/pcvr_diagnostics
 ```

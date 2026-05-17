@@ -63,9 +63,9 @@ def _write_run(run_dir: Path, *, experiment: str, scores: list[float], seed: int
 
 def test_run_diagnostics_generates_all_svg_figures(tmp_path: Path) -> None:
     run_a = tmp_path / "baseline_seed1"
-    run_b = tmp_path / "unitok_seed1"
+    run_b = tmp_path / "tokenformer_seed1"
     _write_run(run_a, experiment="pcvr_baseline", scores=[0.1, 0.8, 0.2, 0.7], seed=1)
-    _write_run(run_b, experiment="pcvr_unitok", scores=[0.2, 0.7, 0.35, 0.9], seed=2)
+    _write_run(run_b, experiment="pcvr_tokenformer", scores=[0.2, 0.7, 0.35, 0.9], seed=2)
     output_dir = tmp_path / "figures"
 
     summary = run_diagnostics(
@@ -74,7 +74,7 @@ def test_run_diagnostics_generates_all_svg_figures(tmp_path: Path) -> None:
                 "--run",
                 f"baseline={run_a}",
                 "--run",
-                f"unitok={run_b}",
+                f"tokenformer={run_b}",
                 "--output-dir",
                 str(output_dir),
                 "--top-disagreement",

@@ -16,7 +16,7 @@ icon: lucide/settings-2
 | Muon                  | `muon`             | 使用仓库内 `Muon` 实现；矩阵参数走 Muon 更新，非矩阵参数回退到 AdamW 风格更新     |
 | Sparse embedding 优化 | 不由此字段控制     | `get_sparse_params()` 返回的 embedding 参数走 `torch.optim.Adagrad`               |
 
-目前各实验包默认值如下：`baseline_plus` 默认使用 `muon`；`baseline`、`interformer`、`onetrans`、`unitok` 默认使用 `adamw`；`symbiosis` 默认使用 `orthogonal_adamw`。
+目前各实验包默认值如下：`baseline_plus`、`unirec`、`symbiosis` 默认使用 `muon`；`baseline`、`interformer`、`onetrans`、`tokenformer`、`rankup` 默认使用 `adamw`。
 
 ## 快速启用 Muon
 

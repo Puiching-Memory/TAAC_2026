@@ -57,7 +57,7 @@
 **实验与模型**
 
 - **两文件接入新模型** — `__init__.py` + `model.py` 即可挂载实验，钩子覆写只替换差异部分
-- **6 个实验包一行切换** — Baseline、InterFormer、OneTrans、UniTok、UniRec、Symbiosis 共享数据管线与评估流程
+- **8 个模型实验包一行切换** — Baseline、Baseline+、InterFormer、OneTrans、TokenFormer、UniRec、Symbiosis、RankUp 共享数据管线与评估流程
 - **一键打包上线** — `taac-package-train` 产出 `code_package.zip`，平台契约校验确保线上线下一致
 
 </td>
@@ -178,14 +178,16 @@ uv run zensical serve
 
 ## 当前支持实验包
 
-| 实验包      | 目录                                               | 公开来源                                                                                                      |
-| ----------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Baseline    | [experiments/baseline](experiments/baseline)       | 官方 DHyFormer baseline                                                                                       |
-| Symbiosis   | [experiments/symbiosis](experiments/symbiosis)     | 本仓库维护的比赛用融合实验模型                                                                                |
-| InterFormer | [experiments/interformer](experiments/interformer) | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                         |
-| OneTrans    | [experiments/onetrans](experiments/onetrans)       | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                            |
-| UniTok      | [experiments/unitok](experiments/unitok)           | 统一 token-stream 实验包，将 field-level token、dense packet、行为事件和候选 token 放入同一 backbone          |
-| UniRec      | [experiments/unirec](experiments/unirec)           | UniRec 融合实验包，将 Hybrid SiLU attention、MoT、target-aware interest 和 BlockAttnRes 接入共享 PCVR runtime |
+| 实验包      | 目录                                                   | 公开来源                                                                                                      |
+| ----------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Baseline    | [experiments/baseline](experiments/baseline)           | 官方 DHyFormer baseline                                                                                       |
+| Baseline+   | [experiments/baseline_plus](experiments/baseline_plus) | HyFormer 增强训练 recipe：OPT cache、轻量增强、Muon 和 accelerator backend                                    |
+| Symbiosis   | [experiments/symbiosis](experiments/symbiosis)         | 本仓库维护的比赛用融合实验模型                                                                                |
+| RankUp      | [experiments/rankup](experiments/rankup)               | 高有效秩表征实验包，验证随机稀疏重组、多 embedding 和 effective-rank 诊断                                     |
+| InterFormer | [experiments/interformer](experiments/interformer)     | [InterFormer paper](https://arxiv.org/abs/2411.09852)                                                         |
+| OneTrans    | [experiments/onetrans](experiments/onetrans)           | [OneTrans paper](https://arxiv.org/abs/2510.26104)                                                            |
+| TokenFormer | [experiments/tokenformer](experiments/tokenformer)     | BFTS 分层注意力与 NLIR 门控交互的统一 token-stream 实验包                                                     |
+| UniRec      | [experiments/unirec](experiments/unirec)               | UniRec 融合实验包，将 Hybrid SiLU attention、MoT、target-aware interest 和 BlockAttnRes 接入共享 PCVR runtime |
 
 ------
 

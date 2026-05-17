@@ -101,7 +101,9 @@ uv run taac-plot-pcvr-diagnostics \
   --run interformer=outputs/smoke/interformer_seed42 \
   --run onetrans=outputs/smoke/onetrans_seed42 \
   --run symbiosis=outputs/smoke/symbiosis_seed42 \
-  --run unitok=outputs/smoke/unitok_seed42 \
+  --run tokenformer=outputs/smoke/tokenformer_seed42 \
+  --run unirec=outputs/smoke/unirec_seed42 \
+  --run rankup=outputs/smoke/rankup_seed42 \
   --output-dir figures/pcvr_diagnostics
 ```
 
