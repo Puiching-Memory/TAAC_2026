@@ -2,68 +2,31 @@
 icon: lucide/wrench
 ---
 
-# 仓库日志管理
+# Actions 日志与部署记录管理
 
-这页用于处理 GitHub Actions 日志和 Pages 部署记录。这里的操作会影响远端仓库，请先 dry-run 和列清楚目标，再删除。
+日志是失败复现和部署追溯的证据。先记录任务、commit、运行 ID 和所需日志，再决定是否清理远端记录。
 
-## 本仓库脚本做什么
-
-`tools/github-cleanup.sh` 只负责收集和校验参数，不会直接删除 GitHub 远端数据。
-
-```bash
-export GITHUB_REPO=Puiching-Memory/TAAC_2026
-export GITHUB_TOKEN=ghp_xxxxx
-
-bash tools/github-cleanup.sh --dry-run
-```
-
-输出里会告诉你目标仓库、模式和 token 是否提供。真正删除要使用 `gh api` 或 GitHub UI。
-
-## 建议流程
-
-1. 用 GitHub UI 或 `gh` 列出要删除的 workflow runs / Pages deployments。
-2. 记录 ID，确认不是正在排查的失败任务。
-3. 运行 `tools/github-cleanup.sh --dry-run` 记录目标和模式。
-4. 对单个 ID 执行删除命令。
-5. 回到 Actions / Pages 页面确认状态。
-
-## 常用查询
-
-列出最近的 workflow runs：
+## 查询
 
 ```bash
 gh run list --repo Puiching-Memory/TAAC_2026 --limit 20
+gh run view <run_id> --repo Puiching-Memory/TAAC_2026 --log
 ```
 
-列出 Pages deployments：
+部署状态可在仓库 [Actions](https://github.com/Puiching-Memory/TAAC_2026/actions) 与 Pages 设置中核对。文档更新的触发与 commit 选择见[站点指南](local-site.md)。
+
+## 本地脚本的实际作用
 
 ```bash
-gh api repos/Puiching-Memory/TAAC_2026/pages/deployments --paginate
+bash tools/github-cleanup.sh --repo Puiching-Memory/TAAC_2026 --dry-run
 ```
 
-删除某个 workflow run 的日志：
+此脚本只解析并校验清理请求，输出 repo、模式、dry-run 与 token 是否存在；即使去掉 `--dry-run`，也不会调用 GitHub API 删除内容。不要将脚本退出成功解释成远端已清理。
 
-```bash
-gh api --method DELETE \
-  repos/Puiching-Memory/TAAC_2026/actions/runs/<run_id>/logs
-```
+`--actions-only` 和 `--pages-only` 互斥。认证可使用已有 gh 登录态；若脚本需要 token，使用环境注入，避免把凭据写入文档、命令历史或日志。
 
-删除某个 workflow run：
+## 需要删除时
 
-```bash
-gh api --method DELETE \
-  repos/Puiching-Memory/TAAC_2026/actions/runs/<run_id>
-```
+对照 GitHub 当前 API 或 UI 逐个确认精确 ID、对象类型和删除影响。失败排查、历史部署对比或性能回归还需要的记录应先导出。无筛选的批量删除不利于追溯。
 
-Pages deployment 的删除和 inactive 操作请先用 `gh api repos/<owner>/<repo>/pages/deployments` 查到具体 ID，再按 GitHub API 当前文档执行。不要写一个没有筛选条件的批量删除管道。
-
-## 什么时候不该清
-
-- 失败任务还在排查。
-- 正在比较 Pages 部署差异。
-- 不确定 token 权限范围。
-- 只是本地仓库变脏，这种情况用 [仓库缓存清理](cache-cleanup.md)。
-
-## 脚本入口
-
-- `tools/github-cleanup.sh`
+本地缓存清理见[缓存指南](cache-cleanup.md)。该操作与远端 workflow runs、日志或 deployment 记录互不替代。

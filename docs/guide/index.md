@@ -1,33 +1,37 @@
 ---
-icon: lucide/map
+icon: lucide/book-open-text
 ---
 
-# 指南总览
+# 指南：运行、诊断与维护
 
-这里是任务型文档的入口。这个页面负责帮你选文档；具体页面负责讲命令、契约、源码位置和排障细节。
+按当前任务选择一条路径。首次运行先看[快速开始](../getting-started.md)，模型差异在[实验包](../experiments/index.md)。
 
-## 任务入口
+## 运行和上传
 
-| 任务                                       | 文档                                             |
-| ------------------------------------------ | ------------------------------------------------ |
-| 读官方平台规则                             | [官方平台用户指南](official-competition-docs.md) |
-| 上传训练或推理 bundle                      | [线上 Bundle 上传](online-training-bundle.md)    |
-| 理解线上机器、Python、CUDA、代理和镜像源   | [线上运行环境速查](competition-online-server.md) |
-| 修改数据增强、cache 或数据读取             | [PCVR 数据管道](pcvr-data-pipeline.md)           |
-| 选择 AdamW、Orthogonal AdamW 或 Muon       | [优化器](optimizers.md)                          |
-| 配置 dense optimizer warmup 和 scheduler   | [学习率调度](lr-schedules.md)                    |
-| 降低训练 activation 显存                   | [梯度检查点](gradient-checkpointing.md)          |
-| 重测数据、optimizer 或整体 benchmark 口径  | [性能 Benchmark](performance-benchmarks.md)      |
-| 重测 TileLang 算子，查看每个算子的支持记录 | [Benchmark 总览](../benchmark/index.md)          |
-| 新增或修改实验包                           | [新增实验包](contributing.md)                    |
-| 选择最小测试集                             | [测试](testing.md)                               |
-| 本地预览文档站或理解 Pages 部署            | [本地文档站](local-site.md)                      |
-| 清理本地缓存                               | [仓库缓存清理](cache-cleanup.md)                 |
-| 清理 GitHub Actions / Pages 远端记录       | [仓库日志管理](repo-log-management.md)           |
+| 任务 | 文档 |
+| --- | --- |
+| 生成、检查、模拟平台上传物 | [训练与推理 Bundle](online-training-bundle.md) |
+| 查看官方操作流程快照 | [平台用户指南](official-competition-docs.md) |
+| 核对历史设备、Python 与网络 | [平台环境快照](competition-online-server.md) |
 
-## 写文档时的分工
+## 调整训练
 
-- 分区 `index.md` 只做导览和选择。
-- 叶子页面要写清楚可执行命令、输入输出、环境变量、源码入口和常见失败模式。
-- 不把源码整段搬进文档，但要解释读者为什么要看那些源码。
-- 过时的 benchmark 数字、实验结果和平台观察不要当长期事实；保留复现方法和证据来源。
+| 任务 | 文档 |
+| --- | --- |
+| 理解 parquet、切分、缓存与增强 | [PCVR 数据管道](pcvr-data-pipeline.md) |
+| 选择 dense optimizer 与 sparse 更新 | [优化器](optimizers.md) |
+| 设置 warmup、衰减与早停 | [学习率调度](lr-schedules.md) |
+| 用重计算节省 activation 内存 | [梯度检查点](gradient-checkpointing.md) |
+| 接入新模型 | [新增实验包](contributing.md) |
+
+## 验证和维护
+
+| 任务 | 文档 |
+| --- | --- |
+| 选择测试和复现 CI 口径 | [测试](testing.md) |
+| 生成性能 JSON、检查误差 | [性能测量](performance-benchmarks.md) |
+| 清理本地可再生缓存 | [缓存清理](cache-cleanup.md) |
+| 查找和整理 Actions 记录 | [日志管理](repo-log-management.md) |
+| 预览、构建和发布文档 | [本地文档站](local-site.md) |
+
+历史结果在 [Benchmark](../benchmark/index.md)，原始 schema 与官方 baseline 快照在[归档](../archive/index.md)。这些材料不覆盖当前运行契约。

@@ -2,109 +2,66 @@
 icon: lucide/clipboard-list
 ---
 
-# 测试
+# 测试：选择范围与复现 CI
 
-测试的目标不是“每次都跑最重的一套”，而是先覆盖你刚改动的契约，再在合并前扩大范围。
+从受影响契约开始验证。共享行为变更需要完整 CPU 门禁；模型或训练契约变更再补端到端 smoke；加速器行为必须在可用目标 GPU 上核对。
 
-## 准备环境
+## 环境
 
 ```bash
-uv sync --locked --extra dev --extra cuda132
+uv sync --locked --extra dev
 ```
 
-只做 CPU 单测时，通常 `--extra dev` 已经足够；涉及本地 CUDA 训练或 accelerator 时再同步 CUDA profile。
+基础/dev 依赖不安装 Torch。下列 CPU 命令显式注入 `torch==2.13.0`，与 CI 一致。GPU 开发环境则同步 `--extra dev --extra cuda132`，运行时不再注入另一份 Torch。
 
-## 最常用命令
+## 常用命令
 
 ```bash
-# 快速单元测试
-uv run pytest tests/unit -q
+# 快速单测
+uv run --with torch==2.13.0 pytest tests/unit -q
 
-# PR CPU 门禁口径
-uv run pytest -m "(unit or contract or integration or benchmark_cpu) and not gpu and not benchmark_gpu" -q
+# 完整 CPU 门禁
+uv run --python 3.13 --with torch==2.13.0 pytest \
+  -m "(unit or contract or integration or benchmark_cpu) and not gpu and not benchmark_gpu" -q
 
-# 真实 baseline 训练 -> checkpoint -> 推理闭环（CPU，1 step）
-uv run pytest tests/integration/application/test_pcvr_roundtrip.py -q
+# 训练 → checkpoint → 推理
+uv run --with torch==2.13.0 pytest tests/integration/application/test_pcvr_roundtrip.py -q
 
-# 实验包契约
-uv run pytest tests/contract/experiments/test_packages.py -q
-uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
+# 实验接口和配置重建
+uv run --with torch==2.13.0 pytest tests/contract/experiments -q
 
-# 打包与 run.sh 集成
-uv run pytest tests/integration/application/packaging -q
-uv run pytest tests/unit/application/bootstrap tests/integration/application/bootstrap -q
-
-# 风格检查
+# 静态检查与文档
 uv run ruff check .
-
-# 文档构建
-uv run zensical build --strict
+uv run zensical build --strict --clean
 ```
 
-## 提交前 Ruff 门禁
+## 按改动选择检查
 
-首次克隆仓库后启用版本化 Git hooks：
+| 改动 | 先验证 |
+| --- | --- |
+| 实验默认值、模型与配置扩展 | `tests/contract/experiments` 与对应 `tests/unit/experiments` |
+| 训练 CLI | `tests/unit/application/training/test_cli.py` |
+| 评估/推理 | `tests/unit/application/evaluation` |
+| 数据转换、cache、切分 | `tests/unit/infrastructure/data` |
+| 保存、sidecar | `tests/unit/infrastructure/test_checkpoints.py` 与 roundtrip |
+| 打包/bootstrap | `tests/integration/application/packaging`、`tests/unit/application/bootstrap`、`tests/integration/application/bootstrap` |
+| 优化器/trainer | `tests/unit/infrastructure/optimization`、`tests/unit/infrastructure/runtime` |
+| accelerator | 对应 unit、GPU 数值/梯度与 CLI benchmark |
+| 文档 | 严格构建、链接、参数与路径核对 |
 
-```bash
-./tools/install-git-hooks.sh
-```
+测试 marker 在 `pyproject.toml` 注册，由 `tests/conftest.py` 按目录补充。`unit`/`contract`/`integration` 描述范围，`gpu`/`benchmark_gpu` 描述环境需求；CPU 门禁显式排除 GPU。
 
-之后每次执行 `git commit`，`.githooks/pre-commit` 都会通过锁定的 dev 环境运行 `ruff check .`。Ruff 失败或 `uv` 不可用时，提交会被阻止；CI 中的 Ruff 检查仍是远端兜底。
+## CI 的版本和覆盖率
 
-## Pytest 标记
+Python 3.12 到 3.14 都在兼容性矩阵中：3.12 和 3.14 运行 unit+contract，3.13 运行完整 CPU 门禁并采集覆盖率。Ruff 在 Python 3.13 执行，Vulture 为非阻塞检查。
 
-`pyproject.toml` 注册了这些 marker：
+| 覆盖率分组 | 门限 |
+| --- | ---: |
+| 关键训练与推理 runtime | 80% |
+| CPU 安全核心 | 80% |
+| 七个 PCVR 模型实验 | 75% |
 
-| marker          | 含义                            |
-| --------------- | ------------------------------- |
-| `unit`          | 快速单元测试                    |
-| `contract`      | 稳定接口、实验包和 bundle 契约  |
-| `integration`   | 跨模块流程测试                  |
-| `gpu`           | 需要 CUDA GPU 的测试            |
-| `benchmark_cpu` | 可在 CPU 上跑的 benchmark 测试  |
-| `benchmark_gpu` | 只适合本地 GPU CLI 的 benchmark |
-
-`tests/conftest.py` 会按路径自动给 `tests/unit/**`、`tests/contract/**`、`tests/integration/**`、`tests/benchmarks/**` 和 `tests/gpu/**` 标对应 marker。因此 CI 用 marker 表达 CPU 安全门禁，而不是依赖单一目录。
-
-## 按改动选择最小复核
-
-| 改动位置                         | 先跑                                                                                                      |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `experiments/<name>/__init__.py` | `tests/contract/experiments/test_packages.py`，`tests/contract/experiments/test_runtime_contract_matrix.py` |
-| `experiments/<name>/model.py`    | `tests/contract/experiments/test_packages.py`                                                           |
-| 维护类实验                       | `tests/contract/experiments/test_maintenance_experiments.py`                                            |
-| Online Dataset EDA               | `tests/contract/experiments/test_online_dataset_eda_runner.py`                                          |
-| 训练 CLI / args                  | `tests/unit/application/training/test_cli.py`                                                             |
-| 评估 / 推理 CLI                  | `tests/unit/application/evaluation`                                                                       |
-| 打包逻辑                         | `tests/integration/application/packaging`，`tests/unit/application/bootstrap`，`tests/integration/application/bootstrap` |
-| checkpoint / sidecar             | `tests/unit/infrastructure/test_checkpoints.py`，`tests/integration/application/test_pcvr_roundtrip.py`     |
-| 数据管道                         | `tests/unit/infrastructure/data`                                                                          |
-| accelerator                      | `tests/unit/infrastructure/accelerators`                                                                  |
-| 文档                             | `uv run zensical build --strict`                                                                          |
-
-## CI 会做什么
-
-以 `.github/workflows/ci.yml` 为准，当前 CI 主要做三件事：
-
-- Python 3.13 的 Ruff 检查。
-- Python 3.12 到 3.14 均做兼容性验证；边界版本 3.12 和 3.14 运行 `unit` + `contract`，不重复较重的集成与 benchmark 测试。
-- 规范 Python 3.13 运行完整 CPU 门禁：`unit`、`contract`、`integration` 和 `benchmark_cpu`，排除 `gpu` / `benchmark_gpu`。
-- 在 Python 3.13 采集 `src/taac2026` 与 `experiments` 覆盖率，并分别门控关键 runtime、CPU 安全核心和 PCVR 模型实验。
-
-CI 只会被这些路径触发：
-
-```text
-.github/workflows/ci.yml
-experiments/**
-src/**
-tests/**
-pyproject.toml
-uv.lock
-```
-
-纯 `docs/**` 改动不跑 CI；文档部署由 Pages workflow 处理。CI 的 `uv sync` 和 `uv run` 都会显式传 `--python`，避免本地 `.python-version` 覆盖 workflow matrix。
-
-本地复现 CPU 单测口径：
+源码 include 列表以 `.github/workflows/ci.yml` 为准。全源码摘要不设门禁，不能用整体百分比替代关键模块覆盖。
 
 ```bash
 uv run --python 3.13 --with torch==2.13.0 --with coverage \
@@ -112,60 +69,21 @@ uv run --python 3.13 --with torch==2.13.0 --with coverage \
   -m pytest -m "(unit or contract or integration or benchmark_cpu) and not gpu and not benchmark_gpu" -v
 ```
 
-覆盖率报告：
+CI 路径过滤包含 workflow、experiments、src、tests、pyproject 与 lockfile。纯 docs 改动由 Pages workflow 严格构建，不触发 Python CI；混合代码/文档改动等待 CI 成功后部署，见[站点指南](local-site.md)。
 
-```bash
-cp .coverage.cpu .coverage
-uv run --python 3.13 --with coverage coverage report --fail-under=80 \
-  --include='src/taac2026/application/evaluation/*,src/taac2026/application/training/*,src/taac2026/infrastructure/checkpoints.py,src/taac2026/infrastructure/runtime/*'
+## GPU 与性能验证
 
-uv run --python 3.13 --with coverage coverage report --fail-under=75 \
-  --include='experiments/baseline/*,experiments/dualq/*,experiments/interformer/*,experiments/onetrans/*,experiments/queryformer/*,experiments/symbiosis/*,experiments/tokenformer/*'
-```
-
-关键训练 / 推理 runtime 与 CPU 安全核心的门限均为 80%，七个 PCVR 模型实验的门限为 75%。分组门禁可避免高覆盖模块掩盖训练、推理或模型盲区；具体 include 清单以 workflow 为准。CI 也会输出全 `src/taac2026` + `experiments` 摘要，但 accelerator、平台诊断等环境专用代码不纳入 CPU fail-under。
-
-## GPU 和 Benchmark
-
-GPU 相关测试在没有 CUDA 时会 skip，不能用 CPU CI 结果证明 TileLang kernel 可用。改 accelerator 后至少在有 CUDA 的机器上跑：
+在已经同步 CUDA extra 的目标环境：
 
 ```bash
 uv run pytest tests/unit/infrastructure/accelerators -q
 uv run pytest -m gpu tests/gpu -q
 ```
 
-`gpu` 测试在无 CUDA 的机器上会整体 skip，因此先跑一次上面的命令即可同时完成 CUDA 探测——结果全 skip 说明当前环境没有可用的 CUDA GPU，此时再声明"未做 GPU 验证"才准确。需要更快的一次性探测可以用 `nvidia-smi` 或 `experiments/host_device_info`。
+记录 skip 原因、设备和命令。没有 CUDA 时的 skip 不支持“GPU 已通过”。算子需验证 forward、backward、mask、dtype 和误差；性能还需[相同口径测量](performance-benchmarks.md)，短 smoke 不代表完整训练或线上环境。
 
-benchmark 入口的 CPU 通路测试在 `tests/benchmarks/cpu`，会进入 CPU 门禁；真实性能结论仍然不要塞进常规 CI。需要性能结论时，用 CLI 生成 JSON，记录硬件、CUDA / PyTorch 版本、commit 和完整命令。
+## 提交与结果报告
 
-## Smoke Test 的位置
+需要本地提交钩子时运行 `bash tools/install-git-hooks.sh`；钩子通过 uv 执行 Ruff，不能代替测试。提交前检查 diff 与 `git diff --cached --check`。
 
-训练 smoke 是集成验证，不替代单元测试。它适合在下面几种情况补跑：
-
-- 新增模型包后确认端到端能走完。
-- 改了训练 workflow、checkpoint 或模型输入契约。
-- 单测通过，但你怀疑真实 batch 协作会出问题。
-
-示例：
-
-```bash
-uv run pytest tests/integration/application/bootstrap/test_cpu_smoke.py -q
-
-bash run.sh train \
-  --experiment experiments/baseline \
-  --run-dir outputs/baseline_smoke \
-  --optimizer.device cpu \
-  --data.num_workers 0 \
-  --data.batch_size 8 \
-  --optimizer.max_steps 1
-```
-
-## 常见失败
-
-| 现象                                              | 优先检查                                              |
-| ------------------------------------------------- | ----------------------------------------------------- |
-| `unrecognized arguments`                          | 训练参数是嵌套下划线形式（如 `--data.batch_size`），评估 / 推理参数是扁平连字符形式 |
-| 找不到本地 parquet 或 `schema.json`               | 检查 `--dataset-path` / `--schema-path`，或使用默认 demo smoke |
-| accelerator 测试 skip                             | 当前机器没有 CUDA 或缺 TileLang / Triton runtime      |
-| bundle 测试失败但本地 import 正常                 | 检查 zip 内容和 manifest，而不是只看仓库根目录 import |
-| 文档构建失败                                      | 先看相对链接、`zensical.toml` nav 和图片路径          |
+报告实际执行命令、通过/失败/skip 和未覆盖环境。文档变更只需文档相关检查，不必为纯文字修改启动模型训练。

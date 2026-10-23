@@ -1,72 +1,76 @@
 ---
-icon: lucide/search-code
+icon: lucide/flask-conical
 ---
 
-# QueryFormer
+# QueryFormer：多列 Embedding 与双向检索
 
-QueryFormer 是 TAAC × KDD Cup 2026 工业赛道冠军方案的 clean-room 实验实现。冠军团队公开的技术文章给出了模型结构、消融和训练策略，但没有发布可移植源码；因此本包只把公开且能够形成明确契约的部分接到共享 PCVR runtime，不声称与冠军私有实现逐行或逐参数一致。
+QueryFormer 根据公开方案说明独立实现可明确描述的结构。来源为[团队技术文章](https://mp.weixin.qq.com/s/yG6PnTw4U6OYynNLSpvBYg)；本仓库不拥有其私有实现，当前模型不是官方源码移植，文章成绩也不是此包的复现结果。
 
-- 原始文章：[我用 DeepSeek 网页版拿下 KDD Cup 冠军！](https://mp.weixin.qq.com/s/yG6PnTw4U6OYynNLSpvBYg)
-- 可访问转载：[搜狐时间线](https://timeline.sohu.com/news/Ld7vJbDw4I)
-- 文章报告工业赛道测试集 AUC `0.83254`。
+## 四类交互
 
-## 已集成的冠军结构
+| 模块 | 作用 |
+| --- | --- |
+| QuerySelfAttn | 用户/物品各自 token 内部交互 |
+| QueryCrossAttn | 用户与物品 token 双向交换上下文 |
+| SeqQueryCrossAttn | 序列域 query 读取更新后的用户/物品 token |
+| QuerySeqCrossAttn | 动态 query 再读取行为序列 |
 
-| 公开方案组件          | 当前实现                                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------------------------- |
-| 分组 Tokenization     | sparse 字段按 `PCVRNSConfig` 的用户/广告语义组产生 token；dense 字段按 schema 原始边界拆分，每个字段独立经过全秩 DCNv2 后产生一个 token。 |
-| QuerySelfAttn         | 用户 token 内部、广告 token 内部分别做 self-attention。                                                        |
-| QueryCrossAttn        | 用户与广告 token 双向 cross-attention，让序列检索前的 query 同时感知两侧上下文。                               |
-| SeqQueryCrossAttn     | 每个序列域先产生初始 query，再主动读取更新后的用户与广告 token；关闭该模块时使用显式 MLP query 作为消融基线。  |
-| QuerySeqCrossAttn     | 上一步得到的动态 query 再读取对应行为序列，形成候选广告相关的序列表示。                                        |
-| 多列 Embedding Matrix | 默认 `H=4`；每列拥有完全独立的 sparse、sequence embedding、DCNv2 和 attention 参数，最后融合列表示。           |
-| 高基数特征            | 超过 `emb_skip_threshold` 的 sparse/sequence id 使用共享 runtime 的 hash compression，不再静默丢弃。           |
+稀疏字段按组 tokenize，dense 按 schema 原始边界经过 DCNv2。默认四列 embedding，每列有独立 sparse、sequence、DCNv2 和 attention 参数，最后融合列表示。高基数特征使用 hash compression。
 
-文章中四个 Attention 的单项消融下降分别为 `0.00020`、`0.00029`、`0.00023` 和 `0.00038`；其中 SeqQueryCrossAttn 的贡献最大。多列实验最终选择 `H=4`。这些数字用于确定默认开关，不是本仓库的复现实验结果。
+## 多列如何执行
 
-## 默认训练策略
+实现保留显式 H 维：embedding 使用不相交词表区间，Linear/DCNv2/LayerNorm 参数逐列独立，attention 将 `B×H` 合为 batch。共享 padding row 0 固定为零。dense backbone 可 compile，sparse lookup 保持 eager。
 
-| 配置             | 默认值                                            |
-| ---------------- | ------------------------------------------------- |
-| dense optimizer  | `muon`                                            |
-| sparse optimizer | 共享 runtime 的 Adagrad                           |
-| scheduler        | cosine                                           |
-| EMA              | 开启，`decay=0.999`                               |
-| precision        | BF16 AMP                                          |
-| compile          | 开启                                              |
-| loss             | BCE                                               |
+列批处理减少 Python 调度，并不减少 H 倍参数与理论计算量，峰值内存也可能增加。它与整模型 `vmap` 是不同路径，性能须在目标形状重新测量。
 
-公开文章使用的是 MuonPlus。当前 runtime 只提供经过验证的 `muon`，所以默认值采用最接近且已有完整 checkpoint/恢复契约的实现，没有把两者写成同一个算法。梯度裁剪由共享 trainer 固定执行。
+## 消融与算法差异
 
-## 运行
-
-```bash
-bash run.sh train \
-  --experiment experiments/queryformer \
-  --run-dir outputs/queryformer
-```
-
-常用消融参数：
-
-```bash
+```text
 --model.num_embedding_columns 1
 --model.no_use_query_self_attention
 --model.no_use_query_cross_attention
---model.no_use_query_seq_cross_attention
 --model.no_use_seq_query_cross_attention
+--model.no_use_query_seq_cross_attention
 ```
 
-`QueryFormerModelConfig` 会进入 `train_config.json`，评估和推理会从 checkpoint sidecar 重建同一列数、DCNv2 深度和 Attention 开关。
+当前 dense optimizer 为仓库 Muon，不能等同于来源提及的 MuonPlus。默认 EMA decay 0.999、cosine 调度、BF16 AMP、compile 和 BCE。列数、DCNv2 层数与开关进入 typed sidecar，评估须保留完整配置。
 
-## 多列执行方式
+## 默认配置
 
-实现把列作为显式的 `H` 维，而不是在 Python 中逐列调用模型：
+以下值来自当前实验 `__init__.py`，不是硬件容量建议。
 
-- sparse 和 sequence embedding 把每列映射到同一张物理表中的不相交词表区间，一次 lookup 产生 `[B, H, ...]`；各列参数和梯度仍完全独立，padding row 0 是唯一共享且固定为零的行。
-- DCNv2、Linear 和 LayerNorm 的参数都带独立的 `H` 维，通过 batched matmul 计算。
-- Attention 在独立 Q/K/V 投影后把 `B × H` 合并成 batch，一次调用 PyTorch SDPA；CUDA 可选择 fused SDPA kernel。
-- `runtime.compile` 只编译 dense DCNv2/Attention/readout 主干；不同词表尺寸的 sparse lookup 保持 eager，避免 Inductor 为每张表反复重编译，并保留 COO sparse backward。
+| 配置 | 值 |
+| --- | --- |
+| 模型类 | `PCVRQueryFormer` |
+| batch / workers | `256 / 8` |
+| split / sampling | `timestamp_auto / step_random` |
+| 序列上限 | `seq_a:256,seq_b:256,seq_c:512,seq_d:512` |
+| d_model / emb_dim | `128 / 64` |
+| blocks / heads | `2 / 4` |
+| dense optimizer / lr | `muon / 0.0001` |
+| max_steps / patience_steps | `100000 / 25000` |
+| AMP / compile | `true / true` |
+| seed | `2026` |
 
-这里没有整模型 `torch.func.vmap` 路径。当前 sparse embedding 的反向梯度是 COO tensor，PyTorch 2.13 在整列 `vmap` backward 合并稀疏梯度时会失败；直接采用列批处理参数布局可以避开该限制，也不会在每个 forward 临时复制超大 embedding 表。
+## 运行与验证
 
-列批处理不减少 `H` 倍参数量或理论 FLOPs，并可能提高峰值显存；它优化的是 GPU 并行度和 kernel launch 数。真实性能仍应在目标 batch size、序列长度和线上 schema 上分别比较 `H=1` 与 `H=4`。
+先完成[快速开始](../getting-started.md)的数据准备。在 CPU 上执行一步，并显式关闭本实验可能默认启用的 AMP/compile：
+
+```bash
+uv run --with torch==2.13.0 taac-train \
+  --experiment experiments/queryformer \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/queryformer_smoke \
+  --optimizer.device cpu --data.num_workers 0 \
+  --data.batch_size 8 --optimizer.max_steps 1 \
+  --runtime.no_amp --runtime.no_compile
+```
+
+训练后的评估、推理、打包遵循[统一流程](../getting-started.md)，替换实验路径即可。验收至少包含实验契约和完整 sidecar 重建；CPU smoke 仅说明这次配置的流程可运行。
+
+```bash
+uv run --with torch==2.13.0 pytest tests/contract/experiments/test_packages.py tests/contract/experiments/test_runtime_contract_matrix.py -q
+```
+
+源码：[实验声明](https://github.com/Puiching-Memory/TAAC_2026/blob/main/experiments/queryformer/__init__.py)、[模型实现](https://github.com/Puiching-Memory/TAAC_2026/blob/main/experiments/queryformer/model.py)。涉及 CUDA backend 时补目标设备验证，范围见[测试指南](../guide/testing.md)。

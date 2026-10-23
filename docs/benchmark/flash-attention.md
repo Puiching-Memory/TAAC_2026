@@ -1,49 +1,37 @@
 ---
-icon: lucide/scan-line
+icon: lucide/activity
 ---
 
-# Flash Attention Benchmark
+# Flash Attention：能力与测量
 
-## 支持记录
+CLI operator：`flash_attention`。本页说明支持范围与已有测量；重新测量使用相同 shape、dtype、计时边界和误差阈值。
 
-- CLI operator：`flash_attention`。
-- Torch reference：`torch.nn.functional.scaled_dot_product_attention`。
-- TileLang benchmark 支持 `--is-causal`，默认无 dropout。
-- 真实模型路径还涉及 mask 规划、query/key/value layout 转换和训练 backward；修改 mask 逻辑时必须跑 accelerator 单测。
-- 主要源码：`src/taac2026/infrastructure/accelerators/attention/flash_attention.py`。
+## 能力与历史观察
 
-## 推荐命令
+reference 为 PyTorch SDPA，当前公开 backend 为 torch/TileLang。benchmark 可加 `--is-causal`；真实模型还需处理 mask、QKV layout、dropout 与 backward。
 
-```bash
-uv run taac-benchmark-pcvr-tilelang-ops \
-  --operator flash_attention \
-  --device cuda \
-  --batch 8 \
-  --heads 8 \
-  --query-len 128 \
-  --kv-len 128 \
-  --head-dim 64 \
-  --dtype float16 \
-  --backends torch,tilelang \
-  --steps 100 \
-  --warmup-steps 20 \
-  --repeats 5 \
-  > outputs/benchmarks/tilelang_flash_attention.json
-```
-
-## 读数要点
-
-- `query_len`、`kv_len`、`head_dim` 和 causal mask 会显著改变性能。
-- 需要同时看 `max_abs_error` 和 `max_rel_error`；attention 的 half precision 误差通常比 RMSNorm 更敏感。
-- 训练态 dropout / backward 使用额外 kernels，不能只用 forward-only 结果推断训练收益。
-
-## 最近验收观察
-
-最近一次本地验收口径：H800、`batch=8`、`heads=8`、`query_len=128`、`kv_len=128`、`head_dim=64`、`float16`、`steps=100`、`warmup_steps=20`、`repeats=5`、非 causal forward-only benchmark。结果只用于判断当前 kernel 口径是否健康，不作为长期基准。
+历史 H800、B=8、H=8、Q=K=128、D=64、float16、非 causal forward 记录显示 TileLang 慢于 SDPA。相对误差 7.32 受近零 reference 放大，不能脱离约 4.9e-4 的绝对误差及容差单独判定。该记录不是当前所有 mask 与训练路径的验收。
 
 | backend  | step ms | compile sec | max abs error | max rel error |
 | -------- | ------: | ----------: | ------------: | ------------: |
 | torch    |  0.0161 |           - |           0.0 |           0.0 |
 | tilelang |  0.0577 |        7.23 |       0.00049 |          7.32 |
 
-当前小形状 forward-only 口径下 TileLang 约 `0.28x`，也就是慢于 torch SDPA。`max_rel_error` 被接近 0 的 reference 值放大；这一组更应看 `max_abs_error`，绝对误差约 `4.9e-4`。Flash Attention 的收益需要继续按真实模型形状、causal/mask、训练 backward 和 dropout 口径重测。
+
+## 重新测量
+
+在已同步 CUDA 环境中运行：
+
+```bash
+mkdir -p outputs/benchmarks
+uv run taac-benchmark-pcvr-tilelang-ops \
+  --operator flash_attention --device cuda \
+  --batch 8 --heads 8 --query-len 128 --kv-len 128 --head-dim 64 \
+  --dtype float16 --backends torch,tilelang \
+  --steps 100 --warmup-steps 20 --repeats 5 --json \
+  > outputs/benchmarks/flash-attention.json
+```
+
+先检查 backend 状态和误差，再比较稳态时间、编译开销与完整模型收益。训练路径另测 backward、参数梯度与代表性 mask/shape；CPU 的 unsupported 不是 GPU 验证结果。完整记录规范见[性能指南](../guide/performance-benchmarks.md)。
+
+源码位于 `src/taac2026/infrastructure/accelerators/`，测试位于 `tests/unit/infrastructure/accelerators` 与 `tests/gpu`。

@@ -2,231 +2,92 @@
 icon: lucide/database-zap
 ---
 
-# PCVR 数据管道
+# PCVR 数据管道：切分、缓存和增强
 
-PCVR 数据管道负责把 parquet 数据变成训练 batch，并在需要时叠加 cache、增强、shuffle 和 observed schema 统计。数据管道不是一个单独命令，而是训练 workflow 通过 `PCVRTrainConfig.data_pipeline` 注入到 `get_pcvr_data()` 的运行时能力。
+共享数据管道把 parquet 转换为 `PCVRBatch`，管理采样、切分、基础 batch cache 和训练增强。模型负责字段选择与解释，数据层不应加入实验特有语义。
 
-训练路径现在优先使用 step-indexed map-style Dataset：PyTorch `DataLoader` 负责 worker、prefetch、pin memory 和 sampler 调度；仓库侧只负责把一个 step index 映射为一次有放回采样、cache 读取和 batch 组装。验证和推理仍使用顺序 scan 语义，不启用随机增强。
+## 输入和输出
 
-## 什么时候看这页
+本地可显式传 parquet 文件或目录与 schema；不传数据路径时，普通 PCVR 实验使用公开 demo。线上通过平台变量注入真实路径。schema 来源规则见[架构](../architecture.md)，不要把 observed schema 统计报告当作模型声明。
 
-- 你要隔离模型结构、数据增强与 cache 对结果的影响。
-- 你想给新实验加数据增强或 cache。
-- 你在排查吞吐、内存或线上数据分布问题。
+```text
+parquet → batch key / row filter → 基础 batch 转换与 cache
+        → clone → 训练 transforms → DataLoader → 模型输入
+```
 
-## 本地和线上数据路径
+训练主要使用 step-indexed map-style dataset。PyTorch DataLoader 管理 worker、prefetch、pin memory；验证与推理顺序扫描，不执行随机训练增强。
 
-本地 PCVR 训练、评估和推理默认使用 Hugging Face demo 数据；调试、benchmark 或复现线上样本时，也可以显式传 `--dataset-path` 指向本地 parquet 文件或目录。显式数据路径不会被写入实验包，提交前仍应避免把临时本地路径固化到默认配置或文档主流程里。
+## 选择验证切分
 
-线上 bundle 由平台环境变量注入真实数据：
+| `--data.split_strategy` | 切分单位 | 适用问题 |
+| --- | --- | --- |
+| `row_group_tail` | 尾部 row group | 本地流程检查、低启动开销 |
+| `timestamp_auto` | timestamp 行过滤 | 用较新时间段检验时间泛化 |
+| `user_hash` | 原始 user id 的稳定 hash | 检验未见用户 |
+| `sample_hash` | 文件名、row group、行位置 hash | 缺少可靠用户或时间列时的稳定划分 |
 
-- 训练 / 评估：`TRAIN_DATA_PATH`
-- 推理：`EVAL_DATA_PATH`
-- schema：`TAAC_SCHEMA_PATH`
+行级过滤的三种策略会将不兼容的 `step_random` 切为 `row_group_sweep`，避免随机取到过滤后空 batch。实际选择需看日志和训练摘要，不能仅凭配置字符串判断。
 
-维护类实验例外，例如 [Online Dataset EDA](../experiments/online-dataset-eda.md) 本身就是为了读取指定数据集。
+hash seed 来自 `optimizer.seed`。先按 `valid_ratio` 选验证桶，再从剩余桶按 `train_ratio` 取训练子集。`train_ratio` 范围 `(0,1]`，`valid_ratio` 范围 `(0,1)`；前者小于 1 时会有未参与任一侧的行。user id 为空时回退 sample key；sample key 忽略父目录，但文件重命名会影响划分。
 
-## 当前组件
+训练启动的 hash 行数是估算值。结束后的 `train_split_observed_schema.json`、`valid_split_observed_schema.json` 使用相同过滤规则统计精确行数，并记录 filter。检查 `data_split.is_disjoint` 和 `is_l1_ready`；小数据可能得到空侧，不能静默复用另一侧样本。
 
-数据管道配置位于 `PCVRTrainConfig.data_pipeline`，类型定义在 `src/taac2026/domain/config.py`。
+## 采样与训练预算
 
-| 组件                      | 作用                       | 常见用途                       |
-| ------------------------- | -------------------------- | ------------------------------ |
-| `PCVRDataCacheConfig`     | 缓存已转换的基础 batch     | 加速重复访问，减少数据转换开销 |
-| `PCVRSequenceCropConfig`  | 为序列生成尾窗或随机窗口   | 控制有效序列长度，做轻量增强   |
-| `PCVRFeatureMaskConfig`   | 随机置零稀疏特征和序列事件 | 提升鲁棒性                     |
-| `PCVRDomainDropoutConfig` | 按行丢弃整个序列域         | 模拟缺失域，减少单域依赖       |
+`--data.sampling_strategy step_random` 进行有放回采样；`row_group_sweep` 按 sweep 访问。`--data.train_steps_per_sweep` 控制逻辑 sweep 长度，0 时从数据推导。总 optimizer step 仍由 `--optimizer.max_steps` 截断，逻辑 sweep 不应自动解释为每行恰好训练一次。
 
-cache 支持这些模式：
+## Cache 的含义
 
-- `none`：关闭。
-- `lru`：最近最少使用淘汰。
-- `fifo`：先入先出淘汰。
-- `lfu`：最少使用频次淘汰。
-- `rr`：随机淘汰。
-- `opt`：按已知访问轨迹做 OPT 淘汰；不满足条件时会退回安全策略。
+| mode | 淘汰策略 |
+| --- | --- |
+| `none` | 不缓存 |
+| `lru` | 最近最少使用 |
+| `fifo` | 最早进入 |
+| `lfu` | 低访问频次 |
+| `rr` | 随机 |
+| `opt` | 根据已知 trace 的下一次使用距离 |
 
-配置对象的当前字段：
+配置位于 `data_pipeline.cache`，`max_batches` 是 batch 容量，不是字节数。缓存保存增强前的基础 batch，取出时 clone，避免随机增强污染缓存。policy index 使用 native C++ 实现；首次使用需可用构建环境。
+
+单 worker 使用内存 cache，多 worker 启用 shared cache。OPT 依赖未来访问窗口，没有 trace 时使用 LRU 行为；训练器在 sweep 边界刷新 trace，保留相同 key universe 的缓存内容。高命中率不保证更高吞吐，还需计入同步、clone 和内存开销。
+
+## 增强配置
+
+| 类型 | 行为 |
+| --- | --- |
+| `PCVRSequenceCropConfig` | tail、random_tail、rolling，支持多视图 |
+| `PCVRFeatureMaskConfig` | 对 sparse 与序列事件随机置零，更新序列状态 |
+| `PCVRNonSequentialSparseDropoutConfig` | 对非序列 sparse 做 dropout |
+| `PCVRDomainDropoutConfig` | 按行丢弃完整序列域及长度/时间桶 |
+
+配置在实验 `TRAIN_DEFAULTS.data_pipeline` 声明，随机源由 pipeline seed 与读取上下文管理。多视图产生更多行后，step dataset 会重新取到 optimizer batch 大小；`views_per_row=2` 不等于每步计算量必然翻倍。
 
 ```python
-PCVRDataPipelineConfig(
-    cache=PCVRDataCacheConfig(mode="none", max_batches=0),
-    transforms=(),
-    seed=None,
+from taac2026.api import (
+    PCVRDataCacheConfig, PCVRDataPipelineConfig,
+    PCVRFeatureMaskConfig, PCVRDomainDropoutConfig,
+)
+
+pipeline = PCVRDataPipelineConfig(
+    cache=PCVRDataCacheConfig(mode="lru", max_batches=64),
+    transforms=(
+        PCVRFeatureMaskConfig(probability=0.03),
+        PCVRDomainDropoutConfig(probability=0.02),
+    ),
+    seed=42,
     strict_time_filter=True,
 )
 ```
 
-transform 配置字段：
+`pipeline.enabled` 只表示有启用的 transform；cache 是否开启看 `cache.enabled`。时间过滤、增强和 cache 是独立变量，做消融时分别记录。
 
-```python
-PCVRSequenceCropConfig(
-    enabled=True,
-    views_per_row=1,
-    seq_window_mode="tail",      # tail / random_tail / rolling
-    seq_window_min_len=1,
-)
-
-PCVRFeatureMaskConfig(
-    enabled=True,
-    probability=0.0,
-)
-
-PCVRDomainDropoutConfig(
-    enabled=True,
-    probability=0.0,
-)
-```
-
-`PCVRDataPipelineConfig.enabled` 只表示是否存在启用的 transform；cache 是否启用由 `cache.enabled` 单独判断。
-
-## 执行顺序
-
-训练数据从 parquet 到模型输入大致经历这些阶段：
-
-1. `get_pcvr_data()` 解析 parquet 文件或目录，读取 schema。
-2. 训练端的 `PCVRStepDataset` 将 step index 映射为有放回采样的 parquet batch key。
-3. base batch cache 尝试命中；命中后返回 clone，避免增强污染缓存。
-4. transform 依次作用在 batch 上；如果多视图增强产生超过一个 optimizer batch 的行数，step dataset 会重采样回单个训练 batch。
-5. PyTorch `DataLoader` 继续负责 worker / prefetch / pin memory。
-6. training workflow 把 `PCVRBatch` 直接交给模型（`forward(model_input)` 接收 `PCVRModelInput`）。
-
-`train_steps_per_sweep=0` 时，step-random 训练 loader 的一次逻辑 sweep 使用训练数据推导出的 batch 数；如果显式设置 `--train-steps-per-sweep`，则 PyTorch sampler 会使用这个固定长度的 step 窗口。`max_steps>0` 时，训练器仍按总 optimizer step 截断。
-
-验证和推理不应该启用随机增强。训练增强通过实验包默认配置进入，不应该在评估入口临时拼出来。
-
-## 行级切分与 observed schema
-
-`timestamp_auto`、`user_hash` 和 `sample_hash` 在 row group 内继续过滤行。它们与默认 `step_random` 不兼容时，loader 会显式切换为 `row_group_sweep`。
-
-两种 hash 策略的稳定输入如下：
-
-| 策略 | hash key | 路径与缺失语义 |
-| ---- | -------- | -------------- |
-| `user_hash` | 原始 `user_id` + `optimizer.seed` | 非空 ID 跨文件保持同侧；null 或空字符串时回退到 sample key |
-| `sample_hash` | parquet 文件名 + row group index + row-group 内行位置 + `optimizer.seed` | 忽略绝对父目录，因此数据缓存位置变化不改变划分 |
-
-先按 `valid_ratio` 选 valid 桶，再从剩余桶按 `train_ratio` 选 train 桶。默认 `train_ratio=1` 时 train/valid 互补且互斥；低于 1 时未选中的剩余行不会进入任一侧。两个比例在配置解析时校验，`train_ratio` 必须处于 `(0, 1]`，`valid_ratio` 必须处于 `(0, 1)`。
-
-训练启动日志里的 hash 行数是按比例估算的快速提示。训练完成后，应用层会用训练 loader 的同一 hash primitive 写出精确报告：
-
-```text
-<run-dir>/
-├── train_split_observed_schema.json
-└── valid_split_observed_schema.json
-```
-
-每份报告的 `row_count` 是实际入选行数，`hash_split_filter` 记录 `strategy`、`role`、`valid_ratio`、`train_ratio` 和 `seed`。训练返回的 `data_split.is_disjoint` 描述行级切分是否互斥，`is_l1_ready` 还要求 train/valid 都非空；不要用两侧 row group 范围是否重叠来判断行级 filter。判断切分是否复现时应检查这组字段和两份精确行数，不要使用启动阶段的估算值。小数据可能把某一侧 hash 成空集；这是无统计意义的输入，应扩大样本或更换 seed，不会回退成 train/valid 复用。
-
-## Transform 语义
-
-`PCVRSequenceCropTransform` 会对每个序列域裁剪窗口：
-
-- `tail`：保留尾部窗口。
-- `random_tail`：随机选择窗口长度，但窗口仍贴近尾部。
-- `rolling`：随机选择窗口起点。
-- `views_per_row > 1` 时会复制行，形成多视图训练样本。
-
-`PCVRFeatureMaskTransform` 会随机置零：
-
-- `user_int_feats`
-- `item_int_feats`
-- 各序列域里的事件 token
-- 对序列事件 mask 后会 compact 序列，更新长度和 time bucket。
-
-`PCVRDomainDropoutTransform` 会按行丢弃整个序列域：
-
-- sequence 置零。
-- 对应 length 置零。
-- time bucket 如果存在也置零。
-
-所有随机 transform 都使用传入的 `torch.Generator`，seed 来自 pipeline 配置和数据读取上下文。
-
-## Cache 语义
-
-cache 存的是增强前的基础 batch。
-
-`lru`、`fifo`、`lfu`、`rr` 和 `opt` 都使用项目内 native C++ policy index。Python 层负责 batch 对象或 shared tensor 槽位存储，C++ 层负责 key/slot 索引、访问计数和驱逐选择。
-
-`opt` 模式需要已知访问 trace。trace 满足预期时按下一次使用距离淘汰；没有 trace 时按 `lru` 安全行为运行。多 worker 场景下所有 cache 策略都使用 shared-memory cache，具体实现见：
-
-- `PCVRMemoryBatchCache`
-- `PCVRSharedBatchCache`
-
-cache 返回 batch clone，因此后续 transform 不会修改缓存里的基础样本。
-
-## 模型与训练 recipe 分离
-
-Baseline 默认关闭数据增强和 cache，作为模型结构的干净参照：
-
-```python
-PCVRDataPipelineConfig(
-    cache=PCVRDataCacheConfig(mode="none", max_batches=0),
-    transforms=(),
-)
-```
-
-需要更激进的 recipe 时，在目标实验的类型化 `PCVRTrainConfig.data_pipeline` 中显式声明，例如：
-
-```python
-PCVRDataPipelineConfig(
-    cache=PCVRDataCacheConfig(mode="opt", max_batches=512),
-    transforms=(
-        PCVRSequenceCropConfig(views_per_row=2, seq_window_mode="random_tail", seq_window_min_len=8),
-        PCVRFeatureMaskConfig(probability=0.03),
-        PCVRDomainDropoutConfig(probability=0.03),
-    ),
-    seed=42,
-)
-```
-
-训练 recipe 不再通过另一个模型包隐式表达。做消融时分别记录模型、数据增强、cache、optimizer、backend 和 seed；只改变当前要回答的变量。数据管道本身的吞吐比较优先使用 `taac-benchmark-pcvr-data-pipeline` 的 `none`、`opt`、`augment` 和 `opt-augment` preset。
-
-## 改配置的位置
-
-普通实验只需要改自己的入口文件：
-
-```text
-experiments/<name>/__init__.py
-```
-
-共享实现位于：
-
-- 配置对象：`src/taac2026/domain/config.py`
-- batch transform：`src/taac2026/infrastructure/data/transforms.py`
-- cache：`src/taac2026/infrastructure/data/cache.py`
-- 训练 step dataset：`src/taac2026/infrastructure/data/step_dataset.py`
-- scan 数据读取和 batch 转换：`src/taac2026/infrastructure/data/dataset.py`
-- hash 行级切分：`src/taac2026/infrastructure/data/hash_split.py`
-- observed schema 扫描：`src/taac2026/infrastructure/data/observation.py`
-- batch 类型：`src/taac2026/infrastructure/data/batches.py`
-
-如果只是调整某个实验的增强策略，改实验包的 `TRAIN_DEFAULTS`。如果要新增一种 transform，再改 `domain/config.py` 和 `infrastructure/data/transforms.py`，并补测试。
-
-## 吞吐压测
-
-如果你改了数据管道，先用 benchmark 做一个小口径对比：
+## 验证和性能
 
 ```bash
-uv run taac-benchmark-pcvr-data-pipeline \
-  --dataset-path data/sample_1000_raw/demo_1000.parquet \
-    --schema-path docs/archive/files/schema/sample_1000_raw.schema.json \
-  --preset augment
+uv run --with torch==2.13.0 pytest tests/unit/infrastructure/data -q
+uv run --with torch==2.13.0 pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
 ```
 
-`preset` 可选 `none`、`cache`、`augment`。正式性能结论应使用更大的合成数据，并在当前代码和当前环境下重新生成；推荐把 JSON 输出放到 `outputs/benchmarks/`，同时记录 commit、硬件、CUDA / PyTorch 版本和完整命令。
+数据管道 benchmark 的 `augment` preset 默认也启用 LRU cache；若想只测增强，用 `--cache-mode none` 显式覆盖。完整命令见[性能测量](performance-benchmarks.md)，历史对照见[缓存测量](../benchmark/cache-policies.md)。
 
-## 最小复核
-
-```bash
-uv run pytest tests/unit/infrastructure/data/test_augmentation.py -q
-uv run pytest tests/unit/infrastructure/data/test_split.py -q
-uv run pytest tests/contract/experiments/test_runtime_contract_matrix.py -q
-```
-
-如果改了 cache 或 dataloader 行为，再跑：
-
-```bash
-uv run pytest tests/unit/application/training/test_cli.py -q
-uv run pytest tests/unit/application/experiments/test_pcvr_runtime.py -q
-```
+源码重点：`domain/config.py`、`infrastructure/data/step_dataset.py`、`batch_converter.py`、`cache.py`、`transforms.py`、`hash_split.py`、`observation.py`。

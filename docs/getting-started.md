@@ -2,207 +2,160 @@
 icon: lucide/rocket
 ---
 
-# 快速开始
+# 快速开始：完成训练、评估和推理
 
-这页只做一件事：让你从干净环境跑通一次 Baseline 训练、评估和推理，并说明这些命令实际会读写哪些文件。
+本页用 Baseline 和公开 demo 数据验证文件流转。一次训练步只检查流程，不能据此比较模型质量。
 
-## 准备环境
+## 1. 准备 Linux 环境
 
-需要：
-
-- Linux
-- Python 3.12 - 3.14
-- `uv`
-- Git
-- NVIDIA GPU 与支持当前 `cuda132` profile 的驱动，本地 GPU 训练时需要
-
-安装依赖：
+项目要求 Linux、Git、`uv`，以及 Python 3.12 - 3.14。GPU 路径另需匹配 `cuda132` 的 NVIDIA 驱动与 CUDA 工具链；`pyproject.toml` 的 uv 环境限定为 Linux，原生 Windows 训练不在当前支持范围内。
 
 ```bash
 git clone https://github.com/Puiching-Memory/TAAC_2026.git
 cd TAAC_2026
-
-uv sync --locked --extra cuda132
 ```
 
-如果你还要跑测试、lint 或文档站：
+选择一种依赖环境：
 
-```bash
-uv sync --locked --extra dev --extra cuda132
-```
+| 用途 | 命令 |
+| --- | --- |
+| GPU 训练 | `uv sync --locked --extra cuda132` |
+| GPU 开发与测试 | `uv sync --locked --extra dev --extra cuda132` |
+| CPU 流程检查 | `uv sync --locked --extra dev`，后续命令显式加 `--with torch==2.13.0` |
+| 只构建文档 | `uv sync --locked --extra dev` |
 
-说明：
+Torch 由 CUDA extra 或 `uv run --with` 提供，不在基础依赖中。`.python-version` 指定本地默认解释器；复现 CI 时用 `--python 3.13` 显式选择版本。
 
-- `cuda132` 是当前仓库支持的本地 CUDA profile。
-- `uv sync` 按 `.python-version` 选择 Python，缺少对应版本时自动安装。
-- `dev` 包含 Ruff、Vulture、Pytest、Coverage 和 Zensical。
-- 线上 bundle 不依赖 `uv`，见 [线上 Bundle 上传](guide/online-training-bundle.md)。
-
-本地 Docker 镜像使用相同的 `uv sync` 流程，固定启用 `cuda132`；基础镜像默认值只在 `docker/Dockerfile` 声明。
-入口脚本默认同步依赖，以适配开发容器挂载的仓库，然后执行传入命令；设置 `AUTO_SYNC=0` 可跳过同步。
-编译 CUDA 扩展需要与该 profile 匹配的 Toolkit，本地 Docker 镜像已包含它。
-
-## 数据从哪里来
-
-本地 PCVR smoke 使用 Hugging Face 上的 `TAAC2026/data_sample_1000` demo parquet。仓库不提交 parquet 数据；公开样例数据的唯一来源是 Hugging Face。
-
-普通 PCVR 本地命令不传 `--dataset-path` 时，运行时会通过 Hugging Face 缓存 `demo_1000.parquet`。如果你想把样例文件留在本地，或要做调试、bundle 模拟和 benchmark，可以这样下载：
+## 2. 准备数据和 schema
 
 ```bash
 mkdir -p data/sample_1000_raw
-uv run huggingface-cli download TAAC2026/data_sample_1000 \
-  demo_1000.parquet \
-  --repo-type dataset \
-  --local-dir data/sample_1000_raw
+uv run python - <<'PY'
+from huggingface_hub import hf_hub_download
+hf_hub_download(
+    repo_id="TAAC2026/data_sample_1000",
+    repo_type="dataset",
+    filename="demo_1000.parquet",
+    local_dir="data/sample_1000_raw",
+)
+PY
+cp docs/archive/files/schema/sample_1000_raw.schema.json data/sample_1000_raw/schema.json
 ```
 
-样例 schema 归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`。这是基于线上格式和线下 parquet 读取反推得到的参考快照；本地 smoke 命令建议显式传 `--schema-path` 使用它。
+下载需要访问 [Hugging Face 样例数据集](https://huggingface.co/datasets/TAAC2026/data_sample_1000)。后续命令固定使用这个本地文件，不会在默认缓存与自定义目录之间混用。
 
-本地 PCVR 训练、评估和推理可以显式传 `--dataset-path` 读取本地 parquet 文件或目录；调试自定义数据时也建议显式传 `--schema-path`，或把 `schema.json` 放在数据文件同目录。真实线上数据仍由 bundle 模式下的平台环境变量注入。
+不传 `--dataset-path` 时，普通 PCVR 实验会自动下载 demo；同时仍需要可用的 schema。默认 schema 查找位置是 `data/sample_1000_raw/schema.json`，不会自动改用 `docs/archive/`。自定义 parquet 必须配套实际 schema，不能直接套用 demo 的词表和字段长度。
 
-## 训练 Baseline
+## 3. 在 CPU 上训练一步
 
 ```bash
-bash run.sh train \
+uv run --with torch==2.13.0 taac-train \
   --experiment experiments/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/quickstart_baseline \
   --optimizer.device cpu \
   --data.num_workers 0 \
   --data.batch_size 8 \
   --optimizer.max_steps 1 \
-  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
+  --runtime.no_amp \
+  --runtime.no_compile
 ```
 
-训练完成后，输出目录里会有 checkpoint 和 sidecar。当前 checkpoint 通常位于：
+`taac-train` 外层参数使用连字符；实验训练配置使用带分组前缀的下划线形式，例如 `--data.batch_size`。不要写成 `--batch-size`。
+
+检查输出目录：
 
 ```text
 outputs/quickstart_baseline/
-└── global_step*/
-    ├── model.safetensors
-    ├── schema.json
-    └── train_config.json
+├── global_step*/
+│   ├── model.safetensors
+│   ├── schema.json
+│   └── train_config.json
+├── training_summary.json
+└── training_telemetry.json
 ```
 
-如果你有可用 GPU，可以把 `--optimizer.device cpu` 改成 `--optimizer.device cuda`，并适当调大 batch size / max steps。
+权重和两份 sidecar 应一起保存。评估、推理使用训练时保存的配置重建模型，不会用当前实验默认值补全缺失字段。
 
-## 评估训练结果
+## 4. 评估 checkpoint
 
 ```bash
-bash run.sh val \
+uv run --with torch==2.13.0 taac-evaluate single \
   --experiment experiments/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
   --run-dir outputs/quickstart_baseline \
-  --device cpu \
-  --num-workers 0 \
-  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
+  --device cpu --num-workers 0 --batch-size 8
 ```
 
-传 `--run-dir` 时，运行时会在目录下自动寻找最新的 `global_step*/model.safetensors`。
+`--run-dir` 会按 step 选择目录下最新的 `global_step*/model.safetensors`。默认 schema 来自该 checkpoint 目录。输出包含 `evaluation.json`、`validation_predictions.jsonl`、`evaluation_observed_schema.json` 和 `evaluation_telemetry.json`。
 
-评估会写出：
+这条独立评估命令扫描所给数据，不能当作训练时 held-out 切分的分数。模型对比应固定独立验证数据，并核对训练摘要里的切分信息。
 
-```text
-outputs/quickstart_baseline/
-├── evaluation.json
-├── validation_predictions.jsonl
-└── evaluation_observed_schema.json
-```
+## 5. 推理并检查结果
 
-`evaluation.json` 里包含 metrics、checkpoint 路径、schema 路径和数据诊断；`validation_predictions.jsonl` 保留逐样本验证预测，便于排查分数异常。
-
-## 生成推理结果
+先从评估报告读取它实际使用的权重路径，避免依赖目录名排序：
 
 ```bash
-bash run.sh infer \
+CHECKPOINT="$(uv run python - <<'PY'
+import json
+from pathlib import Path
+payload = json.loads(Path("outputs/quickstart_baseline/evaluation.json").read_text())
+print(payload["checkpoint_path"])
+PY
+)"
+
+uv run --with torch==2.13.0 taac-evaluate infer \
   --experiment experiments/baseline \
-  --checkpoint outputs/quickstart_baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --checkpoint "$CHECKPOINT" \
   --result-dir outputs/quickstart_infer \
-  --device cpu \
-  --num-workers 0 \
-  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
+  --device cpu --num-workers 0 --batch-size 8
 ```
 
-输出文件：
+显式 `--checkpoint` 接受权重文件，或直接包含 `model.safetensors` 的目录；不要传仅包含多个 `global_step*/` 子目录的 run 根目录。
 
-```text
-outputs/quickstart_infer/
-└── predictions.json
-```
-
-`predictions.json` 的顶层 key 是 `predictions`，内部是 `user_id -> probability`：
+`outputs/quickstart_infer/predictions.json` 的结构是：
 
 ```json
-{
-  "predictions": {
-    "user_001": 0.8732
-  }
-}
+{"predictions": {"user_001": 0.8732}}
 ```
 
-## 换一个实验包
+推理还会写 `inference_telemetry.json`。映射按 user id 存储，同一 id 不能表示多个独立候选记录；自定义数据应检查 key 的唯一性与平台约定。
 
-只改 `--experiment`：
+## 6. 切换到 GPU 或其他实验
+
+GPU 环境同步 `cuda132` 后，可使用统一 shell 入口：
 
 ```bash
 bash run.sh train \
-  --experiment experiments/interformer \
-  --run-dir outputs/quickstart_interformer \
-  --optimizer.device cpu \
-  --data.num_workers 0 \
-  --data.batch_size 8 \
-  --optimizer.max_steps 1 \
-  --schema-path docs/archive/files/schema/sample_1000_raw.schema.json
+  --experiment experiments/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
+  --run-dir outputs/baseline_gpu \
+  --optimizer.device cuda
 ```
 
-实验选择见 [实验包总览](experiments/index.md)。
+`run.sh` 本地默认会同步 CUDA extra；CPU 检查使用上面的 console scripts 更直接。shell 入口支持 `train`、`val`/`eval`、`infer`，不写子命令时为训练。不同实验只需替换 `--experiment`，但默认模型尺寸、增强、AMP 和 compile 可能不同，先查看[实验表](experiments/index.md)。
 
-## 生成线上 Bundle
-
-训练 bundle：
+## 7. 生成上传物
 
 ```bash
-uv run taac-package-train \
-  --experiment experiments/baseline \
-  --output-dir outputs/bundles/baseline_training
+uv run --with torch==2.13.0 taac-package-train \
+  --experiment experiments/baseline --output-dir outputs/bundles/baseline_training
+uv run --with torch==2.13.0 taac-package-infer \
+  --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
 ```
 
-推理 bundle：
+训练上传 `run.sh + code_package.zip`，推理上传 `infer.py + code_package.zip`。继续阅读 [Bundle 指南](guide/online-training-bundle.md)，先核对平台 Python 与依赖要求。归档平台 Python 3.10 环境不满足当前包的 Python 下限。
 
-```bash
-uv run taac-package-infer \
-  --experiment experiments/baseline \
-  --output-dir outputs/bundles/baseline_inference
-```
+## 排障
 
-训练 bundle 输出 `run.sh + code_package.zip`，推理 bundle 输出 `infer.py + code_package.zip`。上传和本地模拟方式见 [线上 Bundle 上传](guide/online-training-bundle.md)。
-
-## 命令边界
-
-`run.sh` 只支持：
-
-| 命令                                   | 用途                    |
-| -------------------------------------- | ----------------------- |
-| `bash run.sh train`                    | 训练实验                |
-| `bash run.sh val` / `bash run.sh eval` | 本地评估                |
-| `bash run.sh infer`                    | 生成 `predictions.json` |
-
-打包、测试和文档站分别使用独立命令：`taac-package-*`、`pytest` 和 `zensical`。
-
-`run.sh` 的分发逻辑在 `src/taac2026/application/bootstrap/run_sh.py`：
-
-- 不写子命令时默认等价于 `train`。
-- `train` 最终调用 `taac-train`。
-- `val` / `eval` / `infer` 最终调用 `taac-evaluate`。
-- 本地默认 runner 是 `uv`；bundle 模式或 `TAAC_RUNNER=python` 会改用当前 Python。
-- `--cuda-profile` 目前只接受 `cuda132`，也可以用 `TAAC_CUDA_PROFILE=cuda132`。
-
-训练 CLI 使用嵌套配置：参数按 `PCVRTrainConfig` 的分组加前缀，例如 `--data.batch_size`、`--data.num_workers`、`--optimizer.max_steps`、`--optimizer.device`。评估和推理 CLI 仍是扁平参数，使用连字符形式：`--num-workers`、`--batch-size`、`--device`。
-
-## 常见失败
-
-| 现象 | 处理 |
-| ---- | ---- |
-| `uv is required but not found` | 本地安装 `uv`，或显式设置 `TAAC_RUNNER=python` 并确认依赖已安装 |
-| 找不到默认 `schema.json` | 传 `--schema-path docs/archive/files/schema/sample_1000_raw.schema.json` |
-| 找不到 checkpoint | 确认 `--run-dir` 或 `--checkpoint` 指向包含 `global_step*/` 的目录 |
-| 推理缺 `train_config.json` 或 `schema.json` | checkpoint 目录不完整，需要使用训练产物目录而不是只拷贝权重 |
-| CUDA OOM | 降低 `--data.batch_size`、序列长度、模型宽度或改用 `--optimizer.device cpu` 做链路检查 |
+| 现象 | 检查位置 |
+| --- | --- |
+| `No module named torch` | 当前命令是否带 CUDA extra 或 `--with torch==2.13.0` |
+| 默认 schema 不存在 | 准备 `data/sample_1000_raw/schema.json` 或传显式路径 |
+| CLI 拒绝参数 | 区分训练 `--data.batch_size` 与评估 `--batch-size` |
+| 找不到权重 | 评估传 `--run-dir`；推理显式传具体权重或 checkpoint 目录 |
+| sidecar 校验失败 | 保留三件套，核对产物与代码版本，见[架构](architecture.md) |
+| CUDA OOM | 先降低 batch、序列上限或宽度，见[梯度检查点](guide/gradient-checkpointing.md) |

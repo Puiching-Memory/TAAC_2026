@@ -2,450 +2,103 @@
 icon: lucide/blocks
 ---
 
-# 架构与概念
+# 架构与运行契约
 
-这页先给完整项目结构，再解释各层职责和依赖方向。当前仓库的核心设计是：实验包保持薄，框架层承接共享训练、评估、推理、打包和运行时能力。
+实验包负责模型与默认值，共享框架负责一次实验如何执行。修改时先确定责任层，再沿数据和文件的生产者、消费者核对影响范围。
 
-## 项目结构
+## 目录与依赖
 
-```text
-TAAC_2026/
-├── .agents/                  # 按任务加载的 agent skills 与工具参考
-├── .github/workflows/         # CI 与 GitHub Pages 部署
-├── docker/                    # 本地容器镜像与入口脚本
-├── docs/                      # 文档源文件，Zensical 从这里构建站点
-├── experiments/               # 可被加载、训练、评估、推理或打包的实验包
-├── figures/                   # README / 项目级图片资产
-├── src/taac2026/              # 共享框架代码
-├── tests/                     # 单元测试与测试支撑代码
-├── tools/                     # 仓库维护脚本
-├── README.md                  # 仓库首页说明
-├── run.sh                     # 本地和训练 bundle 共用的 shell 入口
-├── pyproject.toml             # Python 包、依赖、脚本入口和工具配置
-├── uv.lock                    # uv 锁文件
-└── zensical.toml              # 文档站配置与导航
-```
-
-下面这些目录经常会出现在工作区，但不是架构源文件：
-
-| 路径 | 性质 |
-| ---- | ---- |
-| `site/` | Zensical 本地构建产物 |
-| `outputs/` | 训练、推理、bundle 和 benchmark 输出 |
-| `.venv/` | 本地虚拟环境 |
-| `.cache/`、`.benchmarks/`、`.pytest_cache/`、`.ruff_cache/` | 工具缓存 |
-| `__pycache__/` | Python 字节码缓存 |
-
-## 框架代码结构
-
-`src/taac2026` 是共享框架。实验包不应该复制这里的训练、推理、数据读取或打包逻辑。
+| 目录 | 职责 | 典型修改 |
+| --- | --- | --- |
+| `experiments/` | 实验身份、模型组合、私有层与配置扩展 | 新增模型或消融开关 |
+| `src/taac2026/domain/` | 配置、schema、请求、指标与 sidecar 类型 | 改变边界格式或参数约束 |
+| `src/taac2026/application/` | 训练、评估、推理、打包等用例编排 | 改变流程和产物 |
+| `src/taac2026/infrastructure/` | parquet、运行时、建模组件、优化器、加速器、平台 IO | 实现具体技术能力 |
+| `tests/` | unit、contract、integration、CPU benchmark 与 GPU 验证 | 验证可观察契约 |
+| `docs/` | 文档正文、归档与静态资源 | 改变使用说明 |
 
 ```text
-src/taac2026/
-├── api.py                     # 给实验包使用的稳定 public facade
-├── domain/
-│   ├── config.py              # PCVR train/model/data/cache/pipeline/optimizer/NS 配置
-│   ├── experiment.py          # Experiment Protocol / FunctionExperiment 插件契约
-│   ├── metrics.py             # AUC / LogLoss / GAUC / 诊断指标
-│   ├── requests.py            # TrainRequest / EvalRequest / InferRequest
-│   ├── runtime_config.py      # AMP、compile、determinism、loss 和 optimizer 边界配置
-│   ├── schema.py              # PCVRSchema（frozen Pydantic，extra=forbid）
-│   └── sidecar.py             # train_config sidecar 契约
-├── application/
-│   ├── benchmarking/
-│   │   ├── generate_pcvr_synthetic_dataset.py
-│   │   ├── pcvr_data_pipeline_benchmark.py
-│   │   ├── pcvr_optimizer_benchmark.py
-│   │   └── pcvr_tilelang_ops_benchmark.py
-│   ├── bootstrap/
-│   │   ├── inference_bundle.py
-│   │   ├── inference_bundle_entrypoint.py
-│   │   └── run_sh.py
-│   ├── evaluation/
-│   │   ├── cli.py
-│   │   ├── infer.py
-│   │   ├── runtime.py
-│   │   └── workflow.py
-│   ├── experiments/
-│   │   ├── experiment.py
-│   │   └── registry.py
-│   ├── packaging/
-│   │   ├── cli.py
-│   │   └── service.py
-│   └── training/
-│       ├── args.py
-│       ├── cli.py
-│       └── workflow.py
-└── infrastructure/
-    ├── accelerators/
-    │   ├── chunking.py
-    │   ├── group_reduce.py
-    │   ├── prefix_scan.py
-    │   ├── tensor_validation.py
-    │   ├── tensor_ops.py
-    │   ├── attention/
-    │   │   ├── flash_attention.py
-    │   │   ├── gated_delta_rule_capabilities.py
-    │   │   ├── gated_delta_rule.py
-    │   │   ├── kernels/
-    │   │   │   ├── gated_delta_rule/
-    │   │   │   └── tilelang.py
-    │   │   └── mla.py
-    │   ├── embedding/
-    │   │   └── embedding_bag.py
-    │   ├── normalization/
-    │   │   ├── kernels/
-    │   │   │   └── tilelang.py
-    │   │   └── rms_norm.py
-    │   └── tilelang_runtime.py
-    ├── bundles/
-    │   ├── manifest_store.py
-    │   └── zip_writer.py
-    ├── data/
-    │   ├── batches.py
-    │   ├── cache.py
-    │   ├── dataset.py
-    │   ├── hash_split.py
-    │   ├── observation.py
-    │   ├── pipeline.py
-    │   ├── sample_dataset.py
-    │   ├── shuffle.py
-    │   └── transforms.py
-    ├── experiments/
-    │   └── module_loader.py
-    ├── io/
-    │   ├── files.py
-    │   ├── json.py
-    │   └── streams.py
-    ├── modeling/
-    │   ├── embeddings.py
-    │   ├── model_contract.py  # schema -> 模型构造 specs（build_pcvr_model_specs）
-    │   ├── normalization.py
-    │   ├── sequence.py
-    │   ├── tensors.py
-    │   └── tokenizers.py
-    ├── optimization/
-    │   ├── muon.py
-    │   ├── registry.py
-    │   ├── schedules.py
-    │   └── transforms.py
-    ├── platform/
-    │   ├── deps.py
-    │   ├── env.py
-    │   └── imports.py
-    ├── runtime/
-    │   ├── checkpoint_io.py
-    │   ├── execution.py
-    │   ├── reporting.py
-    │   └── trainer.py
-    ├── checkpoints.py
-    └── logging.py
+experiments → taac2026.api → domain / application / infrastructure
+application → domain + infrastructure
+infrastructure → domain
+domain → 标准库与轻量类型依赖
 ```
 
-`application/` 按用例组织，`infrastructure/` 按技术能力组织。看到一个新需求时，先判断它是“用例编排”还是“技术实现”；这一步比目录名本身更重要。
+实验共享能力通过 `taac2026.api` 导入。通用基础设施不选择实验，domain 不解析 CLI、不读文件或探测设备。配置模型中的 `model.ns` 负责特征分组；通用 parquet/schema 层保持模型无关。
 
-## 实验包结构
+## 实验加载
 
-`experiments/` 是可加载单元。普通模型实验由 `__init__.py` 声明 `EXPERIMENT`，由 `model.py` 实现模型；复杂实验可以带私有 `layers.py`。
+`application/experiments/registry.py` 接受文件系统路径或 Python module，读取模块导出的 `EXPERIMENT`，并校验 `Experiment` Protocol。协议包含 `name`、`kind`、`requires_dataset`、默认配置及 `train/evaluate/infer` 方法。
+
+普通 PCVR 实验用 `create_pcvr_experiment()` 绑定模型类、配置类型与默认值。维护工具使用 `FunctionExperiment`，只实现需要的回调；没有对应回调的操作会失败。EDA 支持训练和推理，Host Device Info 仅支持训练。
+
+## 训练路径
 
 ```text
-experiments/
-├── baseline/
-│   ├── __init__.py            # HyFormer 干净参照的 EXPERIMENT 与 TRAIN_DEFAULTS
-│   └── model.py
-├── interformer/
-│   ├── __init__.py
-│   └── model.py
-├── onetrans/
-│   ├── __init__.py
-│   └── model.py
-├── tokenformer/
-│   ├── __init__.py
-│   └── model.py
-├── symbiosis/
-│   ├── __init__.py            # V2/V3 配置扩展（SymbiosisModelConfig）与消融默认值
-│   ├── config.py
-│   └── model.py
-├── dualq/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── hyformer.py
-│   ├── layers.py
-│   └── model.py
-├── queryformer/
-│   ├── __init__.py
-│   ├── config.py
-│   └── model.py
-├── host_device_info/
-│   ├── __init__.py            # 维护实验：采集线上机器环境
-│   └── runner.py
-└── online_dataset_eda/
-    ├── __init__.py            # 维护实验：线上 parquet 文本化 EDA
-    └── runner.py
+run.sh / taac-train
+    → TrainRequest + 实验 TRAIN_DEFAULTS + CLI 覆盖
+    → schema、parquet、切分、PCVRBatch
+    → model_type(schema, config)
+    → trainer：forward → loss → backward → optimizer → validation
+    → checkpoint + sidecar + summary + telemetry
 ```
 
-普通模型实验的稳定形状是 `__init__.py + model.py`，可选 `layers.py`。维护实验的稳定形状是 `__init__.py + runner.py`。
+`PCVRTrainConfig` 及其子配置是 frozen Pydantic 模型，CLI、默认值、sidecar 共享这份表示。实验扩展配置时必须把相应 `config_type` 传给工厂。构造模型时，workflow 将 `train_config.model` 传给模型的 `config` 参数。
 
-## 文档和测试结构
+数据加载输出 `PCVRBatch`，模型接收 `PCVRModelInput`。`forward()` 返回 `(B,)` logits；`predict()` 返回 logits 与表征。分类概率和文件输出由共享评估流程处理。稀疏与稠密参数按模型契约分组，不能重复加入两个 optimizer。
 
-文档源在 `docs/`，站点导航在 `zensical.toml`。分区 `index.md` 负责导览，叶子页负责具体契约和命令。
+## Schema 的唯一来源
+
+| 场景 | 首选 | 未显式提供时 |
+| --- | --- | --- |
+| 显式本地数据训练 | `--schema-path` | 数据目录中的 `schema.json`，文件数据则取其父目录 |
+| 默认 demo 训练 | `--schema-path` | 仓库 `data/sample_1000_raw/schema.json` |
+| 评估/推理模型重建 | `--schema-path` | 所选 checkpoint 同目录的 `schema.json` |
+
+显式路径无效会立即失败，不会继续猜测其他来源。schema 声明字段、词表与维度；observed schema 记录实际扫描统计，二者用途不同。切分和诊断详见[数据管道](guide/pcvr-data-pipeline.md)。
+
+## Checkpoint 契约
 
 ```text
-docs/
-├── archive/                   # schema 和官方 baseline 快照
-├── experiments/               # 每个实验包的结构、默认配置、修改点和测试契约
-├── guide/                     # 任务型指南：打包、数据管道、测试、文档站、平台环境
-├── ideas/                     # 比赛想法和技术笔记
-├── papers/                    # 论文解读和技术时间线
-├── assets/                    # 图片、JS、CSS
-└── overrides/                 # 文档站模板覆盖
-```
-
-测试按被测层组织：
-
-```text
-tests/
-├── support/                   # 测试辅助
-└── unit/
-    ├── application/           # CLI、workflow、bundle、experiment runtime
-    ├── domain/                # schema、model contract、metrics
-    ├── experiments/           # 实验包发现、契约矩阵、维护实验
-    └── infrastructure/        # data、accelerators、bundles、modeling、runtime
-```
-
-## 分层职责
-
-改代码时先判断自己在改哪一层：
-
-| 层                | 放什么                                                                 | 不该放什么                             |
-| ----------------- | ---------------------------------------------------------------------- | -------------------------------------- |
-| `experiments/`    | 实验名、默认配置、模型类、实验私有 helper                              | 共享训练流程、通用数据读取、打包逻辑   |
-| `domain/`         | request、config、schema、model contract、sidecar、metrics              | CLI 参数、环境变量、文件系统探测       |
-| `application/`    | train/eval/infer/packaging/bootstrap 的用例流程                        | 低层 parquet 读取、具体 optimizer 算法 |
-| `infrastructure/` | data、modeling、runtime、optimization、accelerators、bundles、platform | 实验选择策略和业务语义                 |
-
-依赖方向应保持单向：
-
-```text
-experiments/ -> taac2026.api -> domain/application/infrastructure
-application/ -> domain + infrastructure
-infrastructure/ -> domain 或纯技术依赖
-domain/ -> 标准库 / 轻量类型，不依赖 application 或 infrastructure
-```
-
-`taac2026.api` 是给实验包的稳定门面。实验包直接 import 内部模块不是绝对禁止，但应该有明确理由。
-
-## 数据切分策略
-
-PCVR 训练入口支持四种验证切分策略，统一由 `PCVRDataConfig.split_strategy` 和训练 CLI 的 `--data.split_strategy` 控制：
-
-| 策略 | 用途 | 说明 |
-| ---- | ---- | ---- |
-| `row_group_tail` | 本地 smoke 和兼容默认 | 使用尾部 row group 做 valid，启动成本最低 |
-| `timestamp_auto` | 首选线上泛化验证 | 根据 `timestamp` 自动把最新一段样本切为 valid，用户只需要配置 `valid_ratio` |
-| `user_hash` | 用户级泛化验证 | 按原始 `user_id` 稳定 hash 分桶，train/valid 用户互斥；空 ID 时回退到样本位置 |
-| `sample_hash` | 样本级稳定验证 | 按 parquet 文件名、row group、行位置稳定 hash 分桶，适合没有可靠 user key 或时间窗的场景 |
-
-`timestamp_auto`、`user_hash` 和 `sample_hash` 都是 row-level filter。为了避免随机取 batch 后被过滤为空，训练数据加载会把 `step_random` 自动降级为 `row_group_sweep`。隐藏评测出现 train/infer drift 时，优先使用 `timestamp_auto`；没有可靠时间列时，再用 `user_hash` 或 `sample_hash` 作为比随机切分更稳的验证口径。
-
-两种 hash 策略共享 `infrastructure/data/hash_split.py` 的唯一选择实现，训练 loader 与 observed-schema 报告不能各自解释分桶。`optimizer.seed` 同时作为 `split_seed`；`valid_ratio` 先确定 valid 桶，`train_ratio` 再从剩余桶中确定实际训练子集，所以 `train_ratio < 1` 时会有一部分样本既不参与训练也不参与验证。sample hash 只使用文件名而不是绝对父目录，同一数据复制到另一台机器不会改变划分；user hash 对非空原始 `user_id` 只使用 ID 与 seed，同一用户跨文件和 row group 仍落在同一侧，空 ID 才回退到 sample hash。
-
-训练启动时显示的 hash 行数是比例估算。训练结束后，`train_split_observed_schema.json` 与 `valid_split_observed_schema.json` 使用完全相同的 filter 重新扫描，并记录精确 `row_count` 和完整 `hash_split_filter`（strategy、role、valid/train ratio、seed）。`train_ratio`、`valid_ratio` 在类型化配置边界分别约束为 `(0, 1]` 与 `(0, 1)`；很小的数据集仍可能因 hash 随机性得到空侧，应扩大数据而不是静默复用样本。
-
-## 边界契约与 Pydantic
-
-Pydantic 在这个仓库里主要用于跨边界 payload，而不是替代所有内部类型。适合使用 Pydantic 的位置包括：
-
-- 需要读写 JSON 的持久化契约，例如 checkpoint sidecar。
-- 需要被平台或 bundle 消费的 manifest。
-- 插件、实验包或外部入口传入的结构化 payload。
-
-这些模型应继承 `taac2026.domain.validation.TAACBoundaryModel`，默认拒绝未知字段，避免平台或历史文件悄悄带入未定义配置。业务版本、格式号、路径范围、枚举兼容等规则应放在模型或紧邻模型的验证函数里。
-
-实验默认配置（`PCVRTrainConfig` 及其子配置）本身就是 frozen Pydantic 模型：CLI 解析（Tyro）、checkpoint sidecar 和实验包默认值共享同一份权威表示。内部训练上下文、张量载体和热路径对象仍优先使用 dataclass 或专用类型（如 `PCVRBatch`、`PCVRModelInput`）。
-
-## 实验包是什么
-
-每个实验包通过 `EXPERIMENT` 暴露能力：
-
-```text
-experiments/baseline/
-├── __init__.py   # 导出 EXPERIMENT，声明默认配置和模型类
-└── model.py      # 当前实验的模型实现
-```
-
-普通 PCVR 模型实验通常用 `create_pcvr_experiment()` 创建。维护类实验直接导出 `FunctionExperiment`，例如 `host_device_info` 和 `online_dataset_eda`。
-
-注册表只校验 `EXPERIMENT` 是否满足 `Experiment` Protocol，并返回实验包声明的原始对象。实验类型和数据要求通过显式的 `kind`、`requires_dataset` 属性表达，不再使用松散的 metadata 字典或二次包装。
-
-## 公共 API
-
-实验包应优先从 `taac2026.api` 导入共享能力。这样实验包依赖的是稳定表面，而不是内部目录布局。
-
-常用导入包括：
-
-- `FunctionExperiment`、`TrainRequest`、`EvalRequest`、`InferRequest`
-- `PCVRTrainConfig`、`PCVRModelConfig`、`PCVRNSConfig`
-- `PCVRDataPipelineConfig`、cache 和 transform 配置
-- `RuntimeExecutionConfig`、`PCVRLossConfig`、`PCVRLossTermConfig`
-- `PCVRModelInput`、`PCVRBatch`、`PCVRSequenceInput`、`PCVREntityInput`
-- 建模 primitives，例如 tokenizer、embedding bank、RMSNorm
-- `create_pcvr_experiment`
-
-如果一个实验包需要深度 import `application/` 或 `infrastructure/`，先想一下这是不是共享能力应该沉到框架层。
-
-## 关键持久化契约
-
-这几个文件会跨训练、评估、推理和 bundle 边界，不应随手改格式：
-
-| 文件                            | 写入方             | 读取方                 | 作用                              |
-| ------------------------------- | ------------------ | ---------------------- | --------------------------------- |
-| `model.safetensors`             | trainer            | evaluation / inference | 模型权重                          |
-| `schema.json`                   | checkpoint sidecar | model contract         | 重建 feature schema               |
-| `train_config.json`             | checkpoint sidecar | evaluation runtime   | 重建模型配置、NS 分组和运行时参数 |
-| `.taac_training_manifest.json`  | package train      | bundle bootstrap       | 训练 bundle 元数据                |
-| `.taac_inference_manifest.json` | package infer      | inference bootstrap    | 推理 bundle 元数据                |
-
-checkpoint sidecar 是 runtime contract，不是日志。改模型构造参数、NS 配置或 schema 解析时，要确认当前 checkpoint 的评估和推理路径。
-
-## 一次训练怎么流动
-
-本地入口：
-
-```bash
-bash run.sh train --experiment experiments/baseline
-```
-
-核心流程：
-
-1. `run.sh` 分发到 `taac-train`。
-2. training CLI 解析实验包和输出目录。
-3. experiment registry 加载 `experiments/<name>/__init__.py` 的 `EXPERIMENT`。
-4. PCVR train workflow 解析默认配置、数据与 schema。schema 来源按场景固定：
-   - 训练：显式 CLI/环境变量路径，否则数据集目录的 `schema.json`（`resolve_training_schema_path`）；
-   - 评估/推理：显式路径，否则 checkpoint 同目录的 `schema.json`（`resolve_checkpoint_schema_path`）。
-   显式路径不存在立即失败，不做多级探测。
-5. data infrastructure 读取 parquet，构造 `PCVRBatch`，执行 cache / transforms。
-6. model contract 把 schema 编译成模型构造 specs（`build_pcvr_model_specs`），统一构造 `model_type(schema, config)`。
-7. trainer 执行训练，写 checkpoint 和 sidecar。
-
-训练产物的关键约定：
-
-```text
-global_step*/
+global_step<step>.../
 ├── model.safetensors
 ├── schema.json
 └── train_config.json
 ```
 
-评估和推理会读取 checkpoint 同目录的 sidecar 来重建模型输入契约。`schema.json` 与 `train_config.json` 都是 checkpoint 的必需 sidecar：`write_checkpoint_sidecars` 同时写出两者，缺少任何一个都会失败，避免出现"权重已保存但配置缺失"的中间产物。`train_config.json` 是 typed `PCVRTrainConfig` 的完整快照（`build_pcvr_train_config_sidecar` / `load_pcvr_train_config_sidecar`），加载时校验字段完整性，缺字段或未知字段都会报错，不会用当前默认值静默补齐。
+| 文件 | 生产者 | 消费者 |
+| --- | --- | --- |
+| `model.safetensors` | `infrastructure/checkpoints.py` | 评估与推理权重加载 |
+| `schema.json` | checkpoint sidecar 写入 | 模型输入契约重建 |
+| `train_config.json` | typed 配置序列化 | 对应实验的配置类型加载 |
+| `.taac_training_manifest.json` | 训练打包 | shell bootstrap |
+| `.taac_inference_manifest.json` | 推理打包 | Python bootstrap |
 
-相关实现文件：
+`train_config.json` 是完整配置快照。缺失字段、未知字段或错误类型会失败，不能靠新默认值“修复”旧权重。修改 schema、模型配置或 sidecar 时，需要同时更新训练、评估、推理、打包和测试。
 
-| 阶段                 | 文件                                                   |
-| -------------------- | ------------------------------------------------------ |
-| CLI 解析             | `src/taac2026/application/training/cli.py`             |
-| PCVR 参数 parser     | `src/taac2026/application/training/args.py`            |
-| 实验加载             | `src/taac2026/application/experiments/registry.py`     |
-| 默认训练 workflow    | `src/taac2026/application/training/workflow.py`        |
-| 数据读取             | `src/taac2026/infrastructure/data/dataset.py`          |
-| batch -> model input | `src/taac2026/infrastructure/modeling/model_contract.py` |
-| trainer              | `src/taac2026/infrastructure/runtime/trainer.py`       |
-| checkpoint IO        | `src/taac2026/infrastructure/runtime/checkpoint_io.py` |
+评估未传具体 checkpoint 时，从 `--run-dir` 下按 step 选择最新权重。显式 `--checkpoint` 则只解析给定文件或直接包含权重的目录。最新 step 也不等于验证指标最优；实验报告应记录最终选中的路径。
 
-## 本地数据和线上数据
+这些文件主要用于模型重建和预测，不能仅凭它们推断支持完整恢复 optimizer、采样位置与随机数状态后续训。
 
-本地 PCVR smoke 默认使用 Hugging Face `TAAC2026/data_sample_1000` 的样例 parquet；调试时可以显式传 `--dataset-path` 指向本地 parquet 文件或目录。仓库不提交 parquet 数据；样例 schema 参考快照归档在 `docs/archive/files/schema/sample_1000_raw.schema.json`，本地命令调试自定义数据时应显式传 `--schema-path` 或让数据目录提供 `schema.json`。这样既保留默认数据来源清晰度，也方便复现本地样本问题。
+## CLI 与平台边界
 
-线上 bundle 相反：真实数据路径来自平台变量，例如 `TRAIN_DATA_PATH`、`EVAL_DATA_PATH` 和 `TAAC_SCHEMA_PATH`。bundle 模式使用平台 Python，不依赖线上 `uv`。
+训练外层参数由 `training/cli.py` 解析，剩余参数由 `training/args.py` 以 `use_underscores=True` 交给 Tyro。因此 `--experiment`、`--dataset-path` 和 `--optimizer.max_steps` 属于两层配置。
 
-这条边界很重要：不要把本地 demo 路径写死进实验包，也不要让线上 bundle 依赖仓库外的开发工具。
+评估 CLI 有 `single` 与 `infer` 子命令，使用 `--batch-size`、`--num-workers` 等扁平参数。`run.sh val` 会转换为 `taac-evaluate single`。
 
-本地 `run.sh` 默认 runner 是 `uv`。bundle runner 默认是 `python`。这由 `src/taac2026/infrastructure/platform/env.py` 的 platform adapter 决定。
+本地 shell 默认 runner 为 uv，bundle 为平台 Python。bundle 只带共享框架和选中的实验，不能依赖仓库的其他实验、测试、文档或 lockfile。平台变量到 CLI 的映射与已知 Python 版本缺口见 [Bundle](guide/online-training-bundle.md)。
 
-## 数据管道
+## 从问题定位源码
 
-数据管道由 `PCVRDataPipelineConfig` 描述，实现在 `infrastructure/data/`。
+| 问题 | 首查文件 |
+| --- | --- |
+| 命令分发、平台变量 | `application/bootstrap/run_sh.py` |
+| 训练参数与编排 | `application/training/cli.py`、`args.py`、`workflow.py` |
+| 实验发现与执行 | `application/experiments/registry.py`、`experiment.py` |
+| 评估/推理 | `application/evaluation/cli.py`、`runtime.py`、`workflow.py` |
+| schema 与模型构造 | `infrastructure/modeling/model_contract.py` |
+| batch 转换与采样 | `infrastructure/data/batch_converter.py`、`step_dataset.py` |
+| 训练更新与保存 | `infrastructure/runtime/trainer.py`、`checkpoint_io.py` |
+| 上传包与 manifest | `application/packaging/`、`infrastructure/bundles/` |
 
-默认顺序可以理解为：
-
-1. parquet -> base batch
-2. base-batch cache
-3. 结构性 transform，例如 sequence crop / multi-view
-4. 随机性 transform，例如 feature mask / domain dropout
-5. shuffle、rebatch、prefetch
-
-训练可以启用随机增强；验证和推理应保持确定性。数据增强配置对象在 `src/taac2026/domain/config.py`，实际 transform 在 `src/taac2026/infrastructure/data/transforms.py`。
-
-## 运行时和加速
-
-训练 runtime 关注“怎么跑”：
-
-- AMP / dtype
-- `torch.compile`
-- seed 和日志
-- early stopping
-- checkpoint IO
-- optimizer 和 scheduler
-
-加速层按算子族组织：
-
-- attention：FlashAttention / QLA surface 和 kernels
-- normalization：RMSNorm surface 和 TileLang kernels
-- embedding：embedding 相关 fused operator
-
-上层模型应依赖 operator surface，例如 `RMSNorm` 或 attention helper，而不是直接耦合 TileLang kernel 文件。
-
-## 打包边界
-
-线上上传物有两类：
-
-| 类型        | 文件                          |
-| ----------- | ----------------------------- |
-| 训练 bundle | `run.sh + code_package.zip`   |
-| 推理 bundle | `infer.py + code_package.zip` |
-
-zip 内部只带 `src/taac2026`、当前实验包、`pyproject.toml` 和 manifest。它不会把整个仓库、测试、无关实验包或 `uv.lock` 全塞进去。
-
-打包逻辑分层：
-
-- `application/packaging/`：打包用例
-- `infrastructure/bundles/`：manifest 和 zip primitive
-- `application/bootstrap/`：线上入口解压、安装、分发
-
-训练 bundle 的 manifest 是 `.taac_training_manifest.json`，推理 bundle 的 manifest 是 `.taac_inference_manifest.json`。`run.sh` 负责训练 bundle 解压与命令分发；`infer.py` 负责推理 bundle 解压与评测入口适配。
-
-## 测试边界
-
-架构层面的改动通常要按契约选测试：
-
-| 改动                    | 重点测试                                                                                        |
-| ----------------------- | ----------------------------------------------------------------------------------------------- |
-| 实验包入口 / 默认配置   | `tests/contract/experiments/test_packages.py`，`tests/contract/experiments/test_runtime_contract_matrix.py` |
-| model contract / schema | `tests/unit/domain/test_model_contract.py`                                                      |
-| 训练 CLI / workflow     | `tests/unit/application/training/`                                                              |
-| 评估 / 推理             | `tests/unit/application/evaluation/`，`tests/unit/application/experiments/test_pcvr_runtime.py` |
-| bundle                  | `tests/integration/application/packaging/`，`tests/unit/application/bootstrap/`，`tests/integration/application/bootstrap/`                        |
-| 数据管道                | `tests/unit/infrastructure/data/`                                                               |
-| accelerator             | `tests/unit/infrastructure/accelerators/`                                                       |
-
-## 改动时的判断
-
-- 只换模型结构：优先改 `experiments/<name>/model.py`。
-- 只换默认超参或数据增强：改 `experiments/<name>/__init__.py`。
-- 多个实验都会用到：考虑放进 `src/taac2026/infrastructure/modeling/` 或 `data/`。
-- 改 CLI、bundle、环境变量：看 `application/` 和 `platform/`。
-- 改 checkpoint、schema、sidecar：先看 `domain/` 契约，再看 runtime。
-
-## 常见落点例子
-
-| 需求                                       | 合适位置                                       | 原因                           |
-| ------------------------------------------ | ---------------------------------------------- | ------------------------------ |
-| 新模型只被一个实验使用                     | `experiments/<name>/model.py`                  | 保持实验私有，避免框架层膨胀   |
-| 多个实验共用 tokenizer / pooling primitive | `src/taac2026/infrastructure/modeling/`        | 属于可复用建模实现             |
-| 新增训练 CLI 参数                          | `src/taac2026/application/training/args.py`    | CLI 是用例入口，不属于模型包   |
-| 新增 checkpoint sidecar 字段               | `src/taac2026/domain/sidecar.py` 和 runtime IO | 字段会跨训练、评估、推理持久化 |
-| 新增线上 bundle manifest 字段              | `src/taac2026/infrastructure/bundles/`         | manifest 是打包 primitive      |
-| 新增平台环境变量解析                       | `src/taac2026/infrastructure/platform/`        | 环境差异属于平台适配           |
-
-反过来，如果一个实验包开始复制 data loader、checkpoint writer 或 bundle bootstrap，通常说明共享能力放错了位置。
+表中源码路径相对 `src/taac2026/`。新增实验见[接入指南](guide/contributing.md)，修改后按[测试指南](guide/testing.md)验证。

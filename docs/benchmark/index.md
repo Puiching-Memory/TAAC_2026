@@ -2,79 +2,34 @@
 icon: lucide/gauge
 ---
 
-# Benchmark 总览
+# Benchmark：口径、结果与限制
 
-这个目录记录 TAAC 里的 benchmark 口径，包括数据管道 cache 策略、accelerator 算子的逐项记录和 [Triton / TileLang 算子路线图](operator-roadmap.md)。每个独立 benchmark 页面都应该写清楚支持状态、可复现命令、关键参数、误差或吞吐口径和最近一次本地验收观察。
+本分区保存测量方法、已有历史记录和优化候选。历史表格未经本次 GPU 复测，不能称作当前代码性能；新的结论应从[性能指南](../guide/performance-benchmarks.md)重新生成 JSON。
 
-这里的数字不是长期事实。正式结论必须重新记录 commit、硬件、CUDA / PyTorch / TileLang 版本、完整命令和 JSON 输出。推荐输出到 `outputs/benchmarks/`，不要提交生成结果，除非要做一次明确的报告快照。
+## 按问题选择
 
-## 数据管道索引
+| 问题 | 页面 |
+| --- | --- |
+| 模型输出是否稳定、是否只靠特定样本 | [PCVR 诊断](pcvr-diagnostics.md) |
+| 缓存是否值得占用内存 | [Cache Policies](cache-policies.md) |
+| normalization kernel 是否有效 | [RMSNorm](rms-norm.md)、[LayerNorm](layer-norm.md) |
+| attention 加速是否覆盖真实形状 | [Flash Attention](flash-attention.md) |
+| 多值 sparse lookup/pooling 是否受益 | [Embedding Bag Mean](embedding-bag-mean.md) |
+| 下一步优化如何选题 | [算子路线图](operator-roadmap.md) |
 
-| 主题                   | CLI 入口                            | 当前用途                                   | 页面                                      |
-| ---------------------- | ----------------------------------- | ------------------------------------------ | ----------------------------------------- |
-| PCVR smoke diagnostics | `taac-plot-pcvr-diagnostics`        | demo1000 下的运行成本、预测行为和稳定性图 | [PCVR Smoke Diagnostics](pcvr-diagnostics.md) |
-| Cache policies         | `taac-benchmark-pcvr-data-pipeline` | 比较 `lru/fifo/lfu/rr/opt` 策略            | [Cache Policies](cache-policies.md)       |
+## 已声明的 Backend
 
-## 算子索引
+| 算子 | torch | TileLang | Triton | cuEmbed |
+| --- | --- | --- | --- | --- |
+| RMSNorm | reference | 有实现 | 有实现 | — |
+| LayerNorm | reference | 未接入 | 有实现 | — |
+| Flash Attention | SDPA | 有实现 | 未接入 | — |
+| Embedding Bag Mean | reference | 有实现 | 有实现 | 仅 forward |
 
-| 算子               | CLI `--operator`     | 当前用途                                      | Backend 策略                                            | 页面                                        |
-| ------------------ | -------------------- | --------------------------------------------- | ------------------------------------------------------- | ------------------------------------------- |
-| RMSNorm            | `rms_norm`           | normalization forward/backward microbenchmark | 由模型 runtime 的 RMSNorm backend 配置决定              | [RMSNorm](rms-norm.md)                      |
-| LayerNorm          | `layer_norm`         | affine LayerNorm forward/backward microbenchmark | 默认 `torch`；显式传 `triton` 才启用 accelerator，TileLang 待补 | [LayerNorm](layer-norm.md)                  |
-| Flash Attention    | `flash_attention`    | attention forward/backward 和 mask 约束验证   | 由 sequence runtime 的 flash attention backend 配置决定 | [Flash Attention](flash-attention.md)       |
-| Embedding bag mean | `embedding_bag_mean` | non-sequential sparse feature mean pooling    | 默认 `torch`；显式传 `tilelang`、`triton` 或 `cuembed` 才启用 accelerator | [Embedding Bag Mean](embedding-bag-mean.md) |
+这张表描述源码能力，不代表每种 dtype/shape/mask 都可运行，也不表示模型已默认启用该 backend。
 
-## 算子开发路线图
+## 读 JSON 的顺序
 
-未接入 benchmark CLI 的候选算子、缺失 backend 和已有源码 TODO 统一记录在 [Triton / TileLang 算子路线图](operator-roadmap.md)。新增算子时，先补 runtime surface、torch reference 对照、CUDA 单测和 benchmark 页面，再把该算子加入上方索引。
+先看 `status` 与 `resolved_backend`，再检查 `max_abs_error`、`max_rel_error`，最后比较 `step_time_ms_mean` 与离散程度。`compile_sec` 是首次编译成本，独立于稳态时间。
 
-通用命令入口：
-
-```bash
-uv run taac-benchmark-pcvr-tilelang-ops --help
-```
-
-输出 JSON 中优先看：
-
-| 字段                              | 含义                                                                        |
-| --------------------------------- | --------------------------------------------------------------------------- |
-| `status`                          | `ok`、`unsupported` 或 `error`；`unsupported` 常见于 CPU、缺 TileLang、缺 Triton、缺 CUDA toolkit 或 cuEmbed JIT 不可用 |
-| `resolved_backend`                | 实际使用的 backend                                                          |
-| `step_time_ms_mean`               | 多次 repeat 后的平均单步耗时                                                |
-| `compile_sec`                     | accelerator 首次 JIT 编译时间，不应混入稳态吞吐判断                         |
-| `max_abs_error` / `max_rel_error` | 与 torch reference 的误差                                                   |
-
-## 新增算子页面模板
-
-新增 `--operator` 后，在 `docs/benchmark/` 下补一个单独页面，并把它加入本页索引和 `zensical.toml` 导航。建议直接复制下面模板：
-
-````markdown
----
-icon: lucide/cpu
----
-
-# Operator Name
-
-## 支持记录
-
-- Torch reference：...
-- Accelerator backend：dtype、device、shape 和 mask 约束。
-- 自动启用策略：...
-
-## 推荐命令
-
-```bash
-uv run taac-benchmark-pcvr-tilelang-ops \
-  --operator ... \
-  --device cuda \
-  --dtype float16 \
-  --backends torch,tilelang,triton \
-  > outputs/benchmarks/operator_accelerators.json
-```
-
-## 最近验收观察
-
-- 硬件 / commit / 环境：...
-- 关键结果：...
-- 不适用或风险：...
-````
+保存命令时加 `--json`，创建输出目录。记录 commit、设备、版本和完整参数；区分 forward、forward+backward、Python launch、数据读取和模型端到端。不要将 unsupported、缺失值或失败结果计为零耗时。

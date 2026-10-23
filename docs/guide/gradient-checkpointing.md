@@ -2,157 +2,69 @@
 icon: lucide/refresh-cw
 ---
 
-# 梯度检查点
+# 梯度检查点：用重计算降低激活内存
 
-梯度检查点用于降低训练时的 activation 显存占用。它会在前向阶段少存一部分中间激活，并在反向传播时重新计算这些片段；代价是训练 step 会变慢一些。
+梯度检查点在反向时重算部分前向计算，减少保存 activation 的内存。它与磁盘中的权重 checkpoint 是不同机制，也不会减少 embedding 参数与 optimizer state 的体积。
 
-这里说的梯度检查点是 activation recomputation，不是训练产物里的 `model.safetensors`、`schema.json` 或 `train_config.json` checkpoint。
+## 启用和关闭
 
-## 快速配置
+准备数据后，在训练命令追加：
 
-本地训练时直接打开 CLI 开关：
+```text
+--model.gradient_checkpointing
+```
+
+关闭用 `--model.no_gradient_checkpointing`。实验默认值在 `TRAIN_DEFAULTS.model`，七个 PCVR 模型当前均默认关闭。AMP、compile 位于独立的 `runtime` 配置中。
 
 ```bash
 bash run.sh train \
   --experiment experiments/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/baseline_gc \
+  --optimizer.device cuda --runtime.amp \
   --model.gradient_checkpointing
 ```
 
-布尔参数也支持显式关闭：
+GPU 环境准备见[快速开始](../getting-started.md)。
 
-```bash
-bash run.sh train \
-  --experiment experiments/symbiosis \
-  --run-dir outputs/symbiosis_no_gc \
-  --model.no_gradient_checkpointing
-```
+## 覆盖范围
 
-实验默认值写在实验包的 `TRAIN_DEFAULTS` 中：
+共享 helper `maybe_gradient_checkpoint()` 仅在 `enabled=True` 且 `torch.is_grad_enabled()` 时调用 `torch.utils.checkpoint.checkpoint(..., use_reentrant=False)`。模型必须显式包住相应 block，它不会自动重算整个网络。
 
-```python
-from taac2026.api import PCVRModelConfig, PCVRTrainConfig
+| 实验 | 重计算边界 |
+| --- | --- |
+| Baseline / DualQ | HyFormer blocks |
+| InterFormer | InterFormer blocks |
+| OneTrans / TokenFormer | 各自主干 blocks |
+| Symbiosis | unified interaction blocks |
+| QueryFormer | CoTransformer blocks |
 
+embedding lookup、输入构造、最终分类头、loss 与 optimizer step 不在统一 block 边界中。评估和推理使用无梯度路径，sidecar 即使记录开启也不会执行反向重算。
 
-TRAIN_DEFAULTS = PCVRTrainConfig(
-    model=PCVRModelConfig(
-        gradient_checkpointing=True,
-    ),
-)
-```
+## 新模型如何接入
 
-CLI 参数会覆盖实验默认值。线上训练 bundle 也走同一套训练 CLI，所以可以把 `--model.gradient_checkpointing` 追加到 bundle 的 `run.sh` 后面。
-
-## 行为边界
-
-当前实现使用 `torch.utils.checkpoint.checkpoint(..., use_reentrant=False)`。共享 helper 是 `maybe_gradient_checkpoint()`：
-
-```python
-def maybe_gradient_checkpoint(function, *args, enabled: bool = False, **kwargs):
-    if not enabled or not torch.is_grad_enabled():
-        return function(*args, **kwargs)
-    return checkpoint(function, *args, use_reentrant=False, **kwargs)
-```
-
-这意味着：
-
-- 只有 `gradient_checkpointing=True` 且 PyTorch 正在记录梯度时才会触发。
-- 评估和推理通常在 no-grad 路径中运行，即使 checkpoint sidecar 里记录了 `gradient_checkpointing=True`，也不会做反向重算。
-- 它只覆盖模型里显式包了 `maybe_gradient_checkpoint()` 的 block，不会自动包住整个模型。
-
-## 当前覆盖范围
-
-现有 PCVR 模型包都接受 `gradient_checkpointing` 构造参数，默认值都是 `False`。
-
-| 实验            | 当前 checkpoint 的模块                                          |
-| --------------- | --------------------------------------------------------------- |
-| `baseline`      | HyFormer block 循环                                             |
-| `interformer`   | InterFormer block 循环                                          |
-| `onetrans`      | OneTrans block 循环                                             |
-| `tokenformer`   | TokenFormer block 循环                                          |
-| `symbiosis`     | unified interaction block 循环                                  |
-| `dualq`         | DualQ HyFormer block 循环                                       |
-| `queryformer`   | CoTransformer block 循环                                        |
-
-Embedding lookup、输入构造、最终 classifier、loss 计算和 optimizer step 不在这套 helper 的覆盖范围内。
-
-## 什么时候打开
-
-优先在这些情况尝试打开：
-
-- CUDA OOM 主要来自较长序列、较大 batch size、较宽 `d_model` 或更多 block。
-- 你愿意用更长训练时间换取更低峰值显存。
-- 模型主体是 Transformer / cross-attention / fusion block，activation 占比明显高于参数显存。
-
-不一定有帮助的情况：
-
-- OOM 主要来自 embedding table 参数或 optimizer state。
-- batch 已经很小，瓶颈主要是数据加载或 CPU 侧处理。
-- 正在做极短 smoke，例如 `--optimizer.max_steps 1`，此时打开它只能验证通路，不能代表性能收益。
-
-## 和其他运行时开关的关系
-
-梯度检查点是模型配置字段，不属于 `RuntimeExecutionConfig`。它可以和 AMP、`torch.compile`、TileLang backend 同时打开，但改这些组合后应重新做 smoke 和单测。
-
-常见组合：
-
-```bash
-bash run.sh train \
-  --experiment experiments/baseline \
-  --run-dir outputs/baseline_mem \
-  --optimizer.device cuda \
-  --runtime.amp \
-  --runtime.amp_dtype bfloat16 \
-  --model.gradient_checkpointing
-```
-
-如果你同时打开 `--runtime.compile` 后遇到编译慢、图捕获失败或显存没有改善，先分别验证 `--runtime.compile` 和 `--model.gradient_checkpointing`，再组合运行。
-
-## 新实验怎么接入
-
-普通 PCVR 实验如果使用共享模型构造链路，只需要让模型类接收并保存 `gradient_checkpointing`：
-
-```python
-class MyModel(nn.Module):
-    def __init__(self, *, gradient_checkpointing: bool = False, **kwargs) -> None:
-        super().__init__()
-        self.gradient_checkpointing = bool(gradient_checkpointing)
-```
-
-然后在需要重算的 block 位置包一层 helper：
+当前统一构造函数是 `model_type(schema, config)`，其中 `config` 是模型子配置（`PCVRModelConfig` 或实验扩展类型）。从 `config.gradient_checkpointing` 读取开关，不要新增不匹配的独立构造参数：
 
 ```python
 from taac2026.api import maybe_gradient_checkpoint
 
+# 在模型构造函数中保存配置
+self.gradient_checkpointing = config.gradient_checkpointing
 
-for block in self.blocks:
-    tokens = maybe_gradient_checkpoint(
-        block,
-        tokens,
-        padding_mask,
-        enabled=self.gradient_checkpointing,
-    )
+# 在 forward 中包住可重算的 block
+tokens = maybe_gradient_checkpoint(
+    block, tokens, padding_mask,
+    enabled=self.gradient_checkpointing,
+)
 ```
 
-不要把会修改全局状态、依赖不可重算 side effect、或返回非 Tensor 主体状态的逻辑直接塞进 checkpoint block。优先包纯前向计算的层或 block。
+示例是模型方法内的接入片段。边界内应保持可重算，不依赖一次性 IO 或不可重复的全局副作用。
 
-## 源码入口
+## 如何判断是否值得
 
-- 配置字段：`src/taac2026/domain/config.py`
-- 训练 CLI 参数：`src/taac2026/application/training/args.py`
-- 模型构造传参：`src/taac2026/infrastructure/modeling/model_contract.py`
-- checkpoint helper：`src/taac2026/infrastructure/modeling/sequence.py`
-- API 导出：`src/taac2026/api.py`
-- 实验模型调用点：`experiments/*/model.py`
-- CLI 覆盖测试：`tests/unit/application/training/test_cli.py`
-- backward 覆盖测试：`tests/contract/experiments/test_packages.py`
+固定模型、batch、序列长度、精度与设备，分别测关闭/开启后的峰值显存和稳定 step time，并验证 loss 与梯度数值。若瓶颈来自参数表或数据加载，内存收益可能很小；重算通常增加计算成本。
 
-## 常见问题
+AMP、compile、TileLang 与重计算组合需要分别及组合验证。一次一步的 CPU smoke 只能检查 backward 路径，不能证明 GPU 显存收益。
 
-| 现象                    | 原因和处理                                                                                     |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| 打开后训练变慢          | 这是预期代价；反向传播会重新计算被 checkpoint 的 block                                         |
-| 打开后显存下降不明显    | 当前模型只 checkpoint 显式包住的 block；embedding 参数、optimizer state 和未包住的激活不会减少 |
-| 评估或推理看起来没变化  | no-grad 路径不会触发 activation checkpointing，这是正常行为                                    |
-| 新实验传参失败          | 确认模型构造函数接收 `gradient_checkpointing`，或共享模型构造链路能把该字段转发进去            |
-| 和 `--runtime.compile` 组合出错 | 先分别跑 `--model.gradient_checkpointing` 和 `--runtime.compile`，确认单独开关健康后再组合                   |
+源码 helper 位于 `infrastructure/modeling/sequence.py`，模型调用点在 `experiments/*/model.py`。测试选择见[测试指南](testing.md)。

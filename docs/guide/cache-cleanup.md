@@ -2,56 +2,28 @@
 icon: lucide/wrench
 ---
 
-# 仓库缓存清理
+# 清理本地缓存
 
-这个脚本只清理本地缓存和构建产物，用来让工作区变轻一点。它不处理实验输出目录，也不替你判断哪些结果值得保留。
-
-## 先预览
+`tools/cache-cleanup.sh` 删除可再生缓存和构建文件，不处理实验结果的取舍。先预览目标，再执行同一范围。
 
 ```bash
 bash tools/cache-cleanup.sh --dry-run
-```
-
-确认列表合理后再执行：
-
-```bash
 bash tools/cache-cleanup.sh
 ```
 
-## 会清什么
+## 清理范围
 
-默认会清理：
+默认匹配 `__pycache__`、`.pyc`、Ruff/Pytest/benchmark 缓存、`.cache`、egg-info、coverage 数据及 `build/`、`dist/`。脚本不以清空训练结果为目标，重要产物仍应单独备份。
 
-- `__pycache__/` 和 `.pyc`
-- `.ruff_cache/`
-- `.pytest_cache/`
-- `.benchmarks/`
-- `.cache/`
-- `*.egg-info`
-- `.coverage` 和 `.coverage.cpu`
-- `build/` 和 `dist/`
-
-默认不会深入 `.venv`、`venv`、`env`、`node_modules`、`.tox` 和 `.mypy_cache` 这些环境目录。
-
-## 常用参数
+默认不深入 `.venv`、`venv`、`env`、`node_modules`、`.tox`、`.mypy_cache`。扩大范围或切换根目录时重新预览：
 
 ```bash
-# 指定清理根目录
 bash tools/cache-cleanup.sh --root /path/to/repo --dry-run
-
-# 连环境目录里的缓存也一起清
 bash tools/cache-cleanup.sh --include-env-dirs --dry-run
 ```
 
-`--include-env-dirs` 建议先 dry-run，因为它会扩大扫描范围。
+## 执行前后
 
-## 什么时候用
+确认目标是当前仓库，停止正在写这些缓存的进程。删除 native/JIT 缓存后首次运行可能重新编译；重新测量时不要把冷启动与原来的稳态结果直接比较。
 
-- 切换 Python 版本后。
-- 跑完大量测试或 benchmark 后。
-- 提交前想移除工具缓存。
-- 本地磁盘空间紧张，但还不想删 `outputs/`。
-
-## 脚本入口
-
-- `tools/cache-cleanup.sh`
+站点产物由 Zensical `--clean` 重建，依赖环境由 uv 管理。远端 Actions 日志的整理见[日志管理](repo-log-management.md)，不是本脚本职责。

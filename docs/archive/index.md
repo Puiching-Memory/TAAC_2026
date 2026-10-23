@@ -2,21 +2,16 @@
 icon: lucide/archive
 ---
 
-# 重要资产归档
+# 归档：参考 Schema 与官方快照
 
-这里存放需要随文档站长期保留的参考资产。归档页的目标是提供稳定的浏览与下载入口，不改变仓库里的默认运行时路径，也不替代当前受维护的实验包实现。
+这里保存已有参考资产，便于下载、对照和追溯。归档内容不参与当前共享运行时的自动选择，也不代表最新平台契约。
 
-## 当前归档项
+| 内容 | 阅读入口 | 用途 |
+| --- | --- | --- |
+| demo 与 online schema | [Schema 归档](schema.md) | 对照字段、长度和词表 |
+| 官方训练源码 | [训练 Baseline 快照](official-train-baseline.md) | 理解历史训练和 sidecar 行为 |
+| 官方推理源码 | [推理 Baseline 快照](official-infer-baseline.md) | 对照环境变量与预测格式 |
 
-| 资产                   | 用途                               | 入口                                                  |
-| ---------------------- | ---------------------------------- | ----------------------------------------------------- |
-| Schema 归档            | 本地 demo 与线上 schema 静态副本   | [Schema 归档](schema.md)                              |
-| 官方训练 Baseline 快照 | 比赛参考训练基线的历史源码快照     | [官方训练 Baseline 快照](official-train-baseline.md)  |
-| 官方推理 Baseline 快照 | 比赛参考推理基线的历史源码快照     | [官方推理 Baseline 快照](official-infer-baseline.md)  |
+归档正文可重写说明，但 `files/` 下的源码与 JSON 应保持原始快照内容。当前训练、评估和推理使用 `experiments/` 与 `src/taac2026/`，新上传物由打包 CLI 生成。
 
-## 归档原则
-
-- 归档副本放在 docs 目录下，确保 GitHub Pages 构建时能直接发布。
-- 所有 schema 静态副本统一放在 files/schema 目录下，通过文件名区分不同来源和用途。
-- 本地和线上运行仍以仓库真实入口为准，例如 data/sample_1000_raw、experiments/baseline 与打包 CLI。
-- 历史参考快照用于对照、追溯和资料保存，不应直接当作当前框架的长期运行时依赖。
+需要运行 demo 时，按[快速开始](../getting-started.md)显式复制参考 schema 并下载 parquet；不要假设文档目录自动成为数据目录。

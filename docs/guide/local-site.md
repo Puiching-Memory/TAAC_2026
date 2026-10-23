@@ -2,122 +2,59 @@
 icon: lucide/hard-drive-download
 ---
 
-# 本地文档站
+# 本地文档站与 Pages 发布
 
-文档源文件在 `docs/`，导航在 `zensical.toml`。`site/` 是构建产物，通常不要手改，也不要把它当成文档源。
+正文在 `docs/`，导航和主题在 `zensical.toml`，Zensical 生成的 `site/` 可重新构建。编辑源文件，不编辑生成 HTML。
 
-## 文件职责
+## 本地预览和严格构建
 
-| 文件 / 目录       | 作用                                  |
-| ----------------- | ------------------------------------- |
-| `docs/**/*.md`    | 文档正文，页面路径相对 `docs/`        |
-| `docs/assets/`    | 图片、脚本和额外样式                  |
-| `docs/overrides/` | Zensical / Material 模板覆盖          |
-| `zensical.toml`   | 站点元信息、导航、主题、额外 JS / CSS |
-| `site/`           | 本地构建输出，可删除重建              |
-
-新增页面时需要同时满足两件事：Markdown 文件存在，并且 `zensical.toml` 的 `nav` 中能到达它。没有进 `nav` 的页面即使能被构建，也不一定出现在站点导航里。
-
-## 本地预览
+在项目支持的 Linux 环境：
 
 ```bash
 uv sync --locked --extra dev
 uv run zensical serve
+uv run zensical build --strict --clean
 ```
 
-默认地址是 `http://127.0.0.1:8000`。
+预览默认地址为 `http://127.0.0.1:8000`。需要外部访问时显式设置 `--dev-addr`，并自行控制网络暴露范围。
 
-指定端口：
+文档工具版本在 `pyproject.toml`/`uv.lock` 固定。仅编辑文档时也可以在隔离环境安装相同版本的 Zensical 构建；这种验证不等同于完成整个 Linux 项目的锁定依赖同步。
 
-```bash
-uv run zensical serve --dev-addr 0.0.0.0:8080
-```
+## 写作和链接约定
 
-## 构建检查
+分区 `index.md` 提供选择入口，叶子页说明一个任务的前提、操作、产物和失败边界。源码默认值、论文结果与历史观测应注明来源，避免同一张表混用证据。
 
-```bash
-uv run zensical build --strict
-```
+页面链接使用相对 `.md` 路径，静态图片使用相对路径。框架源码链接指向仓库 blob，避免站点构建把 `src/` 当作待发布文件。新增页面需要加入 nav；改标题或 heading 后检查旧链接中的锚点。
 
-这会生成 `site/`，并在严格模式下检查导航、站内链接和构建配置。如果只是验证文档，不需要提交 `site/`。
+| 修改 | 文件位置 |
+| --- | --- |
+| 正文/导航 | `docs/**/*.md` / `zensical.toml` |
+| 图片 | `docs/assets/` 或现有论文 `img/` |
+| 样式/脚本 | `docs/assets/stylesheets/`、`docs/assets/javascripts/` |
+| 模板覆盖 | `docs/overrides/partials/` |
 
-清理构建产物：
+图片使用 Git LFS，克隆或 CI checkout 需取得实际资源；只有 LFS pointer 会导致页面有链接但没有图片。
 
-```bash
-rm -rf site/
-```
-
-## GitHub Pages 怎么部署
+## Pages 事件路径
 
 以 `.github/workflows/deploy-docs.yml` 为准：
 
-| 事件                | 条件                                                                               | 行为                                |
-| ------------------- | ---------------------------------------------------------------------------------- | ----------------------------------- |
-| `pull_request`      | 改了 `docs/**`、`zensical.toml`、`deploy-docs.yml`、`pyproject.toml` 或 `uv.lock`  | 严格构建文档站，只校验不部署        |
-| `push` 到 `main`    | 只改 `docs/**`、`zensical.toml` 或 `deploy-docs.yml`                               | 直接构建并部署 Pages                |
-| `push` 到 `main`    | 同时改了 `src/`、`experiments/`、`tests/`、`pyproject.toml`、`uv.lock` 或 `ci.yml` | 跳过直接部署，先等 CI 成功          |
-| `workflow_run`      | CI 在 `main` 成功完成                                                              | 检出 CI 对应 commit，严格构建并部署 |
-| `workflow_dispatch` | 手动触发                                                                           | 构建并部署当前选择的 ref            |
+| 事件 | 行为 |
+| --- | --- |
+| PR 修改 docs、配置、依赖或部署 workflow | Python 3.13 严格构建，只验证 |
+| main 推送文档/站点配置，且无 CI 相关路径变更 | 直接构建并部署 |
+| 同一推送包含 src、experiments、tests、依赖或 CI workflow | 直接部署跳过，等待 CI |
+| main 的 CI 成功完成 | 用 CI 的 `head_sha` 构建并部署 |
+| workflow_dispatch | 构建并部署所选 ref |
 
-校验和部署 job 都使用 Python 3.13，并同步锁定的 dev 依赖：
+纯文档路径不触发 Python CI；混合改动应检查后续 workflow_run，不能把直接部署 skip 当成失败。线上是否更新需核对部署 commit 与 Actions 结果，本地 `site/` 不是发布证据。
 
-```bash
-uv sync --locked --extra dev --python 3.13
-uv run --python 3.13 zensical build --strict --clean
-```
+## 验证范围
 
-构建站点时使用 lockfile 中的 Zensical 版本，并开启严格检查。
-
-所以判断“文档会不会部署”时，看 workflow 事件路径，不要只看本地 `site/` 有没有变化。
-
-## Workflow 修改的验证
-
-修改 `.github/workflows/deploy-docs.yml` 或 `ci.yml` 时，按上面的事件表核对路径过滤、job 条件和 checkout ref。尤其检查混合代码 / 文档推送是否等待 CI，以及 `workflow_run` 是否检出完成 CI 的 `head_sha`。
-
-工作流静态检查可以使用 [actionlint](https://github.com/rhysd/actionlint)。它是独立工具，当前项目依赖不包含它；环境已经提供时，在仓库根目录运行：
+严格构建检查渲染、配置和部分链接，但不能代替所有站内锚点、外链可达性、命令执行或浏览器视觉检查。改工作流时另核对 path filters、job conditions、checkout ref；环境有 actionlint 时运行：
 
 ```bash
 actionlint .github/workflows/ci.yml .github/workflows/deploy-docs.yml
 ```
 
-工具不可用时，继续核对事件分支和 YAML，并在验证结果中注明未运行 workflow 静态检查。Ruff 检查 Python，不检查这些 YAML；严格站点构建也只验证本地构建。确认线上部署结果还需要对应 commit 的 Actions 记录。
-
-## 改页面的落点
-
-- 改正文：只动对应 `docs/...md`。
-- 改导航标题或页面顺序：改 `zensical.toml` 的 `nav`。
-- 改全站脚本：放到 `docs/assets/javascripts/`，再加入 `extra_javascript`。
-- 改全站样式：放到 `docs/assets/stylesheets/extra.css` 或新增 CSS 后加入 `extra_css`。
-- 改模板片段：放在 `docs/overrides/partials/`。
-
-文档链接优先写相对路径，例如 `../experiments/baseline.md` 或 `performance-benchmarks.md`。图片也放在 `docs/assets/` 下，用相对路径引用。
-
-## 常见问题
-
-**导航里没有新页面**
-
-更新 `zensical.toml` 的 `nav`。
-
-**页面能构建但链接体验差**
-
-把导览内容收敛到对应分区的 `index.md`。普通页面应直接写任务细节，例如命令、输入输出、环境变量、源码文件和失败模式。
-
-**本地缺 Zensical**
-
-重新同步 dev 依赖：
-
-```bash
-uv sync --locked --extra dev
-```
-
-**图表或图片不显示**
-
-确认资源在 `docs/assets/` 下，并使用相对路径引用。
-
-**构建后工作区多了 `site/`**
-
-这是本地构建产物。只验证文档时可以删除：
-
-```bash
-rm -rf site/
-```
+缺图先查 LFS，缺页先查 nav，错误锚点先查 heading。成功构建后只提交源文件，不提交 `site/` 或缓存。

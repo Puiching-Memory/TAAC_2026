@@ -2,20 +2,17 @@
 icon: lucide/lightbulb
 ---
 
-# 想法
+# 研究笔记：把启发变成可检验假设
 
-这里记录我们在比赛过程中的技术调研、论文解读和方案构思。每篇文章按统一格式组织：
+本分区记录阅读启发与拟议实验。每篇区分来源内容、项目已有能力和仍需实现的部分，避免把构想写成框架功能。
 
-1. **原文章出处** — 引用来源（论文、博客、代码仓库等）
-2. **AI 解读** — 借助 AI 对核心思路的快速提炼
-3. **我们的看法** — 结合当前赛题和代码的判断
-4. **实施清单** — 如果值得尝试，具体要做什么
+| 笔记 | 主要问题 | 状态 |
+| --- | --- | --- |
+| [Token 化、长历史与辅助 Loss](posts/001-rec-model-work-summary.md) | 怎样拆分结构与训练信号贡献 | 实验设计建议 |
+| [TAAC 2025 的迁移边界](posts/002-taac2025-competition-paper.md) | 生成式召回如何与 PCVR 区分 | 跨任务分析 |
+| [Learning Mechanics](posts/003-learning-mechanics-analysis.md) | 模型在何时学到哪些模式 | 部分诊断工具可用，理论假设待测 |
+| [Thinking 与混合模态](posts/004-unified-thinking-multimodal-generative-rec.md) | 额外计算与内容信息是否值得 | 研究设想，未形成完整流水线 |
 
----
+新想法至少写清输入条件、对照组、单次变化、数据切分、预算、成功/失败判据与验证范围。若已进入代码，链接对应[实验](../experiments/index.md)；若有测量，另存可复核的[Benchmark](../benchmark/index.md)。
 
-| 日期       | 标题                                                                                               | 关键词                                                |
-| ---------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| 2026-04-12 | [从直播推荐实战看特征 Token 化、长序列注意力与辅助 Loss 设计](posts/001-rec-model-work-summary.md) | RankMixer, STCA, 行为序列融合, MoE, 生成式辅助 loss   |
-| 2026-04-14 | [腾讯广告算法大赛 2025 官方论文解读：全模态生成式推荐](posts/002-taac2025-competition-paper.md)    | 生成式推荐, 多模态, Semantic ID, InfoNCE, Scaling Law |
-| 2026-04-26 | [Learning Mechanics 分析方法：从缩放律、学习量子到低秩动力学](posts/003-learning-mechanics-analysis.md) | 学习力学, Scaling Law, Quanta, 低秩更新, 谱分析       |
-| 2026-04-28 | [统一理解生成启发：Thinking + 混合模态的 TAAC 2026 生成式推荐模型](posts/004-unified-thinking-multimodal-generative-rec.md) | Thinking, 混合模态, 统一生成式推荐, Semantic ID, Latent Reasoning |
+论文机制与出处在[论文索引](../papers/index.md)，实现方法在[接入指南](../guide/contributing.md)。

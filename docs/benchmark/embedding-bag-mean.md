@@ -1,91 +1,18 @@
 ---
-icon: lucide/table-properties
+icon: lucide/activity
 ---
 
-# Embedding Bag Mean Benchmark
+# Embedding Bag Mean：能力与测量
 
-## 支持记录
+CLI operator：`embedding_bag_mean`。本页说明支持范围与已有测量；重新测量使用相同 shape、dtype、计时边界和误差阈值。
 
-- CLI operator：`embedding_bag_mean`。
-- Torch reference：`F.embedding(values, weight, padding_idx=0)` 后忽略 id `0` 做 mean pooling。
-- TileLang forward 支持 CUDA 上 `float16`、`bfloat16`、`float32` weight，以及 `int32` / `int64` values。
-- backward 使用 `T.atomic_add` 累加到 `grad_weight`，训练态性能对 `embedding_dim` 和 `bag_size` 敏感。
-- Triton backend 支持 CUDA 上 `float16`、`bfloat16`、`float32` weight，以及 `int32` / `int64` values；forward/backward 均按固定 hotness 的 mean pooling 实现。
-- cuEmbed backend 是基于 NVIDIA cuEmbed fixed-hotness lookup 思路的项目内重写，运行时通过 PyTorch CUDA extension JIT 编译；当前只支持 forward-only、CUDA、`float16` / `float32` weight、`int32` / `int64` values。
-- 默认 `backend="torch"`；只有显式传 `backend="tilelang"`、`backend="triton"` 或 `backend="cuembed"` 才启用对应 accelerator。训练态 accelerator backward 仍建议单独 benchmark 后再接入；cuEmbed backend 当前会拒绝 requires-grad 的 weight。
-- 主要源码：`src/taac2026/infrastructure/accelerators/embedding/embedding_bag.py`、`src/taac2026/infrastructure/accelerators/embedding/kernels/tilelang.py`、`src/taac2026/infrastructure/accelerators/embedding/kernels/triton.py`、`src/taac2026/infrastructure/accelerators/embedding/cuembed_runtime.py` 和 `src/taac2026/infrastructure/accelerators/embedding/kernels/cuembed_embedding_bag_mean.cu`。
+## 能力与历史观察
 
-## 推荐命令
+reference 为 embedding lookup 后忽略 id 0 做 mean pooling。TileLang/Triton 路径覆盖 CUDA float16、bfloat16、float32 和 int32/int64 ids；backward 的重复行累加与 atomic 成本需单独验证。
 
-```bash
-uv run taac-benchmark-pcvr-tilelang-ops \
-  --operator embedding_bag_mean \
-  --device cuda \
-  --batch 8192 \
-  --embedding-vocab-size 1000000 \
-  --embedding-dim 64 \
-  --embedding-bag-size 4 \
-  --embedding-padding-prob 0.25 \
-  --dtype float16 \
-  --backends torch,tilelang,triton \
-  --steps 200 \
-  --warmup-steps 50 \
-  --repeats 3 \
-  --block-cols 64 \
-  > outputs/benchmarks/tilelang_embedding_bag_mean.json
-```
+cuEmbed 是本地 CUDA extension 重写，只覆盖 float16/float32 fixed-hotness forward，拒绝 requires-grad 权重。它没有 CSR、weighted sum、concat 或 backward；首次需要 CUDA Toolkit 完成 JIT。来源见[第三方说明](../third-party-notices.md)。
 
-cuEmbed forward 对照：
-
-```bash
-uv run taac-benchmark-pcvr-tilelang-ops \
-  --operator embedding_bag_mean \
-  --device cuda \
-  --batch 8192 \
-  --embedding-vocab-size 1000000 \
-  --embedding-dim 64 \
-  --embedding-bag-size 4 \
-  --embedding-padding-prob 0.25 \
-  --dtype float16 \
-  --backends torch,tilelang,triton,cuembed \
-  --steps 200 \
-  --warmup-steps 50 \
-  --repeats 3 \
-  --block-cols 64 \
-  > outputs/benchmarks/embedding_bag_mean_accelerators.json
-```
-
-## 形状 Sweep
-
-```bash
-mkdir -p outputs/benchmarks
-
-for dim in 32 64 128; do
-  for bag in 1 2 4 8; do
-    uv run taac-benchmark-pcvr-tilelang-ops \
-      --operator embedding_bag_mean \
-      --device cuda \
-      --batch 8192 \
-      --embedding-vocab-size 1000000 \
-      --embedding-dim "$dim" \
-      --embedding-bag-size "$bag" \
-      --embedding-padding-prob 0.25 \
-      --dtype float16 \
-      --backends torch,tilelang,triton,cuembed \
-      --steps 200 \
-      --warmup-steps 50 \
-      --repeats 3 \
-      --block-cols "$dim" \
-      > "outputs/benchmarks/tilelang_embedding_bag_mean_dim${dim}_bag${bag}.json"
-  done
-done
-```
-
-## 最近验收观察
-
-cuEmbed 接入记录：当前 backend 只覆盖 forward-only fixed-hotness mean pooling，用于 benchmark 和推理侧候选验证。它没有接入默认训练路径，也没有实现 CSR、weighted sum、concat、transpose 或 backward。首次运行会有 PyTorch CUDA extension JIT 编译时间，稳态比较应看 JSON 里的 `step_time_ms_*`，不要把 `compile_sec` 混入吞吐判断。
-
-最近一次本地验收口径：H800、`batch=8192`、`vocab=1_000_000`、`padding_prob=0.25`、`float16`、forward-only benchmark。结果只用于判断这版 kernel 是否值得继续优化，不作为长期基准。
+历史 H800、batch=8192、vocab=1000000、padding=0.25、float16 forward 的形状 sweep 保留如下。它不覆盖训练成本；原记录中部分 backward 形状抵消了 forward 收益，因此不能自动接入默认训练。
 
 |  dim |  bag | torch ms | tilelang ms | speedup |
 | ---: | ---: | -------: | ----------: | ------: |
@@ -102,4 +29,21 @@ cuEmbed 接入记录：当前 backend 只覆盖 forward-only fixed-hotness mean 
 |  128 |    4 |    0.185 |       0.031 |   5.89x |
 |  128 |    8 |    0.265 |       0.032 |   8.30x |
 
-训练态 forward + backward 的专项 microbenchmark 显示，atomic backward 会吃掉不少 forward 收益：`dim=64, bag=8` 约 1.9x，`dim=128, bag<=4` 在当次口径下反而慢。因此训练默认不自动走 TileLang embedding backward。
+
+## 重新测量
+
+在已同步 CUDA 环境中运行：
+
+```bash
+mkdir -p outputs/benchmarks
+uv run taac-benchmark-pcvr-tilelang-ops \
+  --operator embedding_bag_mean --device cuda \
+  --batch 8192 --embedding-vocab-size 1000000 --embedding-dim 64 --embedding-bag-size 4 --embedding-padding-prob 0.25 --block-cols 64 \
+  --dtype float16 --backends torch,tilelang,triton,cuembed \
+  --steps 100 --warmup-steps 20 --repeats 5 --json \
+  > outputs/benchmarks/embedding-bag-mean.json
+```
+
+先检查 backend 状态和误差，再比较稳态时间、编译开销与完整模型收益。训练路径另测 backward、参数梯度与代表性 mask/shape；CPU 的 unsupported 不是 GPU 验证结果。完整记录规范见[性能指南](../guide/performance-benchmarks.md)。
+
+源码位于 `src/taac2026/infrastructure/accelerators/`，测试位于 `tests/unit/infrastructure/accelerators` 与 `tests/gpu`。

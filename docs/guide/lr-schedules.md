@@ -1,157 +1,60 @@
 ---
-icon: lucide/trending-up
+icon: lucide/chart-line
 ---
 
-# 学习率 Warmup 和 Scheduler
+# 学习率调度与早停
 
-共享 PCVR 训练器已经支持 dense optimizer 的学习率 warmup 和调度器。它们可以在实验默认配置里写死，也可以通过训练 CLI 覆盖。
+调度只作用于 dense optimizer，sparse 学习率独立配置。验证间隔与 early stopping 按 optimizer step 计数，不按 epoch 或验证次数计数。
 
-这套调度只作用在 dense optimizer 的参数组上。Sparse embedding optimizer 使用独立的 `sparse_lr`，不会被这里的 `scheduler_type`、`warmup_steps` 或 `min_lr_ratio` 影响。
+## 配置项
 
-## 快速配置
+| 参数 | 含义 |
+| --- | --- |
+| `--optimizer.lr` | dense base learning rate |
+| `--optimizer.scheduler_type` | `none`、`linear`、`cosine` |
+| `--optimizer.warmup_steps` | 从小学习率升至 base 的步数 |
+| `--optimizer.min_lr_ratio` | decay 终点相对 base 的比例，范围 `[0,1]` |
+| `--optimizer.max_steps` | 总训练截断；正值时提供 decay 终点 |
+| `--data.eval_every_n_steps` | 验证间隔 |
+| `--optimizer.patience_steps` | 无改善容忍步数 |
+| `--validation.early_stopping_metric` | `auc` 或 `logloss` |
 
-本地训练时可以直接传 CLI 参数：
+## 实际公式
+
+第一个 optimizer step 为 1。warmup 阶段的乘数是 `step / warmup_steps`。结束后，`none` 或 `max_steps<=0` 保持 base lr；其余情况计算：
+
+```text
+p = clamp((step - warmup_steps) / max(1, max_steps - warmup_steps), 0, 1)
+linear: multiplier = min_lr_ratio + (1-min_lr_ratio) * (1-p)
+cosine: multiplier = min_lr_ratio + (1-min_lr_ratio) * (1+cos(pi*p))/2
+```
+
+公式位于 `infrastructure/optimization/schedules.py`。warmup 覆盖整个训练时不会进入后续衰减；不能只设置 `scheduler_type` 就假定能看到完整曲线。
+
+## 示例
+
+完成[数据准备](../getting-started.md)后，给 Baseline 设置 500 步 warmup 与 10000 步 cosine：
 
 ```bash
-bash run.sh train \
+uv run --with torch==2.13.0 taac-train \
   --experiment experiments/baseline \
+  --dataset-path data/sample_1000_raw/demo_1000.parquet \
+  --schema-path data/sample_1000_raw/schema.json \
   --run-dir outputs/baseline_cosine \
-  --optimizer.max_steps 10000 \
-  --data.eval_every_n_steps 5000 \
-  --optimizer.patience_steps 25000 \
-  --optimizer.scheduler_type cosine \
-  --optimizer.warmup_steps 500 \
-  --optimizer.min_lr_ratio 0.1
+  --optimizer.max_steps 10000 --optimizer.scheduler_type cosine \
+  --optimizer.warmup_steps 500 --optimizer.min_lr_ratio 0.1
 ```
 
-训练 CLI 使用嵌套下划线参数，参数名与 `PCVRTrainConfig` 的字段一一对应：`--data.eval_every_n_steps`、`--optimizer.patience_steps`、`--optimizer.scheduler_type`、`--optimizer.warmup_steps`、`--optimizer.min_lr_ratio`。
+这是调度配置示例，demo 重复采样 10000 步不能用作泛化结论。真实实验应换成固定训练集和独立验证集。
 
-实验默认值写在实验包的 `TRAIN_DEFAULTS` 中：
+## 当前实验默认值
 
-```python
-from taac2026.api import PCVROptimizerConfig, PCVRTrainConfig
+所有七个模型实验显式设置 `max_steps=100000`，不能把基础配置类型的默认 `0` 当作实验默认值。QueryFormer 为 cosine/无 warmup；Symbiosis 为 none/100 步 warmup；其余模型为 none/无 warmup。
 
+多数实验每 5000 步验证，patience 25000；Symbiosis 为 500/2500。更新默认值时同步实验页与实际配置。
 
-TRAIN_DEFAULTS = PCVRTrainConfig(
-    optimizer=PCVROptimizerConfig(
-        lr=1e-4,
-        max_steps=10000,
-        patience_steps=25000,
-        dense_optimizer_type="adamw",
-        scheduler_type="cosine",
-        warmup_steps=500,
-        min_lr_ratio=0.1,
-    ),
-)
-```
+## 确认是否生效
 
-CLI 参数会覆盖实验默认值。线上训练 bundle 也会走同一套训练 CLI，因此这些参数可以追加到 bundle 的 `run.sh` 后面。
+检查训练初始化日志中的实际配置，以及 TensorBoard 的 `LR/dense`。若 sparse lr 未变，属于预期范围；若过早停止，检查验证间隔与 patience 的步数关系，并核对监控指标是越大越好还是越小越好。
 
-## 参数含义
-
-| 参数             | 含义                                                 |
-| ---------------- | ---------------------------------------------------- |
-| `lr`             | dense optimizer 的 base learning rate                |
-| `eval_every_n_steps` | 每隔多少个 optimizer step 运行一次验证；0 表示回退到一次逻辑 sweep |
-| `patience_steps` | 早停容忍的无提升 optimizer step 数                   |
-| `scheduler_type` | 调度器类型，支持 `none`、`linear`、`cosine`          |
-| `warmup_steps`   | warmup 的 optimizer step 数，必须大于等于 0          |
-| `min_lr_ratio`   | 衰减后的最低学习率比例，范围是 0.0 到 1.0            |
-| `max_steps`      | 衰减区间的终点；`linear` / `cosine` 衰减需要它大于 0 |
-
-默认配置是 `eval_every_n_steps=5000`、`patience_steps=25000`、`scheduler_type="none"`、`warmup_steps=0`、`min_lr_ratio=0.0`。也就是说，默认每 5000 个 optimizer step 验证一次，早停容忍 5 个默认验证窗口；默认不会做 warmup 或 decay。
-
-## 调度规则
-
-训练器会在每个 `_train_step()` 开始前设置 dense optimizer 学习率。第一个 optimizer step 的 step 编号是 1。
-
-Warmup 规则：
-
-```text
-step <= warmup_steps 时：lr = base_lr * step / warmup_steps
-```
-
-Warmup 结束后，如果 `scheduler_type="none"` 或 `max_steps <= 0`，学习率回到并保持 `base_lr`。
-
-当 `scheduler_type` 是 `linear` 或 `cosine`，并且 `max_steps > 0` 时，衰减进度按下面的区间计算：
-
-```text
-decay_steps = max(1, max_steps - warmup_steps)
-decay_progress = clamp((step - warmup_steps) / decay_steps, 0.0, 1.0)
-```
-
-`linear` 会从 `base_lr` 线性衰减到 `base_lr * min_lr_ratio`。`cosine` 会按半周期 cosine 曲线衰减到同一个最低比例。
-
-## 常用组合
-
-只做 warmup，不做后续衰减：
-
-```bash
-bash run.sh train \
-  --experiment experiments/baseline \
-  --run-dir outputs/baseline_warmup \
-  --optimizer.scheduler_type none \
-  --optimizer.warmup_steps 500
-```
-
-做 warmup + cosine decay：
-
-```bash
-bash run.sh train \
-  --experiment experiments/symbiosis \
-  --run-dir outputs/symbiosis_cosine \
-  --optimizer.max_steps 20000 \
-  --optimizer.scheduler_type cosine \
-  --optimizer.warmup_steps 2000 \
-  --optimizer.min_lr_ratio 0.1
-```
-
-做 warmup + linear decay：
-
-```bash
-bash run.sh train \
-  --experiment experiments/baseline \
-  --run-dir outputs/baseline_linear \
-  --optimizer.max_steps 10000 \
-  --optimizer.scheduler_type linear \
-  --optimizer.warmup_steps 500 \
-  --optimizer.min_lr_ratio 0.2
-```
-
-如果不传 `--optimizer.max_steps`，当前默认值通常是 0。此时训练总步数会按数据 sweep 推导，但 scheduler 的 decay 会被关闭；如果你期望真的看到 `linear` 或 `cosine` 衰减，需要显式设置 `--optimizer.max_steps`。
-
-## 现有实验默认值
-
-当前实验包的默认调度大致如下：
-
-| 实验            | 默认调度                                                           |
-| --------------- | ------------------------------------------------------------------ |
-| `baseline`      | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `interformer`   | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `onetrans`      | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `tokenformer`   | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `symbiosis`     | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `dualq`         | `scheduler_type="none"`，`warmup_steps=0`                          |
-| `queryformer`   | `scheduler_type="cosine"`，`warmup_steps=0`                        |
-
-## 源码入口
-
-- 配置对象和校验：`src/taac2026/domain/config.py`
-- 训练 CLI 参数：`src/taac2026/application/training/args.py`
-- workflow 传参：`src/taac2026/application/training/workflow.py`
-- 学习率公式：`src/taac2026/infrastructure/optimization/schedules.py`
-- trainer 应用学习率：`src/taac2026/infrastructure/runtime/checkpoint_io.py`
-- runtime 覆盖测试：`tests/unit/infrastructure/runtime/test_trainer.py`
-- CLI 覆盖测试：`tests/unit/application/training/test_cli.py`
-
-训练时如果有 writer，当前 dense 学习率会写到 `LR/dense`。排查调度是否生效时，优先看训练日志里的 trainer 初始化参数，以及 TensorBoard 里的 `LR/dense` 曲线。
-
-## 常见问题
-
-| 现象                                      | 原因和处理                                                                                                           |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| 传了 `--optimizer.scheduler_type cosine` 但没有衰减 | 确认是否设置了 `--optimizer.max_steps`；`max_steps <= 0` 时只会 warmup，不会 decay                                             |
-| warmup 覆盖了整个训练                     | `warmup_steps` 大于或接近总 optimizer step 数；调小 warmup 或调大 `max_steps`                                        |
-| sparse embedding 学习率没变化             | 这里的 scheduler 只管 dense optimizer；调整 sparse 参数要用 `sparse_lr` 等配置                                       |
-| 早停比预期更早触发                        | `patience_steps` 是 optimizer step 数；如果验证间隔较大，要把它设得大于期望容忍的 step 距离                         |
-| 参数被拒绝                                | `scheduler_type` 只能是 `none`、`linear`、`cosine`，`patience_steps` 和 `warmup_steps` 不能为负数，`min_lr_ratio` 必须在 0.0 到 1.0 之间 |
+测试入口：`tests/unit/infrastructure/runtime/test_trainer.py`、`tests/unit/application/training/test_cli.py`。不要只比较配置文本，还需验证训练步上的实际学习率。

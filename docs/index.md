@@ -2,55 +2,36 @@
 icon: lucide/house
 ---
 
-# TAAC 2026 Docs
+# TAAC 2026 实验文档
 
-这是 TAAC 2026 实验工作区的文档站。它服务两类读者：想尽快把实验跑起来的人，以及准备修改实验包、运行时或线上 bundle 的人。
+TAAC 2026 是一个面向 PCVR 二分类的实验工作区。模型放在 `experiments/`，共享框架负责数据读取、训练、评估、推理和上传包生成。先用小样本验证完整流程，再在目标数据与设备上评估效果。
 
-如果你第一次打开这个仓库，先读 [快速开始](getting-started.md)。分区入口负责导览，具体页面负责实现细节。
+## 从任务进入
 
-## 我想做什么
+| 你要完成的事 | 阅读入口 | 完成后应得到什么 |
+| --- | --- | --- |
+| 第一次运行 | [快速开始](getting-started.md) | 一份可评估、可推理的 checkpoint |
+| 选择模型 | [实验包](experiments/index.md) | 模型差异与默认训练配置 |
+| 修改框架 | [架构与契约](architecture.md) | 模块职责和跨流程文件格式 |
+| 上传平台 | [训练与推理 Bundle](guide/online-training-bundle.md) | 两个同目录上传文件 |
+| 定位数据问题 | [数据管道](guide/pcvr-data-pipeline.md) / [EDA](experiments/online-dataset-eda.md) | 切分、缺失与分布差异证据 |
+| 测试或测性能 | [测试](guide/testing.md) / [性能测量](guide/performance-benchmarks.md) | 可复核的检查结果或 JSON |
+| 查阅研究与旧材料 | [论文](papers/index.md) / [研究笔记](ideas/index.md) / [归档](archive/index.md) | 来源、假设及适用范围 |
 
-| 目标 | 去哪里 |
-| ---- | ------ |
-| 本地跑一次 baseline | [快速开始](getting-started.md) |
-| 选择或比较实验包 | [实验包总览](experiments/index.md) |
-| 找任务型文档 | [指南总览](guide/index.md) |
-| 查 schema / 官方快照 | [归档](archive/index.md) |
-| 读研究笔记 | [想法](ideas/index.md) 与 [论文](papers/index.md) |
+## 使用文档前的三个约定
 
-## 当前仓库在做什么
+1. 命令默认在仓库根目录的 Linux shell 中执行。项目支持 Python 3.12–3.14，本地依赖由 `uv.lock` 管理；文档构建与模型运行是不同的验证范围。
+2. 本地默认数据来自 Hugging Face 的 demo parquet。仓库只保存参考 schema；首次运行应按照快速开始显式准备数据和 schema。
+3. 实验实现、论文报告和历史测量各自有独立证据。实验包存在不表示已复现论文分数，CPU smoke 通过也不表示线上 CUDA 性能已验证。
 
-主任务是 PCVR 二分类。仓库提供：
+## 一次实验的产物流向
 
-- 统一实验包入口：`experiments/<name>/`
-- 本地训练、评估、推理入口：`bash run.sh train|val|eval|infer`
-- 线上上传物生成：`taac-package-train` 和 `taac-package-infer`
-- 可复用 PCVR 数据管道、模型组件、optimizer 和 accelerator backend
-- 面向 GitHub Pages 的 Zensical 文档站
-
-本地 PCVR smoke 默认使用 Hugging Face demo parquet；调试时也可以显式传 `--dataset-path` 读取本地 parquet。线上 bundle 由平台变量提供真实数据路径。
-
-## 文档分工
-
-- 顶层页面说明仓库是什么、怎么启动、代码怎么分层。
-- 分区 `index.md` 负责导览和选择。
-- 实验页记录具体实验的模型结构、默认配置、修改点和测试契约。
-- 指南页记录任务的实现细节、命令、输入输出、环境变量和排障。
-- 归档页保存历史资产，不代表当前运行时契约。
-
-## 入口速查
-
-```bash
-# 本地训练
-bash run.sh train --experiment experiments/baseline --run-dir outputs/baseline_smoke
-
-# 本地评估
-bash run.sh val --experiment experiments/baseline --run-dir outputs/baseline_smoke
-
-# 推理
-bash run.sh infer --experiment experiments/baseline --checkpoint outputs/baseline_smoke --result-dir outputs/baseline_infer
-
-# 打包
-uv run taac-package-train --experiment experiments/baseline --output-dir outputs/bundles/baseline_training
-uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
+```text
+parquet + schema + 实验配置
+           ↓ train
+global_step*/{model.safetensors, schema.json, train_config.json}
+           ├─ val   → evaluation.json + validation_predictions.jsonl
+           └─ infer → predictions.json
 ```
+
+上传包封装代码与入口，模型权重由训练产物提供。详细操作见[指南索引](guide/index.md)。

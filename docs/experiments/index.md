@@ -1,117 +1,48 @@
 ---
-icon: lucide/folder-open
+icon: lucide/flask-conical
 ---
 
-# 实验包总览
+# 实验包：选择与比较
 
-本目录记录仓库中所有可运行的实验包。它们共享同一套 PCVR 训练、评估、推理、checkpoint sidecar 和 bundle 打包流程；差异集中在输入 tokenization、交互主干和默认训练策略上。
+七个模型实验共用训练、评估、推理和打包流程，两个维护实验用于诊断。实验页说明结构与默认配置；训练接口见[快速开始](../getting-started.md)。
 
-如果把仓库看成一个统一推荐系统实验台，那么 `src/taac2026` 是稳定运行时，`experiments/` 是可替换的研究假设。每个实验包都应回答四个问题：
+## 选择模型
 
-1. 它要验证什么建模假设。
-2. 它如何组织用户静态特征、候选物品特征和行为序列。
-3. 它的训练默认值是否会影响公平对照。
-4. 它的输出和 checkpoint 是否仍满足共享 PCVR 契约。
+| 实验 | 主要问题 | 比较时特别控制 |
+| --- | --- | --- |
+| [Baseline](baseline.md) | HyFormer 参照 | 无增强、无 AMP/compile 的配方 |
+| [InterFormer](interformer.md) | 静态与序列交替交互 | group tokenizer 与 query 数 |
+| [OneTrans](onetrans.md) | 统一主干与序列收缩 | 每层 token 预算 |
+| [TokenFormer](tokenformer.md) | 统一 token、分层 mask 与门控 | RoPE、增强与全局注意力成本 |
+| [Symbiosis](symbiosis.md) | 来源、缺失与长历史选择 | 时间切分、memory 预算与配方 |
+| [DualQ](dualq.md) | 双侧 query、pair 与时间信号 | 未迁移的数据 profile、pairwise loss |
+| [QueryFormer](queryformer.md) | 多列 embedding 与四类交互 | 列数、参数量、Muon 与 compile |
 
-## 一、怎么选
+## 默认训练差异
 
-| 目标                 | 从这里开始                                  | 适合回答的问题                                                                      |
-| -------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 需要一个干净参照     | [Baseline](baseline.md)                     | HyFormer 原始路线在当前 runtime 下的最低复杂度表现。                                |
-| 想做用户-物品交互    | [InterFormer](interformer.md)               | 用户上下文、物品候选和序列行为是否应在双分支中交替融合。                            |
-| 想做统一 Transformer | [OneTrans](onetrans.md)                     | 序列 token 与非序列 token 进入同一 causal 主干后，逐层压缩是否有效。                |
-| 想试 TokenFormer     | [TokenFormer](tokenformer.md)               | BFTS 分层注意力和 NLIR 门控能否缓解统一 token 流里的序列坍塌传播。                  |
-| 想试分布感知统一流   | [Symbiosis](symbiosis.md)                   | 缺失、风险、序列 memory、metadata mask 和 candidate readout 如何服务线上泛化。      |
-| 想试最终阶段主模型   | [DualQ](dualq.md)                           | DualQ、时间对齐多域序列、pair 加权残差 tokenizer 与全局时间 token 的组合。          |
-| 想复现工业赛冠军结构 | [QueryFormer](queryformer.md)               | 四类 Query attention、逐字段 DCNv2 与多列独立 embedding 能否带来可复现增益。        |
-| 想知道线上机器       | [Host Device Info](host-device-info.md)     | 线上 CPU/GPU/CUDA/Python/网络/依赖源到底是什么状态。                                |
-| 想看线上数据分布     | [Online Dataset EDA](online-dataset-eda.md) | train 和 infer 数据的 schema、缺失率、基数、序列长度、dense 分布是否漂移。          |
+| 实验 | batch | dense optimizer | split | AMP / compile |
+| --- | ---: | --- | --- | --- |
+| baseline | 256 | adamw | row_group_tail | false / false |
+| interformer | 256 | adamw | row_group_tail | false / false |
+| onetrans | 256 | adamw | row_group_tail | false / false |
+| tokenformer | 256 | adamw | row_group_tail | true / false |
+| symbiosis | 128 | muon | timestamp_auto | true / true |
+| dualq | 576 | adamw | timestamp_auto | true / true |
+| queryformer | 256 | muon | timestamp_auto | true / true |
 
-## 二、模型谱系
+默认配置面向不同实验目标，不能直接当作受控横向榜单。比较前固定数据、切分、seed、训练预算、backend 与选 checkpoint 规则，另报告参数量、显存、吞吐和预测指标。
 
-当前模型实验大致分为四类。
+## 维护实验能力
 
-**参照。** Baseline 用最少默认增强保留 HyFormer 的干净零刻度。Cache、数据增强、Muon 和 accelerator backend 属于共享训练或性能变量，应通过类型化配置和 benchmark 独立比较，不再用另一个模型包承载。
+| 实验 | 需要数据 | train / val / infer | 输出 |
+| --- | --- | --- | --- |
+| [Host Device Info](host-device-info.md) | 否 | 支持 / 不支持 / 不支持 | 环境诊断 stdout |
+| [Online Dataset EDA](online-dataset-eda.md) | 是 | 支持 / 不支持 / 支持 | profile 与差异 stdout |
 
-**异构交互。** InterFormer 仍把非序列上下文和序列上下文视作不同类型的信息流，只是在 block 内加强两者交互。QueryFormer 进一步显式区分用户、候选广告与各行为域，并通过双向 query 生成和检索建立信息回路。它们适合做“分支结构是否比全量拼接更稳”的对照。
+EDA 的推理入口用于统计，不写模型提交所需的 `predictions.json`。维护实验能否生成推理包取决于实际 `infer_fn`，不能只按 kind 判断。
 
-**统一 token 流。** OneTrans、TokenFormer 和 Symbiosis 都把多域特征与行为序列放到更统一的 token 空间。它们的差别在于如何控制长序列计算，以及是否显式表达 token 来源、缺失与风险。
+## 证据应怎样表述
 
-**竞赛方案迁移。** DualQ 和 QueryFormer 分别承载学术赛道统一模块方案与工业赛冠军公开结构。它们保留明确来源和差异说明，用于和论文式实验形成现实方案对照。
+实验契约测试检查输入、输出与重建；CPU smoke 检查流程；目标 GPU 测量检查特定环境的数值和速度；完整训练与独立验证才支持质量结论。来源论文和团队文章的成绩单独引用，不标作此仓库实测。
 
-**表示诊断。** 有效秩计算属于共享 modeling 能力，不再由诊断专用模型拥有。Symbiosis 在启用训练诊断时记录输入、输出 token 的 effective rank，其他实验可复用同一 `masked_effective_rank` primitive。
-
-## 三、统一运行方式
-
-模型实验本地训练：
-
-```bash
-bash run.sh train \
-  --experiment experiments/baseline \
-  --run-dir outputs/baseline_smoke
-```
-
-评估同一个 run 目录：
-
-```bash
-bash run.sh val \
-  --experiment experiments/baseline \
-  --run-dir outputs/baseline_smoke
-```
-
-推理需要 checkpoint 和结果目录：
-
-```bash
-bash run.sh infer \
-  --experiment experiments/baseline \
-  --checkpoint outputs/baseline_smoke \
-  --result-dir outputs/baseline_infer
-```
-
-线上上传物由独立打包命令生成：
-
-```bash
-uv run taac-package-train --experiment experiments/baseline --output-dir outputs/bundles/baseline_training
-uv run taac-package-infer --experiment experiments/baseline --output-dir outputs/bundles/baseline_inference
-```
-
-维护类实验也复用 `run.sh train` 入口，但不一定支持推理 bundle。`host_device_info` 不需要数据集；`online_dataset_eda` 需要平台或本地显式提供 parquet/schema。
-
-## 四、包结构契约
-
-普通 PCVR 模型实验通常只有两个必需文件：
-
-```text
-experiments/<name>/
-├── __init__.py
-└── model.py
-```
-
-`__init__.py` 声明 `EXPERIMENT`、实验名、模型类和默认训练配置。`model.py` 实现模型类，至少满足：
-
-- `forward(inputs)` 返回 `(B,)` 或 `(B, action_num)` logits。
-- `predict(inputs)` 返回 `(logits, embeddings)`。
-- `num_ns` 能表达非序列 token 数，供 runtime 日志和契约测试使用。
-- sparse embedding 参数能通过 `EmbeddingParameterMixin` 与 dense 参数分组。
-- checkpoint sidecar 中的 `schema.json` 和 `train_config.json` 能重建模型。
-
-维护工具包更轻：
-
-```text
-experiments/<tool>/
-├── __init__.py
-└── runner.py
-```
-
-它们通常导出 `FunctionExperiment`，可以没有模型类和 checkpoint sidecar；实验包用接收结构化 request 的函数声明所支持的操作，共享 CLI 和 bundle runtime 负责调用。
-
-## 五、改实验时先看哪里
-
-- 实验入口：`experiments/<name>/__init__.py`
-- 模型实现：`experiments/<name>/model.py`
-- 实验发现与装载：`src/taac2026/application/experiments/`
-- 模型输入契约：`src/taac2026/infrastructure/modeling/model_contract.py`
-- 新增实验流程：[新增实验包](../guide/contributing.md)
-- 测试选择：[测试](../guide/testing.md)
-
-不要从 `docs/archive/files/...` 推断当前契约；那里是历史快照。新增或修改实验后，优先跑实验包 contract tests，再根据是否动到数据、checkpoint、bundle 或 accelerator 扩大验证范围。
+新增包遵循[接入指南](../guide/contributing.md)。

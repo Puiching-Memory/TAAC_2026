@@ -2,130 +2,45 @@
 icon: lucide/server
 ---
 
-# 线上运行环境速查
+# 比赛平台运行环境（历史观测）
 
-本页整理已经从真实线上任务日志里验证过的环境事实，用来指导 bundle 设计和线上排障。它不是平台 SLA；如果平台镜像或资源策略变化，应以新的任务日志为准。
+本页保留仓库对 **2026-04-25 至 2026-04-27** 任务启动日志的整理。它不是当前平台 SLA，也不是本次实机检测；镜像、网络和资源配额都需要新任务重新确认。
 
-采样日志来自 2026-04-25、2026-04-26 和 2026-04-27 的线上任务启动记录。
+## 观测摘要
 
-## 最重要的结论
+| 项目 | 历史值 |
+| --- | --- |
+| OS | Ubuntu 22.04.5 LTS |
+| Python | `/opt/conda/envs/competition/bin/python3`，3.10.20 |
+| Torch / CUDA | 2.7.1+cu126 / 12.6 |
+| TorchRec / FBGEMM | 1.2.0+cu126 |
+| 可见 GPU | 约 0.2× NVIDIA H20，19574 MiB 显存 |
+| Driver / nvcc | 535.247.01 / 12.6.77 |
+| gcc / g++ / make | 11.4.0 / 11.4.0 / 4.3 |
+| 缺失构建工具 | cmake、ninja、pkg-config |
 
-- 线上默认 Python 是 `/opt/conda/envs/competition/bin/python3`，版本 `3.10.20`。
-- 平台预装 CUDA 12.6 相关 PyTorch 栈，包括 `torch==2.7.1+cu126`、`torchrec==1.2.0+cu126` 和 `fbgemm_gpu==1.2.0+cu126`。
-- 任务启动时没有可靠的 `uv`，训练和推理 bundle 应使用 `TAAC_RUNNER=python`。
-- 公共 PyPI、Astral、GitHub、PyTorch 官方索引和 conda-forge 不应作为任务启动依赖。
-- Tencent PyPI / Anaconda 镜像在继承平台代理时可达。
-- 可见 GPU 是约 `0.2x NVIDIA H20`，可用显存约 19.6 GiB；不要按整卡 H20 设计 batch size。
-- `gcc`/`g++` 11.4.0、`make` 4.3、`nvcc` 12.6.77 可用；`cmake`、`ninja`、`pkg-config` 缺失。
+日志中的主机总内存不能等同于任务配额；官方声明的切片内存与 CPU 见[平台指南](official-competition-docs.md)。不要按整卡 H20 估算吞吐和 batch。
 
-## 对训练配置的影响
+## 与当前代码的兼容性
 
-按小显存 GPU 设计默认值：
+当前项目要求 Python 3.12–3.14，本地 CUDA profile 为 `cuda132`。历史平台 Python 3.10 与当前包元数据不兼容，旧 Torch 栈也不是当前锁定环境。打包器没有自动转译 Python 或重写依赖版本的步骤。
 
-- 优先启用 AMP，再逐步调 batch size。
-- OOM 时先降 batch size、序列长度、模型宽度、`num_workers` 和训练 shuffle buffer；step-random 训练默认使用 `buffer_batches=1`，不要再沿用旧的 `20`。
-- 不要在任务启动阶段覆盖安装核心 GPU 包。
-- 需要原生构建的依赖尽量提前解决，不要指望线上临时编译复杂 CUDA / C++ 包。
+在当前目标平台运行前，应先确认兼容解释器、Torch 与依赖。仅设置 `TAAC_RUNNER=python` 或跳过 pip 安装不能解决版本不兼容。当前 Bundle 格式和实际变量映射见[上传指南](online-training-bundle.md)。
 
-一个更接近线上使用的启动方式：
+## 网络与构建边界
 
-```bash
-export TAAC_RUNNER=python
-export TAAC_PYTHON=/opt/conda/envs/competition/bin/python3
-export TRAIN_DATA_PATH=/path/to/train.parquet_or_dataset_dir
-export TAAC_SCHEMA_PATH=/path/to/schema.json
-export TRAIN_CKPT_PATH=/path/to/output
+历史任务通过平台代理访问 Tencent PyPI/Anaconda 镜像；公共 PyPI、GitHub、Astral、PyTorch 索引和 conda-forge 不能作为可靠启动依赖。这些是当时的探测结果，不应写成永久封禁结论。
 
-bash run.sh --optimizer.device cuda
-```
+保留平台注入的代理设置，不硬编码旧代理地址。URL 探测成功不表示 wheel、源码构建或模型下载都成功；gcc/nvcc 存在也不表示缺少 ninja/cmake 的完整 JIT 链路可用。
 
-## 网络和依赖
+## 如何刷新这份记录
 
-日志中平台注入的是小写代理变量：
-
-```text
-http_proxy=http://21.100.120.217:3128
-https_proxy=http://21.100.120.217:3128
-```
-
-实践上要记住两点：
-
-- 不要无条件 `unset http_proxy https_proxy`，否则会一起关掉 Tencent 镜像通路。
-- 不要在线安装 `uv` 或重建 CUDA / PyTorch 栈。
-
-缺少纯 Python 包时，可以优先尝试平台可达镜像：
+生成 Host Device Info 训练包，在兼容的目标任务运行：
 
 ```bash
-python -m pip install -i https://mirrors.cloud.tencent.com/pypi/simple/ <package>
-```
-
-## 平台资源概览
-
-| 项目          | 观测值                                             |
-| ------------- | -------------------------------------------------- |
-| 操作系统      | Ubuntu 22.04.5 LTS                                 |
-| Python        | `/opt/conda/envs/competition/bin/python3`，3.10.20 |
-| CUDA Runtime  | 12.6                                               |
-| NVIDIA Driver | 535.247.01                                         |
-| nvcc          | 12.6.77                                            |
-| GPU           | `0.2x NVIDIA H20`                                  |
-| 可见显存      | 约 19574 MiB                                       |
-| 内存          | 日志中约 2.2 TiB，无 swap                          |
-
-CPU、总内存和磁盘看起来宽裕，但作业实际可用资源仍可能受平台调度影响。训练排障时以当前任务日志为准。
-
-## 编译工具链
-
-线上容器具备最基础的 C/C++ 编译能力，但缺少现代原生构建辅助工具。
-
-| 工具       | 状态 | 版本或说明                   |
-| ---------- | ---- | ---------------------------- |
-| gcc        | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
-| g++        | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
-| cc         | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
-| c++        | 可用 | Ubuntu 11.4.0-1ubuntu1~22.04 |
-| make       | 可用 | GNU Make 4.3                 |
-| nvcc       | 可用 | 12.6.77                      |
-| cmake      | 缺失 | 日志中记录为 missing         |
-| ninja      | 缺失 | 日志中记录为 missing         |
-| pkg-config | 缺失 | 日志中记录为 missing         |
-
-对实际任务的影响主要有三点：
-
-- 依赖 setuptools + gcc/make 即可完成的轻量源码构建，理论上还有机会成功，但仍会受到代理与出网问题限制。
-- 依赖 cmake、ninja 或 pkg-config 的 Python 包、CUDA 扩展、C++ 原生算子和部分第三方库，不能假设可以在任务启动时现编现装。
-- 即使 gcc 与 nvcc 同时存在，也不代表线上可以临时编译完整自定义算子链路，因为缺少构建工具和外网依赖之后，常见源码安装流程通常还是会失败。
-
-## 排障速查
-
-| 现象                     | 优先检查                                      |
-| ------------------------ | --------------------------------------------- |
-| `uv: command not found`  | bundle 是否仍在用 `TAAC_RUNNER=uv`            |
-| 依赖安装失败             | 是否访问了公共 PyPI / Astral / PyTorch 索引   |
-| 训练 OOM                 | batch size、序列长度、模型宽度、`num_workers`、`buffer_batches` |
-| Torch / CUDA 版本冲突    | 是否在线覆盖了平台预装 GPU 栈                 |
-| 找不到 `cmake` / `ninja` | 是否把复杂原生构建留到了线上启动阶段          |
-| 推理找不到缓存目录       | 显式设置 `TAAC_BUNDLE_WORKDIR`                |
-
-## 采集新证据
-
-需要更新这页时，先在线上跑维护实验：
-
-```bash
-uv run taac-package-train \
+uv run --with torch==2.13.0 taac-package-train \
   --experiment experiments/host_device_info \
   --output-dir outputs/bundles/host_device_info
 ```
 
-上传后执行训练 bundle，把 stdout 作为原始材料，再把稳定结论整理回本页。
-
-采集日志至少要保留这些信息：
-
-- 任务日期和平台任务 ID。
-- Python 可执行文件与版本。
-- `pip list` 里核心 GPU 包版本。
-- `nvidia-smi` 摘要。
-- 代理变量是否存在，以及 Tencent 镜像探测结果。
-- `gcc`、`g++`、`make`、`nvcc`、`cmake`、`ninja`、`pkg-config` 是否可用。
-
-维护实验入口和采集逻辑分别在 `experiments/host_device_info/__init__.py` 与 `experiments/host_device_info/runner.py`。bundle 运行时选择 runner 的逻辑在 `src/taac2026/infrastructure/platform/env.py`，依赖安装逻辑在 `src/taac2026/infrastructure/platform/deps.py`。
+保存任务日期与 ID、解释器、核心包、nvidia-smi、构建工具和依赖源探测。公开报告前脱敏代理凭据、私有路径和标识符。检测配置见[维护实验](../experiments/host-device-info.md)。
